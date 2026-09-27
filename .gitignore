@@ -1,0 +1,72 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache/
+.pytest_cache/
+
+# Type checker (ty, mypy, pyre)
+.mypy_cache/
+.pyre/
+
+# Linter / formatter (ruff)
+.ruff_cache/
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Credentials / secrets
+credentials.json
+token.json
+
+# Environment variables
+.env
+.env.*
+*.env
+
+# Logs
+*.log
+
+# Sphinx build output (generated, not source-controlled)
+docs/build/
+
+# Assignment PDFs and session files (local only, not for version control)
+*.pdf
+session-prompt.md
+plans.md
