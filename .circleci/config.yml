@@ -14,7 +14,7 @@ jobs:
           name: "Install UV and Add to Path"
           command: |
             curl -LsSf https://astral.sh/uv/install.sh | sh
-            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> $BASH_ENV
+            echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
             uv --version # Verify installation
       - run:
@@ -78,7 +78,6 @@ jobs:
           command: |
             source .venv/bin/activate
             # Target specific source directories for mypy
-            uv add types-requests
             mypy src/ --explicit-package-bases
       - store_test_results:
           path: test-results/unit
@@ -219,8 +218,6 @@ workflows:
               ignore:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
       - lint:
           requires:
             - build
@@ -229,8 +226,6 @@ workflows:
               ignore:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
 
       - unit_test:
           requires:
@@ -240,8 +235,6 @@ workflows:
               ignore:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
 
       - circleci_test:
           requires:
@@ -251,8 +244,6 @@ workflows:
               ignore:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
 
       # Optional: Report summary after core tests
       - report_summary:
@@ -264,8 +255,6 @@ workflows:
               ignore:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
 
   # Enhanced workflow: Full tests with real credentials (main/develop only)
   full_integration:
@@ -276,8 +265,6 @@ workflows:
               only:
                 - main
                 - develop # Add other branches as needed
-                - kamen-requierd-fixes
-                - make-real-deletions
 
       - lint:
           requires:
@@ -287,8 +274,6 @@ workflows:
               only:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
 
       - unit_test:
           requires:
@@ -298,8 +283,6 @@ workflows:
               only:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
 
       - circleci_test:
           requires:
@@ -309,8 +292,6 @@ workflows:
               only:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
 
       - integration_test:
           requires:
@@ -321,8 +302,6 @@ workflows:
               only:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
                 
       - report_summary:
           requires:
@@ -334,5 +313,3 @@ workflows:
               only:
                 - main
                 - develop
-                - kamen-requierd-fixes
-                - make-real-deletions
