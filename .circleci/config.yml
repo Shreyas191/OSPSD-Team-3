@@ -14,7 +14,7 @@ jobs:
           name: "Install UV and Add to Path"
           command: |
             curl -LsSf https://astral.sh/uv/install.sh | sh
-            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> $BASH_ENV
+            echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
             uv --version # Verify installation
       - run:
@@ -78,7 +78,6 @@ jobs:
           command: |
             source .venv/bin/activate
             # Target specific source directories for mypy
-            uv add types-requests
             mypy src/ --explicit-package-bases
       - store_test_results:
           path: test-results/unit
