@@ -1,11 +1,11 @@
-# Python Application Template: A Component-Based Mail Client
+# OSPSD Team 3: A Component-Based Cloud Storage Client
 
 [![CircleCI](https://circleci.com/gh/Shreyas191/OSPSD-Team-3.svg?style=shield)](https://circleci.com/gh/Shreyas191/OSPSD-Team-3)
 [![Coverage](https://img.shields.io/badge/coverage-85%2B%25-brightgreen)](https://circleci.com/gh/Shreyas191/OSPSD-Team-3)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-This repository serves as a professional-grade template for a modern Python project. It demonstrates a robust, component-based architecture by building the core components for an AI-powered email assistant that interacts with the Gmail API.
+This repository builds a component-based document storage client in Python. It defines a provider-agnostic cloud storage API and implements it on top of the Dropbox API, so files and folders can be created, read, updated, and deleted through one stable interface.
 
 The project emphasizes a strict separation of concerns, dependency injection, and a comprehensive, automated toolchain to enforce code quality and best practices.
 
@@ -23,24 +23,26 @@ The project emphasizes a strict separation of concerns, dependency injection, an
 
 This project is built on the principle of "programming integrated over time." The architecture is designed to combat complexity and ensure the system is maintainable and evolvable.
 
--   **Component-Based Design:** The system is broken down into four distinct, self-contained components. Each component has a single responsibility and can be "forklifted" out of this project to be used in another with minimal effort.
--   **Interface-Implementation Separation:** Every piece of functionality is defined by an abstract **contract** implemented as an ABC (the "what") and fulfilled by a concrete **implementation** (the "how"). This decouples our business logic from specific technologies (like Gmail).
+-   **Component-Based Design:** The system is broken down into distinct, self-contained components. Each component has a single responsibility and can be "forklifted" out of this project to be used in another with minimal effort.
+-   **Interface-Implementation Separation:** Every piece of functionality is defined by an abstract **contract** implemented as an ABC (the "what") and fulfilled by a concrete **implementation** (the "how"). This decouples our business logic from specific technologies (like Dropbox).
 -   **Dependency Injection:** Implementations are "injected" into the abstract contracts at runtime. This means consumers of the API only ever depend on the stable interface, not the volatile implementation details.
 
 ## Core Components
 
-The project is a `uv` workspace containing four primary packages:
+The project is a `uv` workspace containing two packages:
 
-3.  **`mail_client_api`**: Defines the abstract `Client` base class (ABC). This is the contract for what actions a mail client can perform (e.g., `get_messages`).
-4.  **`gmail_client_impl`**: Provides the `GmailClient` class, a concrete implementation that uses the Google API to perform the actions defined in the `Client` abstraction.
+1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, create folders, copy, download, get metadata, list, search, rename, move, and delete.
+2.  **`dropbox_client_impl`**: Provides the `DropboxClient` class, a concrete implementation that uses the Dropbox Python SDK to perform the actions defined in the `Client` abstraction.
+
+See [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md) for which team member owns each method and the Dropbox endpoint it maps to.
 
 ## Project Structure
 
 ```
-ta-assignment/
+OSPSD-Team-3/
 ├── src/                          # Source packages (uv workspace members)
-│   ├── mail_client_api/          # Abstract mail client base class (ABC)  
-│   └── gmail_client_impl/        # Gmail-specific client implementation
+│   ├── cloud_storage_client_api/ # Abstract Client and File base classes (ABCs)
+│   └── dropbox_client_impl/      # Dropbox-specific client implementation
 ├── tests/                        # Integration and E2E tests
 │   ├── integration/              # Component integration tests
 │   └── e2e/                      # End-to-end application tests
@@ -49,7 +51,7 @@ ta-assignment/
 ├── main.py                       # Main application entry point
 ├── pyproject.toml               # Project configuration (dependencies, tools)
 ├── uv.lock                      # Locked dependency versions
-└── credentials.json             # Google OAuth credentials (local only)
+└── .env                         # Dropbox credentials (local only, see .env.example)
 ```
 
 ## Project Setup
@@ -71,20 +73,16 @@ ta-assignment/
 
 2.  **Clone the Repository:**
     ```bash
-    git clone <your-repository-url>
-    cd ta-assignment
+    git clone https://github.com/Shreyas191/OSPSD-Team-3.git
+    cd OSPSD-Team-3
     ```
 
-3.  **Set Up Google Credentials:**
-    -   Follow the [Google Cloud instructions](https://developers.google.com/gmail/api/quickstart/python#authorize_credentials_for_a_desktop_application) to enable the Gmail API and download your OAuth 2.0 credentials.
-    -   Rename the downloaded file to `credentials.json` and place it in the root of this project.
-    -   **Alternative**: For CI/CD environments, you can use environment variables instead:
-        ```bash
-        export GMAIL_CLIENT_ID="your_client_id"
-        export GMAIL_CLIENT_SECRET="your_client_secret"
-        export GMAIL_REFRESH_TOKEN="your_refresh_token"
-        ```
-    -   **Important:** Credential files contain secrets and are ignored by `.gitignore`.
+3.  **Set Up Dropbox Credentials:**
+    -   Create an app in the [Dropbox App Console](https://www.dropbox.com/developers/apps) and note its app key and app secret.
+    -   Generate a long-lived refresh token for your account using the app's OAuth flow.
+    -   Copy `.env.example` to `.env` and fill in `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN`.
+    -   **Alternative**: For CI/CD environments, set the same three values as environment variables.
+    -   **Important:** `.env` contains secrets and is ignored by `.gitignore`.
 
 4.  **Create and Sync the Virtual Environment:**
     This single command creates a `.venv` folder and installs all packages (including workspace members and development tools) defined in `uv.lock`.
@@ -100,12 +98,11 @@ ta-assignment/
     .venv\Scripts\Activate.ps1
     ```
 
-6.  **Perform Initial Authentication:**
-    Run the main application once to perform the interactive OAuth flow. This will open a browser window for you to grant permission.
+6.  **Check the Setup:**
+    Run the main application, which connects to Dropbox and lists the root folder:
     ```bash
     uv run python main.py
     ```
-    After you approve, a `token.json` file will be created. This file is also ignored by `.gitignore` and will be used for authentication in subsequent runs.
 
 ## Development Workflow
 
@@ -185,7 +182,7 @@ The project implements a sophisticated testing strategy designed for both local 
 - **Integration Tests** (`tests/integration/`): Tests that verify component interactions
 - **End-to-End Tests** (`tests/e2e/`): Full application workflow tests
 - **CircleCI Tests**: CI/CD-compatible tests that handle missing credentials gracefully
-- **Local Credentials Tests**: Tests that require `credentials.json` or `token.json` files
+- **Local Credentials Tests**: Tests that require Dropbox credentials in a local `.env` file
 
 ### Test Markers
 
@@ -201,8 +198,8 @@ The project uses pytest markers to categorize tests:
 ### Authentication in Tests
 
 The testing infrastructure handles different authentication scenarios:
-- **Local Development**: Uses `credentials.json` and `token.json` files
-- **CI/CD Environment**: Uses environment variables (`GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`)
+- **Local Development**: Uses a local `.env` file (see `.env.example`)
+- **CI/CD Environment**: Uses environment variables (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`)
 - **Missing Credentials**: Tests fail fast with clear error messages (no hanging)
 
 ## Continuous Integration
@@ -210,7 +207,7 @@ The testing infrastructure handles different authentication scenarios:
 The project includes a comprehensive CircleCI configuration (`.circleci/config.yml`) with:
 
 - **All Branches**: Unit tests, linting, and CI-compatible tests
-- **Main/Develop**: Additional integration tests with real Gmail API calls
+- **Main/Develop**: Additional integration tests with real Dropbox API calls
 - **Artifacts**: Coverage reports, test results, and build summaries
 
 See `docs/circleci-setup.md` for detailed CI/CD setup instructions.

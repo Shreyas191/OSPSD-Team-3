@@ -1,14 +1,13 @@
 [project]
-name = "ta-assignment"
+name = "ospsd-team-3"
 version = "0.1.0"
-description = "Template repository for a mail client"
+description = "Component-based cloud storage client with a Dropbox implementation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
 dev = [
-    "google-api-python-client-stubs>=1.30.0",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.6.15",
     "mkdocstrings-python>=1.16.12",
@@ -22,8 +21,8 @@ dev = [
 
 [tool.uv.workspace]
 members = [
-  "src/mail_client_api",
-  "src/gmail_client_impl",
+  "src/cloud_storage_client_api",
+  "src/dropbox_client_impl",
 ]
 
 [tool.ruff]
@@ -42,15 +41,14 @@ per-file-ignores = { "**/test_*.py" = ["TRY300", "BLE001", "ANN401", "SLF001", "
 [tool.mypy]
 strict = true
 explicit_package_bases = true # Required for src layout
-mypy_path = ["src/mail_client_api/src", "src/gmail_client_impl/src"]
+mypy_path = ["src/cloud_storage_client_api/src", "src/dropbox_client_impl/src"]
 ignore_missing_imports = false
 warn_unused_ignores = false
 
 # Allow untyped imports for specific modules
 [[tool.mypy.overrides]]
 module = [
-    "google.*",
-    "googleapiclient.*",
+    "dropbox.*",
 ]
 ignore_missing_imports = true
 
@@ -66,7 +64,7 @@ markers = [
     "integration: marks tests as integration tests (medium speed, real dependencies)",
     "e2e: marks tests as end-to-end tests (slow, full system)",
     "circleci: marks tests that can run in CI/CD environments without local credentials",
-    "local_credentials: marks tests that require local credentials.json or token.json files",
+    "local_credentials: marks tests that require local Dropbox credentials in a .env file",
 ]
 
 [tool.coverage.run]
