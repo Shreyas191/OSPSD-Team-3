@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest an idea or enhancement for the email assistant system
+about: Suggest an idea or enhancement for the cloud storage client
 title: '[FEATURE] '
 labels: ['enhancement', 'needs-discussion']
 assignees: ''
@@ -13,8 +13,8 @@ assignees: ''
 **Brief Description:** A clear and concise description of the feature you'd like to see added.
 
 **Component(s) Affected:**
-- [ ] `mail_client_api` - Mail client abstraction (new operations)
-- [ ] `gmail_message_impl` - Gmail message implementation
+- [ ] `cloud_storage_client_api` - Cloud storage client abstraction (new operations)
+- [ ] `dropbox_client_impl` - Dropbox client implementation
 - [ ] New component (specify name)
 - [ ] Testing infrastructure
 - [ ] CI/CD pipeline  
@@ -41,7 +41,7 @@ Detailed description of the proposed feature:
 ### API Design (if applicable)
 ```python
 # Show how the new feature would be used
-from mail_client_api import get_client
+from cloud_storage_client_api import get_client
 
 client = get_client()
 # Example of new functionality
@@ -149,7 +149,7 @@ Explain why the main proposal is preferred over alternatives:
 
 ### Integration Testing  
 - [ ] Test component interactions
-- [ ] Test with real Gmail API (if applicable)
+- [ ] Test with real Dropbox API (if applicable)
 - [ ] Test authentication flows
 
 ### End-to-End Testing
@@ -221,7 +221,7 @@ result = new_feature.do_something()
 
 ```python  
 # Example 2: Advanced usage
-from mail_client_api import get_client
+from cloud_storage_client_api import get_client
 
 client = get_client()
 advanced_result = client.advanced_feature(

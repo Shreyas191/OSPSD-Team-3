@@ -10,7 +10,7 @@ The CI/CD pipeline includes:
 - **Lint**: Code quality checks with `ruff`
 - **Unit Tests**: Fast tests with 85% coverage requirement
 - **CircleCI Tests**: Integration tests without local credentials
-- **Integration Tests**: Full API tests with Gmail credentials (protected branches only)
+- **Integration Tests**: Full API tests with Dropbox credentials (protected branches only)
 
 ## Quick Setup
 
@@ -21,16 +21,13 @@ The CI/CD pipeline includes:
 
 ### 2. Environment Variables
 
-Create a **Context** named `gmail-client` with:
+Create a **Context** named `dropbox-client` with:
 
 | Variable | Description |
 |----------|-------------|
-| `GMAIL_CLIENT_ID` | OAuth2 client ID |
-| `GMAIL_CLIENT_SECRET` | OAuth2 client secret |
-| `GMAIL_REFRESH_TOKEN` | OAuth2 refresh token |
-| `GMAIL_TOKEN_URI` | `https://oauth2.googleapis.com/token` |
-| `GMAIL_SCOPES` | `https://www.googleapis.com/auth/gmail.modify` |
-| `GMAIL_UNIVERSE_DOMAIN` | `googleapis.com` |
+| `DROPBOX_APP_KEY` | App key from the Dropbox App Console |
+| `DROPBOX_APP_SECRET` | App secret from the Dropbox App Console |
+| `DROPBOX_REFRESH_TOKEN` | Long-lived OAuth2 refresh token |
 
 ## Workflows
 
@@ -65,7 +62,7 @@ uv run pytest src/ tests/ -m "not local_credentials"
 
 **"Extra 'dev' is not defined"**: Use `[project.optional-dependencies]` instead of `[dependency-groups]` in `pyproject.toml`
 
-**Missing environment variables**: Ensure `gmail-client` context is created and applied to integration jobs
+**Missing environment variables**: Ensure `dropbox-client` context is created and applied to integration jobs
 
 **Coverage failures**: Project requires 85% coverage - add tests or adjust threshold
 
