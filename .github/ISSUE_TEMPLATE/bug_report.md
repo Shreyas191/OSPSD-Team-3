@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Create a report to help us improve the email assistant system
+about: Create a report to help us improve the cloud storage client
 title: '[BUG] '
 labels: ['bug', 'needs-triage']
 assignees: ''
@@ -13,8 +13,8 @@ assignees: ''
 **Summary:** A clear and concise description of what the bug is.
 
 **Component(s) Affected:**
-- [ ] `mail_client_api` - Mail client abstraction
-- [ ] `gmail_client_impl` - Gmail client implementation
+- [ ] `cloud_storage_client_api` - Cloud storage client abstraction
+- [ ] `dropbox_client_impl` - Dropbox client implementation
 - [ ] Testing infrastructure
 - [ ] CI/CD pipeline
 - [ ] Documentation
@@ -38,7 +38,7 @@ A clear and concise description of what actually happened.
 **Minimal Reproducible Example:**
 ```python
 # Provide the minimal code that reproduces the issue
-from mail_client_api import get_client
+from cloud_storage_client_api import get_client
 
 client = get_client()
 # ... rest of the code that causes the bug
@@ -57,10 +57,8 @@ client = get_client()
 - **Dependencies:** [any recent dependency changes]
 
 ### Authentication Setup
-- [ ] Using local credential files (`credentials.json`, `token.json`)
+- [ ] Using a local `.env` file
 - [ ] Using environment variables
-- [ ] Interactive authentication
-- [ ] Non-interactive authentication
 - [ ] No authentication required for this bug
 
 ## Error Details

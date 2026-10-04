@@ -90,7 +90,7 @@ jobs:
   circleci_test:
     docker:
       - image: cimg/python:3.11
-    # Environment variables from the 'gmail-client' context will be available here
+    # Environment variables from the 'dropbox-client' context will be available here
     steps:
       - attach_workspace:
           at: . # Attach the workspace persisted from 'build'
@@ -118,7 +118,7 @@ jobs:
   integration_test:
     docker:
       - image: cimg/python:3.11
-    # Environment variables from the 'gmail-client' context will be available here
+    # Environment variables from the 'dropbox-client' context will be available here
     steps:
       - attach_workspace:
           at: . # Attach the workspace persisted from 'build'
@@ -126,9 +126,9 @@ jobs:
           name: "Verify Environment Variables"
           command: |
             echo "Checking for required environment variables..."
-            if [ -z "$GMAIL_CLIENT_ID" ] || [ -z "$GMAIL_CLIENT_SECRET" ] || [ -z "$GMAIL_REFRESH_TOKEN" ]; then
-              echo "WARNING: Missing Gmail environment variables. Integration tests may be skipped."
-              echo "Required: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN"
+            if [ -z "$DROPBOX_APP_KEY" ] || [ -z "$DROPBOX_APP_SECRET" ] || [ -z "$DROPBOX_REFRESH_TOKEN" ]; then
+              echo "WARNING: Missing Dropbox environment variables. Integration tests may be skipped."
+              echo "Required: DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN"
             else
               echo "All required environment variables are present."
             fi
@@ -141,7 +141,7 @@ jobs:
           name: "Execute Integration Test Suite with Real API Calls"
           command: |
             source .venv/bin/activate
-            # Run integration tests that require real Gmail API connectivity
+            # Run integration tests that require real Dropbox API connectivity
             # These will use environment variables for authentication
             # Note: No coverage tracking for integration tests - they test component interactions
             pytest -m "integration and not local_credentials" \
@@ -296,7 +296,7 @@ workflows:
       - integration_test:
           requires:
             - circleci_test # Run after CircleCI tests pass
-          context: gmail-client # Context containing Gmail API credentials
+          context: dropbox-client # Context containing Dropbox API credentials
           filters:
             branches:
               only:

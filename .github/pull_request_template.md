@@ -19,8 +19,8 @@
 - [ ] 🔨 Build / tooling
 
 ## Impacted Areas
-- [ ] `mail_client_api`
-- [ ] `gmail_client_impl`
+- [ ] `cloud_storage_client_api`
+- [ ] `dropbox_client_impl`
 - [ ] Documentation
 - [ ] Tests
 - [ ] Tooling / CI

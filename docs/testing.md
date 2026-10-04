@@ -13,7 +13,7 @@ The project uses pytest markers to categorize tests based on their requirements 
 
 ### Environment-Specific Markers
 - `circleci`: Tests that can run in CI/CD environments without local credential files
-- `local_credentials`: Tests that require local `credentials.json` or `token.json` files
+- `local_credentials`: Tests that require local Dropbox credentials in a `.env` file
 
 ## Running Tests
 
@@ -51,7 +51,7 @@ uv run pytest -m "not local_credentials"
 
 ### CircleCI/CI Environment
 Tests marked with `@pytest.mark.circleci` can run in CI environments:
-- **Requirements**: Only environment variables (`GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`)
+- **Requirements**: Only environment variables (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`)
 - **What they test**:
   - Code syntax and imports
   - Factory function dependency injection
@@ -66,11 +66,9 @@ uv run pytest -m circleci --tb=short
 
 ### Local Development
 Tests marked with `@pytest.mark.local_credentials` require local files:
-- **Requirements**: `credentials.json` or `token.json` files
+- **Requirements**: a local `.env` file with Dropbox credentials (see `.env.example`)
 - **What they test**:
-  - Real Gmail API connectivity
-  - Interactive authentication flows
-  - Full message retrieval and parsing
+  - Real Dropbox API connectivity
   - End-to-end application functionality
 
 ## Environment Variables for CI
@@ -78,27 +76,17 @@ Tests marked with `@pytest.mark.local_credentials` require local files:
 Set these environment variables in your CI environment:
 
 ```bash
-export GMAIL_CLIENT_ID="your-oauth-client-id"
-export GMAIL_CLIENT_SECRET="your-oauth-client-secret"  
-export GMAIL_REFRESH_TOKEN="your-refresh-token"
-export GMAIL_TOKEN_URI="https://oauth2.googleapis.com/token"  # Optional
+export DROPBOX_APP_KEY="your-app-key"
+export DROPBOX_APP_SECRET="your-app-secret"
+export DROPBOX_REFRESH_TOKEN="your-refresh-token"
 ```
 
-## Authentication Modes
+## Authentication
 
-The application supports two authentication modes:
-
-### Interactive Mode (`interactive=True`)
-- Launches browser for OAuth flow
-- Requires `credentials.json`
-- Used for initial setup and local development
-- **Not suitable for CI/CD**
-
-### Non-Interactive Mode (`interactive=False`)  
-- Uses environment variables or existing token files
-- Never launches browser or prompts for user input
-- **Required for CI/CD environments**
-- Fails fast with clear error messages when credentials are missing
+`DropboxClient` reads the three `DROPBOX_*` variables from the environment (or `.env`):
+- Never launches a browser or prompts for user input, so it works the same locally and in CI/CD
+- Fails fast with a `RuntimeError` naming any missing variable
+- Tests can bypass authentication with `DropboxClient(dbx=mock)`
 
 ## Test Examples
 
@@ -124,8 +112,7 @@ uv run pytest -k "auth" -v
 
 ### Local Development (with credentials)
 - All tests should pass
-- Real Gmail API calls succeed
-- Interactive authentication works
+- Real Dropbox API calls succeed
 
 ### Local Development (without credentials)  
 - Unit tests pass
