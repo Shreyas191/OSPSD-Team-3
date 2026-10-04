@@ -28,7 +28,8 @@ client = get_client()  # -> DropboxClient
 |--------|-------|------------------|
 | `upload_file` | Zesan | `files_upload` (or `files_upload_session_*` for large files) |
 | `create_folder` | Zesan | `files_create_folder_v2` |
-| `copy` | Zesan | `files_copy_v2` |
+| `copy_file` | Zesan | `files_copy_v2` |
+| `copy_folder` | Zesan | `files_copy_v2` |
 | `download_file` | Jing | `files_download_to_file` |
 | `get_metadata` | Jing | `files_get_metadata` |
 | `list_folder` | Jing | `files_list_folder` / `files_list_folder_continue` |

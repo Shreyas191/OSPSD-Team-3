@@ -87,6 +87,7 @@ def test_client_copy_file() -> None:
     mock_client.copy_file.assert_called_once_with("/Docs/report.pdf", "/Docs/report (copy).pdf")
     assert duplicate.name == "report (copy).pdf"
 
+
 def test_client_copy_folder() -> None:
     """``copy_folder`` returns the metadata of the duplicated folder."""
     mock_client = Mock(spec=Client)
@@ -98,7 +99,7 @@ def test_client_copy_folder() -> None:
     assert duplicate.name == "Docs (copy)"
     assert duplicate.is_folder is True
 
-    
+
 # ----- Read -----
 
 

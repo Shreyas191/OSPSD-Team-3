@@ -81,8 +81,12 @@ class DropboxClient(cloud_storage_client_api.Client):
         """Create a folder. TODO(Zesan): implement with ``files_create_folder_v2``."""
         raise NotImplementedError
 
-    def copy(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Duplicate a file or folder. TODO(Zesan): implement with ``files_copy_v2``."""
+    def copy_file(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
+        """Duplicate a file. TODO(Zesan): implement with ``files_copy_v2``."""
+        raise NotImplementedError
+
+    def copy_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
+        """Duplicate a folder. TODO(Zesan): implement with ``files_copy_v2``."""
         raise NotImplementedError
 
     # ----- Read (Jing) -----

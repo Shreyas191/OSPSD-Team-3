@@ -28,8 +28,13 @@ class Client(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def copy(self, from_path: str, to_path: str) -> File:
-        """Duplicate the file or folder at ``from_path`` to ``to_path``."""
+    def copy_file(self, from_path: str, to_path: str) -> File:
+        """Duplicate the file at ``from_path`` to ``to_path`` and return the copy's metadata."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def copy_folder(self, from_path: str, to_path: str) -> File:
+        """Duplicate the folder at ``from_path`` (and its contents) to ``to_path``."""
         raise NotImplementedError
 
     # ----- Read -----
