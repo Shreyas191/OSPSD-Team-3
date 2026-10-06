@@ -38,7 +38,7 @@ client = get_client()  # -> DropboxClient
 | `move` | Shreyas | `files_move_v2` |
 | `delete` | John | `files_delete_v2` |
 
-Each method is currently a stub that raises `NotImplementedError`. Implement yours on a `<name>-<feature>` branch, wrap SDK metadata with `DropboxFile(metadata)`, and add unit tests that mock `client.dbx`.
+`rename` and `move` are implemented: both call `files_move_v2` with `autorename=False`, and translate Dropbox's `not_found` and `conflict` errors into `FileNotFoundError` and `FileExistsError`. The remaining methods are stubs that raise `NotImplementedError`. Implement yours on a `<name>-<feature>` branch, wrap SDK metadata with `DropboxFile(metadata)`, and add unit tests that mock `client.dbx`.
 
 ## Testing
 ```bash

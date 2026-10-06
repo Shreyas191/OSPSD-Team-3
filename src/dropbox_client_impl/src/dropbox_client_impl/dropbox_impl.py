@@ -18,6 +18,9 @@ from typing import ClassVar
 import cloud_storage_client_api
 import dropbox
 from dotenv import load_dotenv
+from dropbox import files
+
+from dropbox_client_impl.file_impl import DropboxFile
 
 load_dotenv()
 
@@ -110,18 +113,65 @@ class DropboxClient(cloud_storage_client_api.Client):
     # ----- Update (Shreyas) -----
 
     def rename(self, remote_path: str, new_name: str) -> cloud_storage_client_api.File:
-        """Rename in place. TODO(Shreyas): implement with ``files_move_v2``."""
-        raise NotImplementedError
+        """Rename a file or folder in place using ``files_move_v2``.
+
+        Dropbox has no dedicated rename call, so this is a move to a sibling path in the
+        same parent folder.
+
+        Raises:
+            ValueError: If ``new_name`` is empty or contains a ``/``.
+            FileNotFoundError: If nothing exists at ``remote_path``.
+            FileExistsError: If the parent folder already has an entry named ``new_name``.
+
+        """
+        if not new_name or "/" in new_name:
+            msg = f"Invalid name {new_name!r}: must be non-empty and must not contain '/'"
+            raise ValueError(msg)
+        parent = remote_path.rstrip("/").rpartition("/")[0]
+        return self.move(remote_path, f"{parent}/{new_name}")
 
     def move(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Move a file or folder. TODO(Shreyas): implement with ``files_move_v2``."""
-        raise NotImplementedError
+        """Move a file or folder to ``to_path`` using ``files_move_v2``.
+
+        ``to_path`` is the full destination path, including the entry's name. Existing
+        entries are never overwritten and Dropbox's autorename is disabled, so on success
+        the returned file's path is exactly ``to_path`` (modulo case).
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``from_path``.
+            FileExistsError: If something already exists at ``to_path``.
+
+        """
+        try:
+            result = self.dbx.files_move_v2(from_path, to_path, autorename=False)
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_relocation_error(e.error, from_path, to_path)
+            if translated is None:
+                raise
+            raise translated from e
+        self.logger.info("Moved %s -> %s", from_path, to_path)
+        return DropboxFile(result.metadata)
 
     # ----- Delete (John) -----
 
     def delete(self, remote_path: str) -> bool:
         """Delete a file or folder. TODO(John): implement with ``files_delete_v2``."""
         raise NotImplementedError
+
+
+def _translate_relocation_error(reason: object, from_path: str, to_path: str) -> Exception | None:
+    """Map a Dropbox ``RelocationError`` onto the built-in exceptions the contract documents.
+
+    Returns ``None`` for errors without a domain meaning (quota, permissions, ...), which
+    callers should re-raise unchanged.
+    """
+    if not isinstance(reason, files.RelocationError):
+        return None
+    if reason.is_from_lookup() and reason.get_from_lookup().is_not_found():
+        return FileNotFoundError(f"No file or folder at {from_path!r}")
+    if reason.is_to() and reason.get_to().is_conflict():
+        return FileExistsError(f"Something already exists at {to_path!r}")
+    return None
 
 
 def get_client_impl() -> cloud_storage_client_api.Client:
