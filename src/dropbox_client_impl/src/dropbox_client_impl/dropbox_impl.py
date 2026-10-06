@@ -105,7 +105,10 @@ class DropboxClient(cloud_storage_client_api.Client):
 
         ``to_path`` is the full destination path, including the entry's name. Existing
         entries are never overwritten and Dropbox's autorename is disabled, so on success
-        the returned file's path is exactly ``to_path`` (modulo case).
+        the returned file's path is exactly ``to_path``.
+
+        Dropbox paths are case-insensitive, so a destination that differs from the source
+        only in letter case (e.g. ``report.txt`` -> ``Report.txt``) counts as occupied.
 
         Raises:
             FileNotFoundError: If nothing exists at ``from_path``.
@@ -139,7 +142,9 @@ def _translate_relocation_error(reason: object, from_path: str, to_path: str) ->
         return None
     if reason.is_from_lookup() and reason.get_from_lookup().is_not_found():
         return FileNotFoundError(f"No file or folder at {from_path!r}")
-    if reason.is_to() and reason.get_to().is_conflict():
+    # Dropbox reports moving an entry onto its own path as ``duplicated_or_nested_paths``;
+    # the destination is occupied (by the source itself), so it is the same conflict.
+    if (reason.is_to() and reason.get_to().is_conflict()) or reason.is_duplicated_or_nested_paths():
         return FileExistsError(f"Something already exists at {to_path!r}")
     return None
 

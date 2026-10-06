@@ -72,6 +72,8 @@ curl -X POST http://127.0.0.1:8000/files/move \
   -d '{"from_path": "/Docs/report.pdf", "to_path": "/Archive/report.pdf"}'
 ```
 
+Destinations are compared case-insensitively (Dropbox paths are case-insensitive), so renaming to the current name or to a name that differs only in letter case (e.g. `report.txt` → `Report.txt`) returns `409`.
+
 Both operations change state in the provider. Dropbox implements each as a single `files_move_v2` call with autorename disabled; the entry keeps its Dropbox `id`. Other provider failures (e.g. moving a folder into itself, quota) currently surface as `500`.
 
 ## Testing

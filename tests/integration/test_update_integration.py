@@ -69,9 +69,15 @@ def test_rename_then_move_round_trip(client: DropboxClient, scratch: str, http: 
 
 
 def test_missing_source_and_conflict(scratch: str, http: TestClient) -> None:
-    """Dropbox's not_found and conflict errors surface as 404 and 409."""
+    """Missing sources are 404; occupied destinations (including the source itself) are 409."""
     missing = http.post("/files/move", json={"from_path": f"{scratch}/nope.txt", "to_path": f"{scratch}/x.txt"})
     assert missing.status_code == HTTPStatus.NOT_FOUND
 
     conflict = http.post("/files/rename", json={"path": f"{scratch}/report.txt", "new_name": "Archive"})
     assert conflict.status_code == HTTPStatus.CONFLICT
+
+    same_name = http.post("/files/rename", json={"path": f"{scratch}/report.txt", "new_name": "report.txt"})
+    assert same_name.status_code == HTTPStatus.CONFLICT
+
+    case_only = http.post("/files/rename", json={"path": f"{scratch}/report.txt", "new_name": "Report.txt"})
+    assert case_only.status_code == HTTPStatus.CONFLICT

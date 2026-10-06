@@ -91,6 +91,14 @@ def test_rename_onto_existing_name_raises_file_exists(dbx: Mock) -> None:
         DropboxClient(dbx=dbx).rename("/Docs/report.pdf", "taken.pdf")
 
 
+def test_rename_to_current_name_raises_file_exists(dbx: Mock) -> None:
+    """Dropbox's duplicated_or_nested_paths (destination is the source) becomes FileExistsError."""
+    dbx.files_move_v2.side_effect = _api_error(files.RelocationError.duplicated_or_nested_paths)
+
+    with pytest.raises(FileExistsError, match=re.escape("/Docs/report.pdf")):
+        DropboxClient(dbx=dbx).rename("/Docs/report.pdf", "report.pdf")
+
+
 def test_other_dropbox_errors_propagate(dbx: Mock) -> None:
     """Errors with no domain meaning are not disguised as missing or conflicting files."""
     error = _api_error(files.RelocationError.cant_move_folder_into_itself)
