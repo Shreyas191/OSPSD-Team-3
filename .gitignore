@@ -34,3 +34,4 @@ credentials.json
 
 .coverage*
 TESTING_STATUS.md
+.DS_Store
