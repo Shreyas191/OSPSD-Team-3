@@ -22,9 +22,7 @@ def test_register_binds_factory(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_get_client_impl_returns_dropbox_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """The factory builds a DropboxClient."""
-    monkeypatch.setenv("DROPBOX_APP_KEY", "key")
-    monkeypatch.setenv("DROPBOX_APP_SECRET", "secret")
-    monkeypatch.setenv("DROPBOX_REFRESH_TOKEN", "token")
+    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "token")
 
     client = dropbox_client_impl.get_client_impl()
 

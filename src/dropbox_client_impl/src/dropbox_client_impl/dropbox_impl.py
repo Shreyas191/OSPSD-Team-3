@@ -3,40 +3,24 @@
 This module provides a concrete implementation of the cloud storage client API using
 the official Dropbox Python SDK.
 
-Authentication uses a long-lived OAuth2 refresh token read from environment variables
-(or a local ``.env`` file), so it works the same way locally and in CI/CD.
+Credentials come from :func:`dropbox_client_impl.auth.get_dropbox_client`; this module
+never reads tokens itself, so the auth mechanism can change without touching CRUD code.
 
 Each method below is a stub owned by a team member. Replace the ``NotImplementedError``
 with a real Dropbox call on your own ``<name>-<feature>`` branch.
 """
 
 import logging
-import os
 from collections.abc import Iterator
-from typing import ClassVar
 
 import cloud_storage_client_api
 import dropbox
-from dotenv import load_dotenv
 
-load_dotenv()
+from dropbox_client_impl.auth import get_dropbox_client
 
 
 class DropboxClient(cloud_storage_client_api.Client):
-    """Concrete implementation of the Client abstraction using the Dropbox API.
-
-    Environment Variables:
-        - DROPBOX_APP_KEY: App key from the Dropbox App Console
-        - DROPBOX_APP_SECRET: App secret from the Dropbox App Console
-        - DROPBOX_REFRESH_TOKEN: Long-lived OAuth2 refresh token for the account
-
-    """
-
-    REQUIRED_ENV_VARS: ClassVar[tuple[str, ...]] = (
-        "DROPBOX_APP_KEY",
-        "DROPBOX_APP_SECRET",
-        "DROPBOX_REFRESH_TOKEN",
-    )
+    """Concrete implementation of the Client abstraction using the Dropbox API."""
 
     def __init__(self, dbx: dropbox.Dropbox | None = None) -> None:
         """Initialize the DropboxClient.
@@ -46,24 +30,11 @@ class DropboxClient(cloud_storage_client_api.Client):
                 authentication is skipped (useful for tests).
 
         Raises:
-            RuntimeError: If no instance is provided and credentials are missing.
+            DropboxAuthError: If no instance is provided and no access token is configured.
 
         """
         self.logger = logging.getLogger(__name__)
-        if dbx is not None:
-            self.dbx = dbx
-            return
-
-        missing = [name for name in self.REQUIRED_ENV_VARS if not os.environ.get(name)]
-        if missing:
-            msg = f"No valid credentials found. Missing environment variables: {', '.join(missing)}"
-            raise RuntimeError(msg)
-
-        self.dbx = dropbox.Dropbox(
-            oauth2_refresh_token=os.environ["DROPBOX_REFRESH_TOKEN"],
-            app_key=os.environ["DROPBOX_APP_KEY"],
-            app_secret=os.environ["DROPBOX_APP_SECRET"],
-        )
+        self.dbx = dbx if dbx is not None else get_dropbox_client()
 
     # ----- Create (Zesan) -----
 

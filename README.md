@@ -78,11 +78,11 @@ OSPSD-Team-3/
     ```
 
 3.  **Set Up Dropbox Credentials:**
-    -   Create an app in the [Dropbox App Console](https://www.dropbox.com/developers/apps) and note its app key and app secret.
-    -   Generate a long-lived refresh token for your account using the app's OAuth flow.
-    -   Copy `.env.example` to `.env` and fill in `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN`.
-    -   **Alternative**: For CI/CD environments, set the same three values as environment variables.
-    -   **Important:** `.env` contains secrets and is ignored by `.gitignore`.
+    -   Create an app in the [Dropbox App Console](https://www.dropbox.com/developers/apps), enable the scopes you need on the **Permissions** tab, then click **Generate** under "Generated access token" on the **Settings** tab.
+    -   Copy `.env.example` to `.env` and set `DROPBOX_ACCESS_TOKEN`. (Temporary: OAuth will replace this later.)
+    -   **Alternative**: For CI/CD environments, set `DROPBOX_ACCESS_TOKEN` as an environment variable.
+    -   **Important:** `.env` contains secrets and is ignored by `.gitignore`. Generated tokens expire after a few hours.
+    -   Verify it works: `uv run python -m dropbox_client_impl`
 
 4.  **Create and Sync the Virtual Environment:**
     This single command creates a `.venv` folder and installs all packages (including workspace members and development tools) defined in `uv.lock`.
@@ -199,7 +199,7 @@ The project uses pytest markers to categorize tests:
 
 The testing infrastructure handles different authentication scenarios:
 - **Local Development**: Uses a local `.env` file (see `.env.example`)
-- **CI/CD Environment**: Uses environment variables (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`)
+- **CI/CD Environment**: Uses the `DROPBOX_ACCESS_TOKEN` environment variable
 - **Missing Credentials**: Tests fail fast with clear error messages (no hanging)
 
 ## Continuous Integration

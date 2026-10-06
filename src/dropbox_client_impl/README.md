@@ -4,15 +4,24 @@
 `dropbox_client_impl` ships a concrete `cloud_storage_client_api.Client` backed by the official [Dropbox Python SDK](https://github.com/dropbox/dropbox-sdk-python). It handles authentication, calls the Dropbox API, and returns `DropboxFile` objects that implement `cloud_storage_client_api.File`.
 
 ## Authentication
-The client reads a long-lived OAuth2 refresh token from environment variables (or a local `.env` file, see `.env.example`):
+All credential handling lives in `auth.py`. For now it reads a manually generated access token from `DROPBOX_ACCESS_TOKEN` (environment variable or local `.env` file, see `.env.example`). OAuth will later replace this inside `auth.py` only, so **CRUD code must never read the token from the environment itself**.
 
-| Variable | Description |
-|----------|-------------|
-| `DROPBOX_APP_KEY` | App key from the [Dropbox App Console](https://www.dropbox.com/developers/apps) |
-| `DROPBOX_APP_SECRET` | App secret from the App Console |
-| `DROPBOX_REFRESH_TOKEN` | Refresh token for the account the app acts on |
+| Function | Use it for |
+|----------|------------|
+| `get_dropbox_client()` | Authenticated `dropbox.Dropbox` SDK instance (what `DropboxClient.dbx` uses) |
+| `dropbox_request(endpoint, payload)` | Raw authenticated POST to an RPC endpoint, e.g. `dropbox_request("/files/get_metadata", {"path": "/a.txt"})` |
+| `get_current_account()` | Returns the token's account; a quick auth check |
 
-If any are missing, `DropboxClient()` raises `RuntimeError` naming the missing variables. Tests can skip authentication by passing a pre-built SDK instance: `DropboxClient(dbx=mock)`.
+Errors from `dropbox_request` are all subclasses of `DropboxError`:
+`DropboxAuthError` (missing, invalid, or expired token), `DropboxAPIError` (other Dropbox error responses, has `.status_code`), and `DropboxConnectionError` (network failures and timeouts). SDK calls on `client.dbx` raise the SDK's own exceptions (`dropbox.exceptions.AuthError`, `ApiError`).
+
+Check that your token works:
+```bash
+uv run python -m dropbox_client_impl
+# Dropbox authentication OK: Jane Doe <jane@example.com>
+```
+
+Tests can skip authentication by passing a pre-built SDK instance: `DropboxClient(dbx=mock)`.
 
 ### Dependency Injection
 ```python
