@@ -14,7 +14,7 @@ import dropbox_client_impl  # Import to trigger dependency injection
 # Mark all tests in this file as integration tests
 pytestmark = pytest.mark.integration
 
-HAS_CREDENTIALS = all(os.environ.get(name) for name in dropbox_client_impl.DropboxClient.REQUIRED_ENV_VARS)
+HAS_CREDENTIALS = bool(os.environ.get("DROPBOX_ACCESS_TOKEN"))
 
 
 @pytest.mark.circleci
@@ -28,10 +28,8 @@ def test_get_client_returns_dropbox_client() -> None:
     """The factory returns a DropboxClient, or fails clearly without credentials."""
     try:
         client = cloud_storage_client_api.get_client()
-    except RuntimeError as e:
-        if "No valid credentials found" in str(e):
-            pytest.skip("Dropbox credentials are not configured in this environment.")
-        raise
+    except dropbox_client_impl.DropboxAuthError:
+        pytest.skip("Dropbox credentials are not configured in this environment.")
 
     assert isinstance(client, dropbox_client_impl.DropboxClient)
     assert isinstance(client, cloud_storage_client_api.Client)
@@ -46,3 +44,12 @@ def test_authenticates_with_dropbox() -> None:
     account = client.dbx.users_get_current_account()
 
     assert account.account_id
+
+
+@pytest.mark.circleci
+@pytest.mark.skipif(not HAS_CREDENTIALS, reason="Dropbox credentials are not configured.")
+def test_get_current_account_over_http() -> None:
+    """With a real token, POST /2/users/get_current_account succeeds."""
+    account = dropbox_client_impl.get_current_account()
+
+    assert account["account_id"]

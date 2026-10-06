@@ -51,7 +51,7 @@ uv run pytest -m "not local_credentials"
 
 ### CircleCI/CI Environment
 Tests marked with `@pytest.mark.circleci` can run in CI environments:
-- **Requirements**: Only environment variables (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`)
+- **Requirements**: Only the `DROPBOX_ACCESS_TOKEN` environment variable
 - **What they test**:
   - Code syntax and imports
   - Factory function dependency injection
@@ -76,9 +76,7 @@ Tests marked with `@pytest.mark.local_credentials` require local files:
 Set these environment variables in your CI environment:
 
 ```bash
-export DROPBOX_APP_KEY="your-app-key"
-export DROPBOX_APP_SECRET="your-app-secret"
-export DROPBOX_REFRESH_TOKEN="your-refresh-token"
+export DROPBOX_ACCESS_TOKEN="your-access-token"
 ```
 
 ## Authentication

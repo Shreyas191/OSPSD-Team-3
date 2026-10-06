@@ -25,9 +25,7 @@ Create a **Context** named `dropbox-client` with:
 
 | Variable | Description |
 |----------|-------------|
-| `DROPBOX_APP_KEY` | App key from the Dropbox App Console |
-| `DROPBOX_APP_SECRET` | App secret from the Dropbox App Console |
-| `DROPBOX_REFRESH_TOKEN` | Long-lived OAuth2 refresh token |
+| `DROPBOX_ACCESS_TOKEN` | Access token generated in the Dropbox App Console (temporary until OAuth is added) |
 
 ## Workflows
 

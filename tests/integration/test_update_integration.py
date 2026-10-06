@@ -13,6 +13,7 @@ from http import HTTPStatus
 import dropbox
 import pytest
 from cloud_storage_service.app import app, get_storage_client
+from dropbox_client_impl.auth import ACCESS_TOKEN_ENV_VAR
 from fastapi.testclient import TestClient
 
 from dropbox_client_impl import DropboxClient
@@ -20,7 +21,7 @@ from dropbox_client_impl import DropboxClient
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        not all(os.environ.get(name) for name in DropboxClient.REQUIRED_ENV_VARS),
+        not os.environ.get(ACCESS_TOKEN_ENV_VAR),
         reason="Dropbox credentials are not configured.",
     ),
 ]
