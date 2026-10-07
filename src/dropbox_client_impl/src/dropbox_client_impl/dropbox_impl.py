@@ -131,7 +131,7 @@ class DropboxClient(cloud_storage_client_api.Client):
         """Upload a local file to Dropbox. TODO(Zesan): implement with ``files_upload``."""
         mode = WriteMode.overwrite if overwrite else WriteMode.add
 
-        with Path.open(local_path, "rb") as source:
+        with Path(local_path).open("rb") as source:
             metadata = self.dbx.files_upload(
                 source.read(),
                 remote_path,

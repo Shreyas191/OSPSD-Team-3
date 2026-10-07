@@ -14,7 +14,7 @@ def test_client_upload_file(tmp_path: Path) -> None:
     local_file = tmp_path / "report.pdf"
     local_file.write_bytes(b"sample PDF bytes")
 
-    mock_dbx = cast(dropbox.Dropbox, Mock(spec=dropbox.Dropbox))
+    mock_dbx = cast("dropbox.Dropbox", Mock(spec=dropbox.Dropbox))
     mock_dbx.files_upload.return_value = SimpleNamespace(
         path_display="/Docs/report.pdf",
         path_lower="/docs/report.pdf",
