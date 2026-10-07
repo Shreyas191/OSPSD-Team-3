@@ -106,8 +106,15 @@ class DropboxClient(cloud_storage_client_api.Client):
         return DropboxFile(metadata)
 
     def list_folder(self, remote_path: str = "") -> Iterator[cloud_storage_client_api.File]:
-        """List a folder. TODO(Jing): implement with ``files_list_folder`` (+ ``_continue``)."""
-        raise NotImplementedError
+        """List a folder."""
+        result = self.dbx.files_list_folder(remote_path)
+        for entry in result.entries:
+            yield DropboxFile(entry)
+
+        while result.has_more:
+            result = self.dbx.files_list_folder_continue(result.cursor)
+            for entry in result.entries:
+                yield DropboxFile(entry)
 
     def search(self, query: str, max_results: int = 10) -> Iterator[cloud_storage_client_api.File]:
         """Search by name. TODO(Jing): implement with ``files_search_v2``."""
