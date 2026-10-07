@@ -16,10 +16,11 @@ from collections.abc import Iterator
 from typing import ClassVar
 
 import cloud_storage_client_api
-from dropbox_client_impl.file_impl import DropboxFile
 import dropbox
-from dropbox.files import SearchOptions
 from dotenv import load_dotenv
+from dropbox.files import SearchOptions
+
+from dropbox_client_impl.file_impl import DropboxFile
 
 load_dotenv()
 
@@ -94,7 +95,7 @@ class DropboxClient(cloud_storage_client_api.Client):
     # ----- Read (Jing) -----
 
     def download_file(self, remote_path: str, local_path: str) -> cloud_storage_client_api.File:
-        """Download a file from remote_path to local_path"""
+        """Download a file from remote_path to local_path."""
         metadata = self.dbx.files_download_to_file(
             download_path=local_path,
             path=remote_path,

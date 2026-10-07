@@ -1,21 +1,20 @@
-"""
-Unit tests for DropboxClient read functions
+"""Unit tests for DropboxClient read functions.
+
 - download_file (files_download_to_file)
 - get_metadata (files_get_metadata)
 - list_folder (files_list_folder and files_list_folder_continue pagination)
 - search (files_search_v2 and files_search_continue_v2 pagination)
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import Mock, call
 
 import pytest
+from cloud_storage_client_api.file import File
 from dropbox.exceptions import ApiError
 from dropbox.files import FileMetadata, FolderMetadata
 
-from cloud_storage_client_api.file import File
 from dropbox_client_impl.dropbox_impl import DropboxClient
-
 
 # fixtures
 
@@ -39,7 +38,7 @@ def create_fake_file_metadata(
     modified: datetime | None = None,
 ) -> FileMetadata:
     """Create a real Dropbox SDK FileMetadata instance for isinstance checks."""
-    now = modified or datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+    now = modified or datetime(2026, 1, 15, 10, 0, 0, tzinfo=UTC)
     return FileMetadata(
         name=name,
         id=file_id,
@@ -65,7 +64,7 @@ def create_fake_folder_metadata(
 
 
 def create_search_match(metadata: FileMetadata | FolderMetadata) -> Mock:
-    """Helper creating a mock SearchMatchV2 pointing to real metadata via MetadataV2 union."""
+    """Create a mock SearchMatchV2 pointing to real metadata via MetadataV2 union."""
     match = Mock()
     match.metadata.is_metadata.return_value = True
     match.metadata.get_metadata.return_value = metadata
@@ -75,7 +74,7 @@ def create_search_match(metadata: FileMetadata | FolderMetadata) -> Mock:
 # download_file tests
 
 def test_download_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """download_file calls files_download_to_file with exact paths and returns File."""
+    """Download_file calls files_download_to_file with exact paths and returns File."""
     fake_meta = create_fake_file_metadata()
     mock_dbx.files_download_to_file.return_value = fake_meta
 
@@ -95,7 +94,7 @@ def test_download_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
 
 
 def test_download_file_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """download_file propagates Dropbox ApiError when download fails."""
+    """Download_file propagates Dropbox ApiError when download fails."""
     mock_dbx.files_download_to_file.side_effect = ApiError(
         request_id="123",
         error=Mock(),
@@ -110,7 +109,7 @@ def test_download_file_api_error_propagates(client: DropboxClient, mock_dbx: Moc
 # get_metadata tests
 
 def test_get_metadata_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """get_metadata returns proper File model for a file."""
+    """Get_metadata returns proper File model for a file."""
     fake_meta = create_fake_file_metadata(name="data.csv", path="/data.csv", size=512)
     mock_dbx.files_get_metadata.return_value = fake_meta
 
@@ -127,7 +126,7 @@ def test_get_metadata_file_success(client: DropboxClient, mock_dbx: Mock) -> Non
 
 
 def test_get_metadata_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """get_metadata returns proper File model for a folder (size and modified are None)."""
+    """Get_metadata returns proper File model for a folder (size and modified are None)."""
     fake_meta = create_fake_folder_metadata(name="photos", path="/photos", folder_id="id:folder999")
     mock_dbx.files_get_metadata.return_value = fake_meta
 
@@ -144,7 +143,7 @@ def test_get_metadata_folder_success(client: DropboxClient, mock_dbx: Mock) -> N
 
 
 def test_get_metadata_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """get_metadata propagates Dropbox ApiError on non-existent path."""
+    """Get_metadata propagates Dropbox ApiError on non-existent path."""
     mock_dbx.files_get_metadata.side_effect = ApiError(
         request_id="456",
         error=Mock(),
@@ -159,7 +158,7 @@ def test_get_metadata_api_error_propagates(client: DropboxClient, mock_dbx: Mock
 # list_folder tests
 
 def test_list_folder_single_page(client: DropboxClient, mock_dbx: Mock) -> None:
-    """list_folder lists entries without pagination when has_more is False."""
+    """List_folder lists entries without pagination when has_more is False."""
     entry_file = create_fake_file_metadata("file1.txt", "/test/file1.txt")
     entry_folder = create_fake_folder_metadata("subfolder", "/test/subfolder")
 
@@ -177,7 +176,7 @@ def test_list_folder_single_page(client: DropboxClient, mock_dbx: Mock) -> None:
 
 
 def test_list_folder_multi_page_pagination(client: DropboxClient, mock_dbx: Mock) -> None:
-    """list_folder loops across 3 pages until has_more is False and stops."""
+    """List_folder loops across 3 pages until has_more is False and stops."""
     entry1 = create_fake_file_metadata("file1.txt", "/paginated/file1.txt")
     entry2 = create_fake_file_metadata("file2.txt", "/paginated/file2.txt")
     entry3 = create_fake_file_metadata("file3.txt", "/paginated/file3.txt")
@@ -200,7 +199,7 @@ def test_list_folder_multi_page_pagination(client: DropboxClient, mock_dbx: Mock
 
 
 def test_list_folder_root(client: DropboxClient, mock_dbx: Mock) -> None:
-    """list_folder handles default/empty root path correctly."""
+    """List_folder handles default/empty root path correctly."""
     page = Mock(entries=[], has_more=False)
     mock_dbx.files_list_folder.return_value = page
 
@@ -211,7 +210,7 @@ def test_list_folder_root(client: DropboxClient, mock_dbx: Mock) -> None:
 
 
 def test_list_folder_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """list_folder propagates Dropbox ApiError when initial call fails."""
+    """List_folder propagates Dropbox ApiError when initial call fails."""
     mock_dbx.files_list_folder.side_effect = ApiError(
         request_id="789",
         error=Mock(),
@@ -224,7 +223,7 @@ def test_list_folder_initial_api_error_propagates(client: DropboxClient, mock_db
 
 
 def test_list_folder_continuation_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """list_folder propagates Dropbox ApiError when pagination continuation fails."""
+    """List_folder propagates Dropbox ApiError when pagination continuation fails."""
     entry1 = create_fake_file_metadata("file1.txt", "/paginated/file1.txt")
     page1 = Mock(entries=[entry1], has_more=True, cursor="cur1")
 
@@ -243,7 +242,7 @@ def test_list_folder_continuation_api_error_propagates(client: DropboxClient, mo
 # search tests
 
 def test_search_file_success_and_options(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search invokes files_search_v2 with query, max_results, and filename_only."""
+    """Search invokes files_search_v2 with query, max_results, and filename_only."""
     file_meta = create_fake_file_metadata("match.txt", "/match.txt")
     match = create_search_match(file_meta)
 
@@ -271,7 +270,7 @@ def test_search_file_success_and_options(client: DropboxClient, mock_dbx: Mock) 
 
 
 def test_search_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search yields matched folders with correct folder contract attributes."""
+    """Search yields matched folders with correct folder contract attributes."""
     folder_meta = create_fake_folder_metadata("matched_folder", "/matched_folder")
     match = create_search_match(folder_meta)
 
@@ -289,7 +288,7 @@ def test_search_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
 
 
 def test_search_empty_matches(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search returns an empty iterator when no matches are found."""
+    """Search returns an empty iterator when no matches are found."""
     search_result = Mock(matches=[], has_more=False)
     mock_dbx.files_search_v2.return_value = search_result
 
@@ -301,7 +300,7 @@ def test_search_empty_matches(client: DropboxClient, mock_dbx: Mock) -> None:
 
 
 def test_search_skips_non_metadata_matches(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search ignores matches where metadata is not available (is_metadata is False)."""
+    """Search ignores matches where metadata is not available (is_metadata is False)."""
     match_deleted = Mock()
     match_deleted.metadata.is_metadata.return_value = False
 
@@ -315,7 +314,7 @@ def test_search_skips_non_metadata_matches(client: DropboxClient, mock_dbx: Mock
 
 
 def test_search_multi_page_pagination(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search loops across 3 pages using files_search_continue_v2 until has_more is False."""
+    """Search loops across 3 pages using files_search_continue_v2 until has_more is False."""
     m1 = create_search_match(create_fake_file_metadata("res1.txt", "/res1.txt"))
     m2 = create_search_match(create_fake_file_metadata("res2.txt", "/res2.txt"))
     m3 = create_search_match(create_fake_file_metadata("res3.txt", "/res3.txt"))
@@ -338,7 +337,7 @@ def test_search_multi_page_pagination(client: DropboxClient, mock_dbx: Mock) -> 
 
 
 def test_search_respects_max_results_limit_on_yield(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search yields at most max_results items even if additional matches exist."""
+    """Search yields at most max_results items even if additional matches exist."""
     m1 = create_search_match(create_fake_file_metadata("res1.txt", "/res1.txt"))
     m2 = create_search_match(create_fake_file_metadata("res2.txt", "/res2.txt"))
     m3 = create_search_match(create_fake_file_metadata("res3.txt", "/res3.txt"))
@@ -353,7 +352,7 @@ def test_search_respects_max_results_limit_on_yield(client: DropboxClient, mock_
 
 
 def test_search_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search propagates Dropbox ApiError when initial search call fails."""
+    """Search propagates Dropbox ApiError when initial search call fails."""
     mock_dbx.files_search_v2.side_effect = ApiError(
         request_id="999",
         error=Mock(),
@@ -366,7 +365,7 @@ def test_search_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mo
 
 
 def test_search_continuation_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """search propagates Dropbox ApiError when search pagination continuation fails."""
+    """Search propagates Dropbox ApiError when search pagination continuation fails."""
     m1 = create_search_match(create_fake_file_metadata("res1.txt", "/res1.txt"))
     page1 = Mock(matches=[m1], has_more=True, cursor="cur1")
 
