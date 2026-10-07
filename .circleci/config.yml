@@ -52,6 +52,7 @@ jobs:
           command: |
             source .venv/bin/activate # Activate the venv from the workspace
             ruff check .
+            ruff format --check .
 
   # Job 3: Unit Tests and Coverage (Fast, No External Dependencies)
   unit_test:
@@ -77,8 +78,8 @@ jobs:
           name: "Run Static Analysis (mypy)"
           command: |
             source .venv/bin/activate
-            # Target specific source directories for mypy
-            mypy src/ --explicit-package-bases
+            # Type-check source and test code (settings in pyproject.toml)
+            mypy src tests
       - store_test_results:
           path: test-results/unit
       - store_artifacts: # Store coverage reports
@@ -209,7 +210,7 @@ jobs:
 
 # Orchestrate jobs using workflows
 workflows:
-  # Main workflow: Build, Lint, Test (runs on all branches)
+  # Main workflow: Build, Lint, Test (runs on all branches except main/dev)
   build_and_test:
     jobs:
       - build:
@@ -217,7 +218,7 @@ workflows:
             branches:
               ignore:
                 - main
-                - develop
+                - dev
       - lint:
           requires:
             - build
@@ -225,7 +226,7 @@ workflows:
             branches:
               ignore:
                 - main
-                - develop
+                - dev
 
       - unit_test:
           requires:
@@ -234,7 +235,7 @@ workflows:
             branches:
               ignore:
                 - main
-                - develop
+                - dev
 
       - circleci_test:
           requires:
@@ -243,7 +244,7 @@ workflows:
             branches:
               ignore:
                 - main
-                - develop
+                - dev
 
       # Optional: Report summary after core tests
       - report_summary:
@@ -254,9 +255,9 @@ workflows:
             branches:
               ignore:
                 - main
-                - develop
+                - dev
 
-  # Enhanced workflow: Full tests with real credentials (main/develop only)
+  # Enhanced workflow: Full tests with real credentials (main/dev only)
   full_integration:
     jobs:
       - build:
@@ -264,7 +265,7 @@ workflows:
             branches:
               only:
                 - main
-                - develop # Add other branches as needed
+                - dev
 
       - lint:
           requires:
@@ -273,7 +274,7 @@ workflows:
             branches:
               only:
                 - main
-                - develop
+                - dev
 
       - unit_test:
           requires:
@@ -282,7 +283,7 @@ workflows:
             branches:
               only:
                 - main
-                - develop
+                - dev
 
       - circleci_test:
           requires:
@@ -291,7 +292,7 @@ workflows:
             branches:
               only:
                 - main
-                - develop
+                - dev
 
       - integration_test:
           requires:
@@ -301,7 +302,7 @@ workflows:
             branches:
               only:
                 - main
-                - develop
+                - dev
                 
       - report_summary:
           requires:
@@ -312,4 +313,4 @@ workflows:
             branches:
               only:
                 - main
-                - develop
+                - dev

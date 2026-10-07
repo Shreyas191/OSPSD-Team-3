@@ -221,8 +221,8 @@ The testing infrastructure handles different authentication scenarios:
 
 The project includes a comprehensive CircleCI configuration (`.circleci/config.yml`) with:
 
-- **All Branches**: Unit tests, linting, and CI-compatible tests
-- **Main/Develop**: Additional integration tests with real Dropbox API calls
+- **All Branches**: Linting, format check, type checking, unit tests, and CI-compatible tests
+- **`main` and `dev`**: Additional integration tests with real Dropbox API calls
 - **Artifacts**: Coverage reports, test results, and build summaries
 
 See `docs/circleci-setup.md` for detailed CI/CD setup instructions.
