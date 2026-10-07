@@ -7,6 +7,8 @@
 
 This repository builds a component-based document storage client in Python. It defines a provider-agnostic cloud storage API and implements it on top of the Dropbox API, so files and folders can be created, read, updated, and deleted through one stable interface.
 
+**Vertical:** Document Storage · **Provider:** Dropbox · **Contributor guide:** [`AGENTS.md`](AGENTS.md) · **Workflow:** [`docs/workflow.md`](docs/workflow.md)
+
 The project emphasizes a strict separation of concerns, dependency injection, and a comprehensive, automated toolchain to enforce code quality and best practices.
 
 ## Team Members
@@ -86,6 +88,8 @@ OSPSD-Team-3/
 
 4.  **Connect Your Dropbox Account (OAuth 2.0):**
     -   You need the team's Dropbox app (see [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md#authentication-oauth-20) for how it is created). Its redirect URI must be `http://localhost:8080/oauth/callback`.
+    -   **Required app permissions** (Permissions tab): `account_info.read`, `files.metadata.read`, `files.metadata.write`, `files.content.read`, `files.content.write`. After changing permissions, click **Submit** and run `login` again; existing tokens keep their old permissions.
+    -   Use a dedicated test Dropbox account (or an app with **App folder** access), since tests and demos create, move and delete files.
     -   Copy `.env.example` to `.env` and fill in `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REDIRECT_URI`.
     -   Run `uv run python -m dropbox_client_impl login`. Your browser opens Dropbox; sign in and click **Allow**. The credentials are saved to `.dropbox_token.json` and renewed automatically.
     -   Verify it works: `uv run python -m dropbox_client_impl`
@@ -106,7 +110,15 @@ OSPSD-Team-3/
     uv run python main.py
     ```
 
+### 3. Cleanup
+
+-   **Test data:** integration tests create a uniquely named `/ospsd-it-…` folder and delete it when they finish. If a run is interrupted, delete any leftover `/ospsd-it-…` folders in Dropbox by hand. Files you create while trying the service manually are not cleaned up automatically.
+-   **Credentials:** `uv run python -m dropbox_client_impl logout` revokes the token and deletes `.dropbox_token.json`. Delete `.env` if you no longer need it.
+-   **Environment:** remove the virtual environment with `rm -rf .venv`, and tool caches with `rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage`.
+
 ## Development Workflow
+
+See [`docs/workflow.md`](docs/workflow.md) for how issues, reviews, merges and releases work, and [`AGENTS.md`](AGENTS.md) for the code map and contribution rules.
 
 All commands should be run from the project root with the virtual environment activated.
 
