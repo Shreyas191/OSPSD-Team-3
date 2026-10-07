@@ -101,8 +101,9 @@ class DropboxClient(cloud_storage_client_api.Client):
         return DropboxFile(metadata)
 
     def get_metadata(self, remote_path: str) -> cloud_storage_client_api.File:
-        """Get file or folder metadata. TODO(Jing): implement with ``files_get_metadata``."""
-        raise NotImplementedError
+        """Get file or folder metadata."""
+        metadata = self.dbx.files_get_metadata(remote_path)
+        return DropboxFile(metadata)
 
     def list_folder(self, remote_path: str = "") -> Iterator[cloud_storage_client_api.File]:
         """List a folder. TODO(Jing): implement with ``files_list_folder`` (+ ``_continue``)."""
