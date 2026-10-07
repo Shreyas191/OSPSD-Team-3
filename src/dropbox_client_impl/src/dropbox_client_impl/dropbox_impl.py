@@ -18,6 +18,7 @@ from typing import ClassVar
 import cloud_storage_client_api
 from dropbox_client_impl.file_impl import DropboxFile
 import dropbox
+from dropbox.files import SearchOptions
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -117,8 +118,23 @@ class DropboxClient(cloud_storage_client_api.Client):
                 yield DropboxFile(entry)
 
     def search(self, query: str, max_results: int = 10) -> Iterator[cloud_storage_client_api.File]:
-        """Search by name. TODO(Jing): implement with ``files_search_v2``."""
-        raise NotImplementedError
+        """Search for a file by name."""
+        options = SearchOptions(max_results=max_results, filename_only=True)
+        result = self.dbx.files_search_v2(query=query, options=options)
+        yielded = 0
+
+        while True:
+            for match in result.matches:
+                if match.metadata.is_metadata():
+                    yield DropboxFile(match.metadata.get_metadata())
+                    yielded += 1
+                    if yielded >= max_results:
+                        return
+
+            if not result.has_more:
+                break
+
+            result = self.dbx.files_search_continue_v2(result.cursor)
 
     # ----- Update (Shreyas) -----
 
