@@ -25,7 +25,13 @@ Create a **Context** named `dropbox-client` with:
 
 | Variable | Description |
 |----------|-------------|
-| `DROPBOX_ACCESS_TOKEN` | Access token generated in the Dropbox App Console (temporary until OAuth is added) |
+| `DROPBOX_APP_KEY` | App key from the Dropbox App Console (Settings tab) |
+| `DROPBOX_APP_SECRET` | App secret from the Dropbox App Console (Settings tab) |
+| `DROPBOX_REFRESH_TOKEN` | OAuth refresh token for the account CI should use |
+
+CI cannot complete the browser-based OAuth flow, so it uses a refresh token instead. To get one, run `uv run python -m dropbox_client_impl login` locally while signed in to the Dropbox account CI should use. Then copy the `refresh_token` value from the generated `.dropbox_token.json` into the context. The Dropbox SDK uses it to obtain short-lived access tokens automatically, so it does not expire after a few hours. To rotate it, run `logout` (or remove the app under Dropbox **Settings → Connected apps**), log in again, and update the context.
+
+Without these variables, the real-Dropbox integration tests are skipped and everything else still runs.
 
 ## Workflows
 
@@ -68,6 +74,6 @@ uv run pytest src/ tests/ -m "not local_credentials"
 
 ## Security Notes
 
-- Never commit credentials
+- Never commit credentials (`.env` and `.dropbox_token.json` are gitignored)
 - Integration tests only run on protected branches (`main`, `develop`)
 - Use CircleCI contexts for sensitive variables

@@ -51,7 +51,8 @@ OSPSD-Team-3/
 ├── main.py                       # Main application entry point
 ├── pyproject.toml               # Project configuration (dependencies, tools)
 ├── uv.lock                      # Locked dependency versions
-└── .env                         # Dropbox credentials (local only, see .env.example)
+├── .env                         # Dropbox app config (local only, see .env.example)
+└── .dropbox_token.json          # OAuth refresh token written by `login` (local only)
 ```
 
 ## Project Setup
@@ -77,18 +78,19 @@ OSPSD-Team-3/
     cd OSPSD-Team-3
     ```
 
-3.  **Set Up Dropbox Credentials:**
-    -   Create an app in the [Dropbox App Console](https://www.dropbox.com/developers/apps), enable the scopes you need on the **Permissions** tab, then click **Generate** under "Generated access token" on the **Settings** tab.
-    -   Copy `.env.example` to `.env` and set `DROPBOX_ACCESS_TOKEN`. (Temporary: OAuth will replace this later.)
-    -   **Alternative**: For CI/CD environments, set `DROPBOX_ACCESS_TOKEN` as an environment variable.
-    -   **Important:** `.env` contains secrets and is ignored by `.gitignore`. Generated tokens expire after a few hours.
-    -   Verify it works: `uv run python -m dropbox_client_impl`
-
-4.  **Create and Sync the Virtual Environment:**
+3.  **Create and Sync the Virtual Environment:**
     This single command creates a `.venv` folder and installs all packages (including workspace members and development tools) defined in `uv.lock`.
     ```bash
     uv sync --all-packages --extra dev
     ```
+
+4.  **Connect Your Dropbox Account (OAuth 2.0):**
+    -   You need the team's Dropbox app (see [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md#authentication-oauth-20) for how it is created). Its redirect URI must be `http://localhost:8080/oauth/callback`.
+    -   Copy `.env.example` to `.env` and fill in `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REDIRECT_URI`.
+    -   Run `uv run python -m dropbox_client_impl login`. Your browser opens Dropbox; sign in and click **Allow**. The credentials are saved to `.dropbox_token.json` and renewed automatically.
+    -   Verify it works: `uv run python -m dropbox_client_impl`
+    -   **CI/CD**: set `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN` as environment variables instead (see `docs/circleci-setup.md`).
+    -   **Important:** `.env` and `.dropbox_token.json` contain secrets, are ignored by `.gitignore`, and must never be committed.
 
 5.  **Activate the Virtual Environment:**
     ```bash
@@ -198,9 +200,10 @@ The project uses pytest markers to categorize tests:
 ### Authentication in Tests
 
 The testing infrastructure handles different authentication scenarios:
-- **Local Development**: Uses a local `.env` file (see `.env.example`)
-- **CI/CD Environment**: Uses the `DROPBOX_ACCESS_TOKEN` environment variable
-- **Missing Credentials**: Tests fail fast with clear error messages (no hanging)
+- **Unit Tests**: Never touch Dropbox; OAuth, token storage, and HTTP are mocked
+- **Local Development**: Uses `.env` plus the token file written by `uv run python -m dropbox_client_impl login`
+- **CI/CD Environment**: Uses the `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN` environment variables
+- **Missing Credentials**: Real-Dropbox tests are skipped; nothing prompts or hangs
 
 ## Continuous Integration
 

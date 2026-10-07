@@ -2,6 +2,8 @@
 
 These tests verify that importing the implementation wires it into the abstract
 factory, and (when credentials are available) that it can authenticate with Dropbox.
+Credentials are optional: a saved OAuth login (``.dropbox_token.json``),
+``DROPBOX_REFRESH_TOKEN`` (CI), or ``DROPBOX_ACCESS_TOKEN`` (dev fallback).
 """
 
 import os
@@ -10,11 +12,14 @@ import pytest
 
 import cloud_storage_client_api
 import dropbox_client_impl  # Import to trigger dependency injection
+from dropbox_client_impl import auth
 
 # Mark all tests in this file as integration tests
 pytestmark = pytest.mark.integration
 
-HAS_CREDENTIALS = bool(os.environ.get("DROPBOX_ACCESS_TOKEN"))
+HAS_CREDENTIALS = bool(
+    os.environ.get("DROPBOX_REFRESH_TOKEN") or os.environ.get("DROPBOX_ACCESS_TOKEN") or auth.get_token_file().exists(),
+)
 
 
 @pytest.mark.circleci
@@ -49,7 +54,7 @@ def test_authenticates_with_dropbox() -> None:
 @pytest.mark.circleci
 @pytest.mark.skipif(not HAS_CREDENTIALS, reason="Dropbox credentials are not configured.")
 def test_get_current_account_over_http() -> None:
-    """With a real token, POST /2/users/get_current_account succeeds."""
+    """With real credentials, POST /2/users/get_current_account succeeds."""
     account = dropbox_client_impl.get_current_account()
 
     assert account["account_id"]
