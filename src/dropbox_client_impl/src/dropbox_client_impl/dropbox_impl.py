@@ -92,8 +92,12 @@ class DropboxClient(cloud_storage_client_api.Client):
     # ----- Read (Jing) -----
 
     def download_file(self, remote_path: str, local_path: str) -> cloud_storage_client_api.File:
-        """Download a file. TODO(Jing): implement with ``files_download_to_file``."""
-        raise NotImplementedError
+        """Download a file from remote_path to local_path"""
+        metadata = self.dbx.files_download_to_file(
+            download_path=local_path,
+            path=remote_path,
+        )
+        return DropboxFile(metadata)
 
     def get_metadata(self, remote_path: str) -> cloud_storage_client_api.File:
         """Get file or folder metadata. TODO(Jing): implement with ``files_get_metadata``."""
