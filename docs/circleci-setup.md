@@ -35,12 +35,12 @@ Without these variables, the real-Dropbox integration tests are skipped and ever
 
 ## Workflows
 
-### Standard Workflow (All Branches)
+### Standard Workflow (all other branches)
 ```
 build → lint + unit_test → circleci_test → report_summary
 ```
 
-### Full Integration (main/develop only)
+### Full Integration (`main` and `dev` only)
 ```
 build → lint + unit_test → circleci_test → integration_test → report_summary
 ```
@@ -55,7 +55,8 @@ uv sync --all-packages --extra dev
 
 # Quality checks
 uv run ruff check .
-uv run mypy src/
+uv run ruff format --check .
+uv run mypy src tests
 
 # Tests
 uv run pytest src/ --cov=src --cov-fail-under=85
@@ -75,5 +76,5 @@ uv run pytest src/ tests/ -m "not local_credentials"
 ## Security Notes
 
 - Never commit credentials (`.env` and `.dropbox_token.json` are gitignored)
-- Integration tests only run on protected branches (`main`, `develop`)
+- Integration tests with real credentials only run on `main` and `dev`
 - Use CircleCI contexts for sensitive variables
