@@ -32,7 +32,7 @@ class DropboxClient(cloud_storage_client_api.Client):
                 authentication is skipped (useful for tests).
 
         Raises:
-            DropboxAuthError: If no instance is provided and no access token is configured.
+            DropboxAuthError: If no instance is provided and Dropbox is not authorized.
 
         """
         self.logger = logging.getLogger(__name__)
