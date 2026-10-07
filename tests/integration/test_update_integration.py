@@ -3,6 +3,8 @@
 Drives POST /files/rename and POST /files/move through the HTTP service, the
 DropboxClient and the real Dropbox API. Fixtures are created and removed directly with
 the SDK inside a uniquely named scratch folder, so the test leaves the account unchanged.
+Runs when any Dropbox credential is available: a saved OAuth login, ``DROPBOX_REFRESH_TOKEN``
+or ``DROPBOX_ACCESS_TOKEN``.
 """
 
 import os
@@ -13,15 +15,18 @@ from http import HTTPStatus
 import dropbox
 import pytest
 from cloud_storage_service.app import app, get_storage_client
-from dropbox_client_impl.auth import ACCESS_TOKEN_ENV_VAR
 from fastapi.testclient import TestClient
 
-from dropbox_client_impl import DropboxClient
+from dropbox_client_impl import DropboxClient, auth
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        not os.environ.get(ACCESS_TOKEN_ENV_VAR),
+        not (
+            os.environ.get(auth.REFRESH_TOKEN_ENV_VAR)
+            or os.environ.get(auth.ACCESS_TOKEN_ENV_VAR)
+            or auth.get_token_file().exists()
+        ),
         reason="Dropbox credentials are not configured.",
     ),
 ]
