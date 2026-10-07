@@ -22,9 +22,12 @@ MAIN_SCRIPT = Path(__file__).parent.parent.parent / "main.py"
 @pytest.mark.circleci
 def test_main_runs_with_mocked_client(capsys: pytest.CaptureFixture[str]) -> None:
     """main() completes using a DropboxClient backed by a mocked SDK."""
-    client = DropboxClient(dbx=Mock())
+    # Jing: eventually should lift this mock of dropbox out so other tests can reuse it
+    mock_dbx = Mock() # mock of dropbox
+    mock_dbx.files_list_folder.return_value = Mock(entries=[], has_more=False) # mock of ListFolderResult
+    client = DropboxClient(dbx=mock_dbx)
 
-    with patch("cloud_storage_client_api.get_client", return_value=client):
+    with patch("cloud_storage_client_api.get_client", return_valuesoles=client):
         main.main()
 
     assert "Demo complete." in capsys.readouterr().out
