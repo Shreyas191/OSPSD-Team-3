@@ -40,6 +40,7 @@ plugins:
             search_paths: 
               - src/cloud_storage_client_api/src
               - src/dropbox_client_impl/src
+              - src/cloud_storage_service/src
             show_source: false
             docstring_section_style: spacy
             members_order: source

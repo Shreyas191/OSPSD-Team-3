@@ -31,10 +31,12 @@ This project is built on the principle of "programming integrated over time." Th
 
 ## Core Components
 
-The project is a `uv` workspace containing two packages:
+The project is a `uv` workspace containing three packages:
 
 1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, create folders, copy, download, get metadata, list, search, rename, move, and delete.
 2.  **`dropbox_client_impl`**: Provides the `DropboxClient` class, a concrete implementation that uses the Dropbox Python SDK to perform the actions defined in the `Client` abstraction.
+
+3.  **`cloud_storage_service`**: A FastAPI app that exposes the `Client` operations over HTTP. Routes depend only on the abstract `Client`. See [`src/cloud_storage_service/README.md`](src/cloud_storage_service/README.md) for the endpoint contracts.
 
 See [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md) for which team member owns each method and the Dropbox endpoint it maps to.
 
@@ -44,7 +46,8 @@ See [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md) for
 OSPSD-Team-3/
 ├── src/                          # Source packages (uv workspace members)
 │   ├── cloud_storage_client_api/ # Abstract Client and File base classes (ABCs)
-│   └── dropbox_client_impl/      # Dropbox-specific client implementation
+│   ├── dropbox_client_impl/      # Dropbox-specific client implementation
+│   └── cloud_storage_service/    # FastAPI HTTP service
 ├── tests/                        # Integration and E2E tests
 │   ├── integration/              # Component integration tests
 │   └── e2e/                      # End-to-end application tests
@@ -127,6 +130,11 @@ All commands should be run from the project root with the virtual environment ac
 To run the main demonstration script:
 ```bash
 uv run python main.py
+```
+
+To run the HTTP service (Swagger UI at `http://127.0.0.1:8000/docs`):
+```bash
+uv run uvicorn cloud_storage_service.app:app --reload
 ```
 
 ### Running the Toolchain
