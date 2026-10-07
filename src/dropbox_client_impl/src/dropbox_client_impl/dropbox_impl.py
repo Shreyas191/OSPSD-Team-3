@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from typing import ClassVar
 
 import cloud_storage_client_api
+from dropbox_client_impl.file_impl import DropboxFile
 import dropbox
 from dotenv import load_dotenv
 
