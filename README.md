@@ -7,6 +7,8 @@
 
 This repository builds a component-based document storage client in Python. It defines a provider-agnostic cloud storage API and implements it on top of the Dropbox API, so files and folders can be created, read, updated, and deleted through one stable interface.
 
+**Vertical:** Document Storage · **Provider:** Dropbox · **Contributor guide:** [`AGENTS.md`](AGENTS.md) · **Workflow:** [`docs/workflow.md`](docs/workflow.md)
+
 The project emphasizes a strict separation of concerns, dependency injection, and a comprehensive, automated toolchain to enforce code quality and best practices.
 
 ## Team Members
@@ -29,10 +31,12 @@ This project is built on the principle of "programming integrated over time." Th
 
 ## Core Components
 
-The project is a `uv` workspace containing two packages:
+The project is a `uv` workspace containing three packages:
 
 1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, create folders, copy, download, get metadata, list, search, rename, move, and delete.
 2.  **`dropbox_client_impl`**: Provides the `DropboxClient` class, a concrete implementation that uses the Dropbox Python SDK to perform the actions defined in the `Client` abstraction.
+
+3.  **`cloud_storage_service`**: A FastAPI app that exposes the `Client` operations over HTTP. Routes depend only on the abstract `Client`. See [`src/cloud_storage_service/README.md`](src/cloud_storage_service/README.md) for the endpoint contracts.
 
 See [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md) for which team member owns each method and the Dropbox endpoint it maps to.
 
@@ -42,7 +46,8 @@ See [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md) for
 OSPSD-Team-3/
 ├── src/                          # Source packages (uv workspace members)
 │   ├── cloud_storage_client_api/ # Abstract Client and File base classes (ABCs)
-│   └── dropbox_client_impl/      # Dropbox-specific client implementation
+│   ├── dropbox_client_impl/      # Dropbox-specific client implementation
+│   └── cloud_storage_service/    # FastAPI HTTP service
 ├── tests/                        # Integration and E2E tests
 │   ├── integration/              # Component integration tests
 │   └── e2e/                      # End-to-end application tests
@@ -51,7 +56,8 @@ OSPSD-Team-3/
 ├── main.py                       # Main application entry point
 ├── pyproject.toml               # Project configuration (dependencies, tools)
 ├── uv.lock                      # Locked dependency versions
-└── .env                         # Dropbox credentials (local only, see .env.example)
+├── .env                         # Dropbox app config (local only, see .env.example)
+└── .dropbox_token.json          # OAuth refresh token written by `login` (local only)
 ```
 
 ## Project Setup
@@ -77,18 +83,21 @@ OSPSD-Team-3/
     cd OSPSD-Team-3
     ```
 
-3.  **Set Up Dropbox Credentials:**
-    -   Create an app in the [Dropbox App Console](https://www.dropbox.com/developers/apps) and note its app key and app secret.
-    -   Generate a long-lived refresh token for your account using the app's OAuth flow.
-    -   Copy `.env.example` to `.env` and fill in `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN`.
-    -   **Alternative**: For CI/CD environments, set the same three values as environment variables.
-    -   **Important:** `.env` contains secrets and is ignored by `.gitignore`.
-
-4.  **Create and Sync the Virtual Environment:**
+3.  **Create and Sync the Virtual Environment:**
     This single command creates a `.venv` folder and installs all packages (including workspace members and development tools) defined in `uv.lock`.
     ```bash
     uv sync --all-packages --extra dev
     ```
+
+4.  **Connect Your Dropbox Account (OAuth 2.0):**
+    -   You need the team's Dropbox app (see [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md#authentication-oauth-20) for how it is created). Its redirect URI must be `http://localhost:8080/oauth/callback`.
+    -   **Required app permissions** (Permissions tab): `account_info.read`, `files.metadata.read`, `files.metadata.write`, `files.content.read`, `files.content.write`. After changing permissions, click **Submit** and run `login` again; existing tokens keep their old permissions.
+    -   Use a dedicated test Dropbox account (or an app with **App folder** access), since tests and demos create, move and delete files.
+    -   Copy `.env.example` to `.env` and fill in `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REDIRECT_URI`.
+    -   Run `uv run python -m dropbox_client_impl login`. Your browser opens Dropbox; sign in and click **Allow**. The credentials are saved to `.dropbox_token.json` and renewed automatically.
+    -   Verify it works: `uv run python -m dropbox_client_impl`
+    -   **CI/CD**: set `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN` as environment variables instead (see `docs/circleci-setup.md`).
+    -   **Important:** `.env` and `.dropbox_token.json` contain secrets, are ignored by `.gitignore`, and must never be committed.
 
 5.  **Activate the Virtual Environment:**
     ```bash
@@ -104,7 +113,15 @@ OSPSD-Team-3/
     uv run python main.py
     ```
 
+### 3. Cleanup
+
+-   **Test data:** integration tests create a uniquely named `/ospsd-it-…` folder and delete it when they finish. If a run is interrupted, delete any leftover `/ospsd-it-…` folders in Dropbox by hand. Files you create while trying the service manually are not cleaned up automatically.
+-   **Credentials:** `uv run python -m dropbox_client_impl logout` revokes the token and deletes `.dropbox_token.json`. Delete `.env` if you no longer need it.
+-   **Environment:** remove the virtual environment with `rm -rf .venv`, and tool caches with `rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage`.
+
 ## Development Workflow
+
+See [`docs/workflow.md`](docs/workflow.md) for how issues, reviews, merges and releases work, and [`AGENTS.md`](AGENTS.md) for the code map and contribution rules.
 
 All commands should be run from the project root with the virtual environment activated.
 
@@ -113,6 +130,11 @@ All commands should be run from the project root with the virtual environment ac
 To run the main demonstration script:
 ```bash
 uv run python main.py
+```
+
+To run the HTTP service (Swagger UI at `http://127.0.0.1:8000/docs`):
+```bash
+uv run uvicorn cloud_storage_service.app:app --reload
 ```
 
 ### Running the Toolchain
@@ -198,16 +220,17 @@ The project uses pytest markers to categorize tests:
 ### Authentication in Tests
 
 The testing infrastructure handles different authentication scenarios:
-- **Local Development**: Uses a local `.env` file (see `.env.example`)
-- **CI/CD Environment**: Uses environment variables (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`)
-- **Missing Credentials**: Tests fail fast with clear error messages (no hanging)
+- **Unit Tests**: Never touch Dropbox; OAuth, token storage, and HTTP are mocked
+- **Local Development**: Uses `.env` plus the token file written by `uv run python -m dropbox_client_impl login`
+- **CI/CD Environment**: Uses the `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN` environment variables
+- **Missing Credentials**: Real-Dropbox tests are skipped; nothing prompts or hangs
 
 ## Continuous Integration
 
 The project includes a comprehensive CircleCI configuration (`.circleci/config.yml`) with:
 
-- **All Branches**: Unit tests, linting, and CI-compatible tests
-- **Main/Develop**: Additional integration tests with real Dropbox API calls
+- **All Branches**: Linting, format check, type checking, unit tests, and CI-compatible tests
+- **`main` and `dev`**: Additional integration tests with real Dropbox API calls
 - **Artifacts**: Coverage reports, test results, and build summaries
 
 See `docs/circleci-setup.md` for detailed CI/CD setup instructions.

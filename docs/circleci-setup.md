@@ -25,18 +25,22 @@ Create a **Context** named `dropbox-client` with:
 
 | Variable | Description |
 |----------|-------------|
-| `DROPBOX_APP_KEY` | App key from the Dropbox App Console |
-| `DROPBOX_APP_SECRET` | App secret from the Dropbox App Console |
-| `DROPBOX_REFRESH_TOKEN` | Long-lived OAuth2 refresh token |
+| `DROPBOX_APP_KEY` | App key from the Dropbox App Console (Settings tab) |
+| `DROPBOX_APP_SECRET` | App secret from the Dropbox App Console (Settings tab) |
+| `DROPBOX_REFRESH_TOKEN` | OAuth refresh token for the account CI should use |
+
+CI cannot complete the browser-based OAuth flow, so it uses a refresh token instead. To get one, run `uv run python -m dropbox_client_impl login` locally while signed in to the Dropbox account CI should use. Then copy the `refresh_token` value from the generated `.dropbox_token.json` into the context. The Dropbox SDK uses it to obtain short-lived access tokens automatically, so it does not expire after a few hours. To rotate it, run `logout` (or remove the app under Dropbox **Settings → Connected apps**), log in again, and update the context.
+
+Without these variables, the real-Dropbox integration tests are skipped and everything else still runs.
 
 ## Workflows
 
-### Standard Workflow (All Branches)
+### Standard Workflow (all other branches)
 ```
 build → lint + unit_test → circleci_test → report_summary
 ```
 
-### Full Integration (main/develop only)
+### Full Integration (`main` and `dev` only)
 ```
 build → lint + unit_test → circleci_test → integration_test → report_summary
 ```
@@ -51,7 +55,8 @@ uv sync --all-packages --extra dev
 
 # Quality checks
 uv run ruff check .
-uv run mypy src/
+uv run ruff format --check .
+uv run mypy src tests
 
 # Tests
 uv run pytest src/ --cov=src --cov-fail-under=85
@@ -70,6 +75,6 @@ uv run pytest src/ tests/ -m "not local_credentials"
 
 ## Security Notes
 
-- Never commit credentials
-- Integration tests only run on protected branches (`main`, `develop`)
+- Never commit credentials (`.env` and `.dropbox_token.json` are gitignored)
+- Integration tests with real credentials only run on `main` and `dev`
 - Use CircleCI contexts for sensitive variables
