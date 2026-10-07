@@ -46,7 +46,7 @@ def create_fake_file_metadata(
         path_display=path,
         client_modified=now,
         server_modified=now,
-        rev="rev12345",
+        rev="123456789",
         size=size,
     )
 
