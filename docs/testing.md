@@ -51,7 +51,7 @@ uv run pytest -m "not local_credentials"
 
 ### CircleCI/CI Environment
 Tests marked with `@pytest.mark.circleci` can run in CI environments:
-- **Requirements**: Only the `DROPBOX_ACCESS_TOKEN` environment variable
+- **Requirements**: None for most tests. The real-Dropbox checks additionally need `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN`, and are skipped without them
 - **What they test**:
   - Code syntax and imports
   - Factory function dependency injection
@@ -66,25 +66,42 @@ uv run pytest -m circleci --tb=short
 
 ### Local Development
 Tests marked with `@pytest.mark.local_credentials` require local files:
-- **Requirements**: a local `.env` file with Dropbox credentials (see `.env.example`)
+- **Requirements**: a local `.env` file (see `.env.example`) and a completed OAuth login (`uv run python -m dropbox_client_impl login`)
 - **What they test**:
   - Real Dropbox API connectivity
   - End-to-end application functionality
 
 ## Environment Variables for CI
 
-Set these environment variables in your CI environment:
+Set these environment variables in your CI environment (never in the repository):
 
 ```bash
-export DROPBOX_ACCESS_TOKEN="your-access-token"
+export DROPBOX_APP_KEY="your-app-key"
+export DROPBOX_APP_SECRET="your-app-secret"
+export DROPBOX_REFRESH_TOKEN="your-refresh-token"
 ```
+
+To get a refresh token for CI, run `uv run python -m dropbox_client_impl login` locally. Then copy the `refresh_token` value out of `.dropbox_token.json` straight into the CI secret store. Don't paste it anywhere else.
 
 ## Authentication
 
-`DropboxClient` reads the three `DROPBOX_*` variables from the environment (or `.env`):
-- Never launches a browser or prompts for user input, so it works the same locally and in CI/CD
-- Fails fast with a `RuntimeError` naming any missing variable
-- Tests can bypass authentication with `DropboxClient(dbx=mock)`
+Authentication uses Dropbox OAuth 2.0 (see `src/dropbox_client_impl/README.md`):
+- The browser-based `login` command runs only when you invoke it. Tests and `DropboxClient` never open a browser or prompt for input.
+- `DropboxClient()` uses `DROPBOX_REFRESH_TOKEN`, the saved token file (`.dropbox_token.json`), or the optional `DROPBOX_ACCESS_TOKEN` development fallback, in that order.
+- If none of these are available, it fails fast with a `DropboxAuthError` telling you to run `login`. Missing app configuration is named explicitly.
+- Tests can bypass authentication with `DropboxClient(dbx=mock)`.
+
+### What the unit tests cover
+`src/dropbox_client_impl/tests/test_authentication.py` never contacts Dropbox. Its only network use is a throwaway callback server on `127.0.0.1`. It covers:
+- the authorization URL (app key, redirect URI, `token_access_type=offline`, CSRF state)
+- missing or blank `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET` / `DROPBOX_REDIRECT_URI`
+- exchanging the authorization code and saving the refresh token, with file mode `600`
+- denied authorizations, CSRF mismatches, rejected codes, and revoked or expired refresh tokens
+- creating the SDK client from a refresh token, plus the access-token fallback
+- `check_auth()`, `login`, and `logout`
+- that secrets never appear in stdout, logs, or exception messages
+
+Every test runs with an isolated environment and a temporary token file, so your real `.env` and `.dropbox_token.json` are never read.
 
 ## Test Examples
 
