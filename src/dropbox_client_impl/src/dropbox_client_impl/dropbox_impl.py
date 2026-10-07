@@ -142,16 +142,19 @@ class DropboxClient(cloud_storage_client_api.Client):
         return DropboxFile(metadata)
 
     def create_folder(self, remote_path: str) -> cloud_storage_client_api.File:
-        """Create a folder. TODO(Zesan): implement with ``files_create_folder_v2``."""
-        raise NotImplementedError
+        """Create a folder."""
+        res = self.dbx.files_create_folder_v2(remote_path)
+        return DropboxFile(res.metadata)
 
     def copy_file(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Duplicate a file. TODO(Zesan): implement with ``files_copy_v2``."""
-        raise NotImplementedError
+        """Duplicate a file."""
+        res = self.dbx.files_copy_v2(from_path, to_path)
+        return DropboxFile(res.metadata)
 
     def copy_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Duplicate a folder. TODO(Zesan): implement with ``files_copy_v2``."""
-        raise NotImplementedError
+        """Duplicate a folder."""
+        res = self.dbx.files_copy_v2(from_path, to_path)
+        return DropboxFile(res.metadata)
 
     # ----- Read (Jing) -----
 
