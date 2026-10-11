@@ -52,7 +52,7 @@ uv run pytest src/ tests/ -m "not local_credentials"
 
 See [docs/testing.md](docs/testing.md) for markers and commands.
 
-- **Unit tests (`src/*/tests/`)** must not touch the network or need credentials. Mock `client.dbx` for the Dropbox client, and override `get_storage_client` for HTTP routes. Coverage must stay at or above 85%.
+- **Unit tests (`src/*/tests/`)** must not touch the network or need credentials. Mock `client.dbx` for the Dropbox client, and override `get_storage_client` with the in-memory `FakeStorageClient` from `tests/fakes.py` for HTTP routes. Coverage must stay at or above 85%.
 - **Integration tests (`tests/integration/`)** hit real Dropbox. Skip them when no credentials are available, and create and delete everything inside a uniquely named scratch folder so the account is left unchanged.
 - Test public behaviour (HTTP status codes and response bodies, `File` fields, raised exceptions), not private helpers.
 

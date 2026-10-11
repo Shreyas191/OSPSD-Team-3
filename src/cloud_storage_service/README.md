@@ -83,4 +83,4 @@ Both operations change state in the provider. Dropbox implements each as a singl
 ```bash
 uv run pytest src/cloud_storage_service/tests/
 ```
-Route tests replace the client with `app.dependency_overrides[get_storage_client]`, so they need no credentials or network.
+Route tests replace the client with `app.dependency_overrides[get_storage_client]`, so they need no credentials or network. They use `FakeStorageClient` from [`tests/fakes.py`](../../tests/fakes.py), an in-memory `Client` you seed with `storage.add(path)` and then check through `storage.entries`. It implements only the operations some test needs; when you add routes for another operation, implement that method in the fake following the `Client` contract.
