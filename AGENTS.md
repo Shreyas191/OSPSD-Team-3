@@ -24,7 +24,7 @@ These are boundaries reviewers will check. Don't break them without discussing i
 
 1. **Dropbox types stay inside `dropbox_client_impl`.** The contract and service packages must never import `dropbox`. Wrap SDK metadata in `DropboxFile` before returning it.
 2. **Translate provider errors at the boundary.** `DropboxClient` turns Dropbox errors into the built-in exceptions documented on the `Client` method (`FileNotFoundError`, `FileExistsError`, `ValueError`). The service maps those to HTTP status codes. Never let an `ApiError` decide the HTTP response directly.
-3. **Code depends on the contract, not the implementation.** Use `cloud_storage_client_api.get_client()`; importing `dropbox_client_impl` registers the Dropbox implementation. In the service, get the client through the `get_storage_client` dependency so tests can override it.
+3. **Code depends on the contract, not the implementation.** Use `cloud_storage_client_api.get_client()`; importing `dropbox_client_impl` registers the Dropbox implementation. In the service, `build_storage_client()` in `app.py` is the only place that names a provider; routes get the client through the `get_storage_client` dependency so tests can override it.
 4. **Credentials come only from `dropbox_client_impl.auth`.** No other module reads tokens or environment variables for Dropbox.
 5. **Keep the public contract stable.** Changing a `Client` method signature or an HTTP request/response shape is a contract change: open an issue, agree on it as a team, and update docs and tests in the same PR.
 6. **Only add what's needed now.** No speculative abstractions, retries, or features beyond the current level of the spec.

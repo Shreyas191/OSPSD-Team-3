@@ -4,6 +4,7 @@ The storage client is replaced with a mock through FastAPI's dependency override
 these tests exercise request validation, response shape and status codes only.
 """
 
+import importlib
 from collections.abc import Iterator
 from datetime import datetime
 from http import HTTPStatus
@@ -11,9 +12,10 @@ from unittest.mock import Mock
 
 import pytest
 from cloud_storage_client_api import Client, File
+from dropbox_client_impl import DropboxClient
 from fastapi.testclient import TestClient
 
-from cloud_storage_service.app import app, get_storage_client
+from cloud_storage_service.app import app, build_storage_client, get_storage_client
 
 MODIFIED = datetime(2026, 10, 1, 12, 30)  # noqa: DTZ001 - providers may return naive UTC datetimes
 
@@ -154,12 +156,39 @@ def test_rename_maps_client_errors_to_status(
     assert response.status_code == expected_status
 
 
-def test_storage_client_comes_from_registered_factory(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without overrides the route uses the client from cloud_storage_client_api.get_client."""
+def test_routes_use_the_client_built_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without overrides, every request uses the one client the app built at startup."""
     client = Mock(spec=Client)
-    monkeypatch.setattr("cloud_storage_client_api.get_client", lambda: client)
-    get_storage_client.cache_clear()
-    try:
-        assert get_storage_client() is client
-    finally:
-        get_storage_client.cache_clear()
+    client.rename.return_value = _file("/Docs/summary.pdf")
+    client.move.return_value = _file("/Archive/summary.pdf")
+    build = Mock(return_value=client)
+    # The package re-exports the FastAPI object as ``cloud_storage_service.app``, so patch
+    # the module itself rather than going through that dotted name.
+    monkeypatch.setattr(
+        importlib.import_module("cloud_storage_service.app"),
+        "build_storage_client",
+        build,
+    )
+
+    with TestClient(app) as http:  # entering the context runs the app's startup
+        rename = http.post(
+            "/files/rename",
+            json={"path": "/Docs/report.pdf", "new_name": "summary.pdf"},
+        )
+        move = http.post(
+            "/files/move",
+            json={"from_path": "/Docs/summary.pdf", "to_path": "/Archive/summary.pdf"},
+        )
+
+    assert rename.status_code == HTTPStatus.OK
+    assert move.status_code == HTTPStatus.OK
+    build.assert_called_once_with()
+    client.rename.assert_called_once_with("/Docs/report.pdf", "summary.pdf")
+    client.move.assert_called_once_with("/Docs/summary.pdf", "/Archive/summary.pdf")
+
+
+def test_service_runs_against_dropbox_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The provider the service selects is Dropbox."""
+    monkeypatch.setattr("dropbox_client_impl.dropbox_impl.get_dropbox_client", Mock)
+
+    assert isinstance(build_storage_client(), DropboxClient)
