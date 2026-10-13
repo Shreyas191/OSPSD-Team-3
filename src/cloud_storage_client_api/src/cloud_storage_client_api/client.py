@@ -63,12 +63,31 @@ class Client(ABC):
 
     @abstractmethod
     def rename(self, remote_path: str, new_name: str) -> File:
-        """Rename the file or folder at ``remote_path`` in place and return its new metadata."""
+        """Rename the file or folder at ``remote_path`` in place and return its new metadata.
+
+        The entry stays in the same parent folder; only its last path segment changes.
+        Existing entries are never overwritten.
+
+        Raises:
+            ValueError: If ``new_name`` is empty or contains a ``/``.
+            FileNotFoundError: If nothing exists at ``remote_path``.
+            FileExistsError: If the parent folder already has an entry named ``new_name``.
+
+        """
         raise NotImplementedError
 
     @abstractmethod
     def move(self, from_path: str, to_path: str) -> File:
-        """Move the file or folder at ``from_path`` to ``to_path``."""
+        """Move the file or folder at ``from_path`` to ``to_path`` and return its new metadata.
+
+        ``to_path`` is the full destination path including the entry's name
+        (e.g. ``/Archive/report.pdf``). Existing entries are never overwritten.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``from_path``.
+            FileExistsError: If something already exists at ``to_path``.
+
+        """
         raise NotImplementedError
 
     # ----- Delete -----

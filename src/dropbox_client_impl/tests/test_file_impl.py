@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+import pytest
 from cloud_storage_client_api import File
 from dropbox import files
 
@@ -60,6 +61,26 @@ def test_folder_metadata_properties() -> None:
     assert folder.is_folder is True
     assert folder.size is None
     assert folder.modified is None
+
+
+def test_modified_is_the_server_time_not_the_client_time() -> None:
+    """``modified`` is when Dropbox stored the file, not the uploader's local timestamp."""
+    metadata = _file_metadata()
+    metadata.client_modified = datetime(2020, 1, 1)  # noqa: DTZ001
+
+    assert DropboxFile(metadata).modified == MODIFIED
+
+
+def test_deleted_metadata_is_rejected() -> None:
+    """Deleted entries have no ID, so wrapping one fails loudly instead of returning ``""``."""
+    deleted = files.DeletedMetadata(
+        name="report.pdf",
+        path_lower="/docs/report.pdf",
+        path_display="/Docs/report.pdf",
+    )
+
+    with pytest.raises(TypeError, match="DeletedMetadata"):
+        DropboxFile(deleted)
 
 
 def test_repr() -> None:
