@@ -16,6 +16,18 @@ from dropbox.files import FileMetadata, FolderMetadata
 
 from dropbox_client_impl.dropbox_impl import DropboxClient
 
+DEFAULT_FILE_SIZE_2048 = 2048
+CUSTOM_FILE_SIZE_512 = 512
+
+SEARCH_MAX_RESULTS_TWO = 2
+SEARCH_MAX_RESULTS_FIVE = 5
+SEARCH_MAX_RESULTS_TEN = 10
+
+EXPECTED_COUNT_ONE = 1
+EXPECTED_COUNT_TWO = 2
+EXPECTED_COUNT_THREE = 3
+
+
 # fixtures
 
 @pytest.fixture
@@ -34,7 +46,7 @@ def create_fake_file_metadata(
     name: str = "report.pdf",
     path: str = "/docs/report.pdf",
     file_id: str = "id:abc123file",
-    size: int = 2048,
+    size: int = DEFAULT_FILE_SIZE_2048,
     modified: datetime | None = None,
 ) -> FileMetadata:
     """Create a real Dropbox SDK FileMetadata instance for isinstance checks."""
@@ -89,7 +101,7 @@ def test_download_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
     assert result.path == "/docs/report.pdf"
     assert result.id == "id:abc123file"
     assert result.is_folder is False
-    assert result.size == 2048
+    assert result.size == DEFAULT_FILE_SIZE_2048
     assert result.modified == fake_meta.server_modified
 
 
@@ -110,7 +122,7 @@ def test_download_file_api_error_propagates(client: DropboxClient, mock_dbx: Moc
 
 def test_get_metadata_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
     """Get_metadata returns proper File model for a file."""
-    fake_meta = create_fake_file_metadata(name="data.csv", path="/data.csv", size=512)
+    fake_meta = create_fake_file_metadata(name="data.csv", path="/data.csv", size=CUSTOM_FILE_SIZE_512)
     mock_dbx.files_get_metadata.return_value = fake_meta
 
     result = client.get_metadata("/data.csv")
@@ -121,7 +133,7 @@ def test_get_metadata_file_success(client: DropboxClient, mock_dbx: Mock) -> Non
     assert result.path == "/data.csv"
     assert result.id == "id:abc123file"
     assert result.is_folder is False
-    assert result.size == 512
+    assert result.size == CUSTOM_FILE_SIZE_512
     assert result.modified == fake_meta.server_modified
 
 
@@ -169,7 +181,7 @@ def test_list_folder_single_page(client: DropboxClient, mock_dbx: Mock) -> None:
 
     mock_dbx.files_list_folder.assert_called_once_with("/test")
     mock_dbx.files_list_folder_continue.assert_not_called()
-    assert len(results) == 2
+    assert len(results) == EXPECTED_COUNT_TWO
     assert all(isinstance(r, File) for r in results)
     assert results[0].is_folder is False
     assert results[1].is_folder is True
@@ -195,7 +207,7 @@ def test_list_folder_multi_page_pagination(client: DropboxClient, mock_dbx: Mock
         call("cur1"),
         call("cur2"),
     ]
-    assert len(results) == 3
+    assert len(results) == EXPECTED_COUNT_THREE
 
 
 def test_list_folder_root(client: DropboxClient, mock_dbx: Mock) -> None:
@@ -249,7 +261,7 @@ def test_search_file_success_and_options(client: DropboxClient, mock_dbx: Mock) 
     search_result = Mock(matches=[match], has_more=False)
     mock_dbx.files_search_v2.return_value = search_result
 
-    results = list(client.search("match", max_results=10))
+    results = list(client.search("match", max_results=SEARCH_MAX_RESULTS_TEN))
 
     mock_dbx.files_search_v2.assert_called_once()
     call_args, call_kwargs = mock_dbx.files_search_v2.call_args
@@ -259,11 +271,11 @@ def test_search_file_success_and_options(client: DropboxClient, mock_dbx: Mock) 
 
     options = call_kwargs.get("options") if "options" in call_kwargs else (call_args[1] if len(call_args) > 1 else None)
     assert options is not None, "SearchOptions must be passed to files_search_v2"
-    assert options.max_results == 10
+    assert options.max_results == SEARCH_MAX_RESULTS_TEN
     assert options.filename_only is True
 
     mock_dbx.files_search_continue_v2.assert_not_called()
-    assert len(results) == 1
+    assert len(results) == EXPECTED_COUNT_ONE
     assert isinstance(results[0], File)
     assert results[0].name == "match.txt"
     assert results[0].is_folder is False
@@ -279,7 +291,7 @@ def test_search_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
 
     results = list(client.search("matched_folder"))
 
-    assert len(results) == 1
+    assert len(results) == EXPECTED_COUNT_ONE
     assert isinstance(results[0], File)
     assert results[0].name == "matched_folder"
     assert results[0].is_folder is True
@@ -292,7 +304,7 @@ def test_search_empty_matches(client: DropboxClient, mock_dbx: Mock) -> None:
     search_result = Mock(matches=[], has_more=False)
     mock_dbx.files_search_v2.return_value = search_result
 
-    results = list(client.search("nonexistent", max_results=5))
+    results = list(client.search("nonexistent", max_results=SEARCH_MAX_RESULTS_FIVE))
 
     mock_dbx.files_search_v2.assert_called_once()
     mock_dbx.files_search_continue_v2.assert_not_called()
@@ -326,14 +338,14 @@ def test_search_multi_page_pagination(client: DropboxClient, mock_dbx: Mock) -> 
     mock_dbx.files_search_v2.return_value = page1
     mock_dbx.files_search_continue_v2.side_effect = [page2, page3]
 
-    results = list(client.search("res", max_results=10))
+    results = list(client.search("res", max_results=SEARCH_MAX_RESULTS_TEN))
 
     mock_dbx.files_search_v2.assert_called_once()
     assert mock_dbx.files_search_continue_v2.call_args_list == [
         call("cur1"),
         call("cur2"),
     ]
-    assert len(results) == 3
+    assert len(results) == EXPECTED_COUNT_THREE
 
 
 def test_search_respects_max_results_limit_on_yield(client: DropboxClient, mock_dbx: Mock) -> None:
@@ -345,9 +357,9 @@ def test_search_respects_max_results_limit_on_yield(client: DropboxClient, mock_
     page1 = Mock(matches=[m1, m2, m3], has_more=True, cursor="cur1")
     mock_dbx.files_search_v2.return_value = page1
 
-    results = list(client.search("res", max_results=2))
+    results = list(client.search("res", max_results=SEARCH_MAX_RESULTS_TWO))
 
-    assert len(results) == 2
+    assert len(results) == EXPECTED_COUNT_TWO
     mock_dbx.files_search_continue_v2.assert_not_called()
 
 
