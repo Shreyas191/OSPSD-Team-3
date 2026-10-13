@@ -13,14 +13,11 @@ with a real Dropbox call on your own ``<name>-<feature>`` branch.
 import logging
 from collections.abc import Iterator
 from pathlib import Path
-from typing import ClassVar
 
 import cloud_storage_client_api
 import dropbox
-from dotenv import load_dotenv
+from dropbox import files
 from dropbox.files import WriteMode
-
-from dropbox_client_impl.file_impl import DropboxFile
 
 from dropbox_client_impl.auth import get_dropbox_client
 from dropbox_client_impl.file_impl import DropboxFile

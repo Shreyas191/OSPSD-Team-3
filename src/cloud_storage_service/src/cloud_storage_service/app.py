@@ -82,12 +82,15 @@ class FileResponse(BaseModel):
 class UploadRequest(BaseModel):
     """Upload a file to the specified path."""
 
-    remote_path: AbsolutePath = Field(description="Destination path in cloud storage", examples=["/Docs/report.pdf"])
-    overwrite: bool = Field(default=False, description="Whether to overwrite if the file already exists")
+    remote_path: AbsolutePath = Field(description="Destination path in cloud storage",
+                                      examples=["/Docs/report.pdf"])
+    overwrite: bool = Field(default=False,
+                            description="Whether to overwrite if the file already exists")
 class CreateFolderRequest(BaseModel):
-    """Create a new folder at the specified path."""    
+    """Create a new folder at the specified path."""
 
-    remote_path: AbsolutePath = Field(description="Destination path in cloud storage", examples=["/Docs/NewFolder"])
+    remote_path: AbsolutePath = Field(description="Destination path in cloud storage",
+                                      examples=["/Docs/NewFolder"])
 
 class CopyRequest(BaseModel):
     """Copy the entry at ``from_path`` to the full destination path ``to_path``."""
