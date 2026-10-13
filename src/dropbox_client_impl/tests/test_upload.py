@@ -1,7 +1,6 @@
 """Tests for Dropbox client upload functionality."""
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
 
@@ -94,7 +93,13 @@ def test_client_upload_file(tmp_path: Path) -> None:
     local_file.write_bytes(b"sample PDF bytes")
 
     mock_dbx = cast("dropbox.Dropbox", Mock(spec=dropbox.Dropbox))
-    mock_dbx.files_upload.return_value = SimpleNamespace(
+    mock_dbx.files_upload.return_value = dropbox.files.FileMetadata(
+        name="report.pdf",
+        id="id:abc123",
+        client_modified=datetime(2024, 1, 1, tzinfo=UTC),
+        server_modified=datetime(2024, 1, 1, tzinfo=UTC),
+        rev="0123456789abcdef",
+        size=16,
         path_display="/Docs/report.pdf",
         path_lower="/docs/report.pdf",
     )
