@@ -79,7 +79,21 @@ class FileResponse(BaseModel):
             size=file.size,
             modified=file.modified,
         )
+class UploadRequest(BaseModel):
+    """Upload a file to the specified path."""
 
+    remote_path: AbsolutePath = Field(description="Destination path in cloud storage", examples=["/Docs/report.pdf"])
+    overwrite: bool = Field(default=False, description="Whether to overwrite if the file already exists")
+class CreateFolderRequest(BaseModel):
+    """Create a new folder at the specified path."""    
+
+    remote_path: AbsolutePath = Field(description="Destination path in cloud storage", examples=["/Docs/NewFolder"])
+
+class CopyRequest(BaseModel):
+    """Copy the entry at ``from_path`` to the full destination path ``to_path``."""
+
+    from_path: AbsolutePath
+    to_path: AbsolutePath = Field(examples=["/Archive/report.pdf"])
 
 class RenameRequest(BaseModel):
     """Rename the entry at ``path`` to ``new_name`` within the same folder."""
@@ -128,3 +142,39 @@ def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
     except (FileNotFoundError, FileExistsError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(moved)
+
+@app.post("/files/upload", responses=_ERROR_RESPONSES)
+def upload_file(request: UploadRequest, client: StorageClient) -> FileResponse:
+    """Upload a file to the specified path and return its metadata."""
+    try:
+        uploaded = client.upload(request.path, request.file)
+    except (FileNotFoundError, FileExistsError) as e:
+        raise _to_http_error(e) from e
+    return FileResponse.from_file(uploaded)
+
+@app.post("/folders/create", responses=_ERROR_RESPONSES)
+def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
+    """Create a new folder at the specified path and return its metadata."""
+    try:
+        created = client.create_folder(request.remote_path)
+    except (FileNotFoundError, FileExistsError) as e:
+        raise _to_http_error(e) from e
+    return FileResponse.from_file(created)
+
+@app.post("/files/copy", responses=_ERROR_RESPONSES)
+def copy_file(request: CopyRequest, client: StorageClient) -> FileResponse:
+    """Copy a file to a new path and return its metadata."""
+    try:
+        copied = client.copy_file(request.from_path, request.to_path)
+    except (FileNotFoundError, FileExistsError) as e:
+        raise _to_http_error(e) from e
+    return FileResponse.from_file(copied)
+
+@app.post("/folders/copy", responses=_ERROR_RESPONSES)
+def copy_folder(request: CopyRequest, client: StorageClient) -> FileResponse:
+    """Copy a folder to a new path and return its metadata."""
+    try:
+        copied = client.copy_folder(request.from_path, request.to_path)
+    except (FileNotFoundError, FileExistsError) as e:
+        raise _to_http_error(e) from e
+    return FileResponse.from_file(copied)
