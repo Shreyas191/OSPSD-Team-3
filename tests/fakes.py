@@ -20,9 +20,9 @@ Usage::
 from collections.abc import Iterator
 from datetime import datetime
 from itertools import count
+from pathlib import Path
 
 from cloud_storage_client_api import Client, File
-from pathlib import Path
 
 FIXED_MODIFIED = datetime(2026, 10, 1, 12, 30)  # noqa: DTZ001 - providers may return naive UTC
 
@@ -168,7 +168,7 @@ class FakeStorageClient(Client):
     def copy_folder(self, from_path: str, to_path: str) -> File:
         """Copy the entry at ``from_path`` and any descendants to ``to_path``."""
         return self._copy_entry(from_path, to_path)
-    
+
     def _copy_entry(self, from_path: str, to_path: str) -> FakeFile:
         """Copy a file or folder tree to a new path without changing the source."""
         if from_path not in self.entries:
@@ -178,11 +178,7 @@ class FakeStorageClient(Client):
             msg = f"Something already exists at {to_path!r}"
             raise FileExistsError(msg)
 
-        source_paths = [
-            path
-            for path in self.entries
-            if path == from_path or path.startswith(f"{from_path}/")
-        ]
+        source_paths = [path for path in self.entries if path == from_path or path.startswith(f"{from_path}/")]
         copies: list[FakeFile] = []
         for source_path in source_paths:
             source = self.entries[source_path]
@@ -194,14 +190,13 @@ class FakeStorageClient(Client):
                     is_folder=source.is_folder,
                     size=source.size,
                     modified=source.modified,
-                )
+                ),
             )
 
         for copied in copies:
             self.entries[copied.path] = copied
         return self.entries[to_path]
 
-    
     def download_file(self, remote_path: str, local_path: str) -> File:
         """Not implemented yet."""
         raise NotImplementedError
