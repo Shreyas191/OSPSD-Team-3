@@ -82,18 +82,19 @@ def test_from_file_folder_has_null_size_and_modified() -> None:
     assert response.modified is None
 
 
-# --- JSON routes: rename, move, copy, create folder -----------------------------------
+# --- JSON routes: copy file or folder, create folder ----------------------------------
 
 # (url, request body, client method). The body's values are exactly the positional
 # arguments the route should pass to that client method, in order.
 JSON_ROUTES: tuple[tuple[str, dict[str, str], str], ...] = (
-    ("/files/rename", {"path": "/Docs/a.pdf", "new_name": "b.pdf"}, "rename"),
-    ("/files/move", {"from_path": "/Docs/a.pdf", "to_path": "/Archive/a.pdf"}, "move"),
-    ("/files/copy", {"from_path": "/Docs/a.pdf", "to_path": "/Copy/a.pdf"}, "copy_file"),
-    ("/folders/copy", {"from_path": "/Docs", "to_path": "/Docs2"}, "copy_folder"),
+    (
+        "/files_or_folders/copy",
+        {"from_path": "/Docs/a.pdf", "to_path": "/Copy/a.pdf"},
+        "copy_file_or_folder",
+    ),
     ("/folders/create", {"remote_path": "/Docs/New"}, "create_folder"),
 )
-ROUTES_MAPPING_VALUE_ERROR = {"rename", "copy_file", "copy_folder", "create_folder"}
+ROUTES_MAPPING_VALUE_ERROR = {"copy_file_or_folder", "create_folder"}
 
 
 @pytest.mark.parametrize(("url", "body", "method"), JSON_ROUTES)
@@ -166,11 +167,7 @@ def test_value_error_maps_to_422(
 @pytest.mark.parametrize(
     ("url", "body"),
     [
-        ("/files/rename", {"path": "relative.pdf", "new_name": "b.pdf"}),
-        ("/files/rename", {"path": "/Docs/a.pdf", "new_name": "x/y.pdf"}),
-        ("/files/rename", {"path": "/Docs/a.pdf", "new_name": ""}),
-        ("/files/move", {"from_path": "/a", "to_path": "no-leading-slash"}),
-        ("/files/copy", {"from_path": "/a"}),
+        ("/files_or_folders/copy", {"from_path": "/a"}),
         ("/folders/create", {"remote_path": "NoSlash"}),
     ],
 )

@@ -22,6 +22,7 @@ from datetime import datetime
 from itertools import count
 
 from cloud_storage_client_api import Client, File
+from pathlib import Path
 
 FIXED_MODIFIED = datetime(2026, 10, 1, 12, 30)  # noqa: DTZ001 - providers may return naive UTC
 
@@ -132,21 +133,75 @@ class FakeStorageClient(Client):
     # ----- Not implemented until a test needs them -----
 
     def upload_file(self, local_path: str, remote_path: str, *, overwrite: bool = False) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Upload a local file to ``remote_path``; overwrite files only when requested."""
+        with Path(local_path).open("rb") as source:
+            source.seek(0, 2)
+            size = source.tell()
+
+        existing = self.entries.get(remote_path)
+        if existing is not None and (existing.is_folder or not overwrite):
+            msg = f"Something already exists at {remote_path!r}"
+            raise FileExistsError(msg)
+
+        file_id = existing.id if existing is not None else f"id:{next(self._ids)}"
+        uploaded = FakeFile(
+            file_id,
+            remote_path,
+            is_folder=False,
+            size=size,
+            modified=FIXED_MODIFIED,
+        )
+        self.entries[remote_path] = uploaded
+        return uploaded
 
     def create_folder(self, remote_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Create an empty folder at ``remote_path``; never overwrite an entry."""
+        if remote_path in self.entries:
+            msg = f"Something already exists at {remote_path!r}"
+            raise FileExistsError(msg)
+        return self.add(remote_path, is_folder=True)
 
     def copy_file(self, from_path: str, to_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Copy the entry at ``from_path`` to ``to_path``."""
+        return self._copy_entry(from_path, to_path)
 
     def copy_folder(self, from_path: str, to_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Copy the entry at ``from_path`` and any descendants to ``to_path``."""
+        return self._copy_entry(from_path, to_path)
+    
+    def _copy_entry(self, from_path: str, to_path: str) -> FakeFile:
+        """Copy a file or folder tree to a new path without changing the source."""
+        if from_path not in self.entries:
+            msg = f"No file or folder at {from_path!r}"
+            raise FileNotFoundError(msg)
+        if to_path in self.entries:
+            msg = f"Something already exists at {to_path!r}"
+            raise FileExistsError(msg)
 
+        source_paths = [
+            path
+            for path in self.entries
+            if path == from_path or path.startswith(f"{from_path}/")
+        ]
+        copies: list[FakeFile] = []
+        for source_path in source_paths:
+            source = self.entries[source_path]
+            destination_path = to_path + source_path.removeprefix(from_path)
+            copies.append(
+                FakeFile(
+                    f"id:{next(self._ids)}",
+                    destination_path,
+                    is_folder=source.is_folder,
+                    size=source.size,
+                    modified=source.modified,
+                )
+            )
+
+        for copied in copies:
+            self.entries[copied.path] = copied
+        return self.entries[to_path]
+
+    
     def download_file(self, remote_path: str, local_path: str) -> File:
         """Not implemented yet."""
         raise NotImplementedError
