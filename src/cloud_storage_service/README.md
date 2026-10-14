@@ -79,6 +79,73 @@ Destinations are compared case-insensitively (Dropbox paths are case-insensitive
 
 Both operations change state in the provider. Dropbox implements each as a single `files_move_v2` call with autorename disabled; the entry keeps its Dropbox `id`. Other provider failures (e.g. moving a folder into itself, quota) currently surface as `500`.
 
+## Read endpoints
+
+### `GET /files/metadata`
+Get metadata for a single file or folder by absolute path.
+
+Query parameters:
+- `path` (required): absolute path of the entry (e.g. `?path=/Docs/report.pdf`).
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body is the File object |
+| `404` | Nothing exists at `path` |
+| `422` | Invalid query parameter (missing `path` or not an absolute path) |
+
+```bash
+curl "http://127.0.0.1:8000/files/metadata?path=/Docs/report.pdf"
+```
+
+### `GET /files/download`
+Download the raw bytes of the file located at `path`.
+
+Query parameters:
+- `path` (required): absolute path of the remote file to download (e.g. `?path=/Docs/report.pdf`).
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body contains raw file bytes (`application/octet-stream`) |
+| `404` | Nothing exists at `path` |
+| `422` | Path points to a folder, or invalid query parameter |
+
+```bash
+curl -o downloaded.pdf "http://127.0.0.1:8000/files/download?path=/Docs/report.pdf"
+```
+
+### `GET /folders/list`
+List all direct children in the folder at `path`. Returns an empty list or root entries if `path` is empty or root (`/`).
+
+Query parameters:
+- `path` (optional, defaults to empty): absolute path of the folder to list (e.g. `?path=/Docs`), or empty for root. Must start with `/` or be empty.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body is a JSON array of File objects |
+| `404` | Folder does not exist |
+| `422` | Path points to a file rather than a folder, or invalid path (relative path) |
+
+```bash
+curl "http://127.0.0.1:8000/folders/list?path=/Docs"
+```
+
+### `GET /files/search`
+Search for files and folders matching a query string, up to `max_results` entries.
+
+Query parameters:
+- `q` (required): non-empty search query string (e.g. `?q=report`).
+- `max_results` (optional, defaults to 10): maximum number of results to return (must be between 1 and 1000).
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body is a JSON array of matching File objects |
+| `422` | Invalid query (empty `q` or `max_results` not between 1 and 1000) |
+
+```bash
+curl "http://127.0.0.1:8000/files/search?q=report&max_results=5"
+```
+
+
 ## Testing
 ```bash
 uv run pytest src/cloud_storage_service/tests/
