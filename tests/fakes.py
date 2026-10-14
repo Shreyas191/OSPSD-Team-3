@@ -131,23 +131,64 @@ class FakeStorageClient(Client):
             self.entries[new_path] = self.entries.pop(path).moved_to(new_path)
         return self.entries[to_path]
 
-    # ----- Not implemented until a test needs them -----
+    # ----- Create -----
 
     def upload_file(self, local_path: str, remote_path: str, *, overwrite: bool = False) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Upload a local file to ``remote_path``; overwrite files only when requested."""
+        with Path(local_path).open("rb") as source:
+            source.seek(0, 2)
+            size = source.tell()
+
+        existing = self.entries.get(remote_path)
+        if existing is not None and (existing.is_folder or not overwrite):
+            msg = f"Something already exists at {remote_path!r}"
+            raise FileExistsError(msg)
+
+        file_id = existing.id if existing is not None else f"id:{next(self._ids)}"
+        uploaded = FakeFile(
+            file_id,
+            remote_path,
+            is_folder=False,
+            size=size,
+            modified=FIXED_MODIFIED,
+        )
+        self.entries[remote_path] = uploaded
+        return uploaded
 
     def create_folder(self, remote_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Create an empty folder at ``remote_path``; never overwrite an entry."""
+        if remote_path in self.entries:
+            msg = f"Something already exists at {remote_path!r}"
+            raise FileExistsError(msg)
+        return self.add(remote_path, is_folder=True)
 
-    def copy_file(self, from_path: str, to_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+    def copy(self, from_path: str, to_path: str) -> File:
+        """Copy a file, or a folder and its contents, to ``to_path``; the source is unchanged."""
+        if from_path not in self.entries:
+            msg = f"No file or folder at {from_path!r}"
+            raise FileNotFoundError(msg)
+        if to_path in self.entries:
+            msg = f"Something already exists at {to_path!r}"
+            raise FileExistsError(msg)
 
-    def copy_folder(self, from_path: str, to_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        source_paths = [path for path in self.entries if path == from_path or path.startswith(f"{from_path}/")]
+        copies: list[FakeFile] = []
+        for source_path in source_paths:
+            source = self.entries[source_path]
+            destination_path = to_path + source_path.removeprefix(from_path)
+            copies.append(
+                FakeFile(
+                    f"id:{next(self._ids)}",
+                    destination_path,
+                    is_folder=source.is_folder,
+                    size=source.size,
+                    modified=source.modified,
+                ),
+            )
+
+        for copied in copies:
+            self.entries[copied.path] = copied
+        return self.entries[to_path]
 
     # ----- Read -----
 
@@ -220,6 +261,8 @@ class FakeStorageClient(Client):
                 yielded += 1
                 if yielded >= max_results:
                     return
+
+    # ----- Not implemented until a test needs them -----
 
     def delete(self, remote_path: str) -> bool:
         """Not implemented yet."""

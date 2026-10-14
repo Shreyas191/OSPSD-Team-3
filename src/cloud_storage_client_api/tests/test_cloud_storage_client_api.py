@@ -32,8 +32,7 @@ def test_client_declares_all_crud_methods() -> None:
     expected = {
         "upload_file",
         "create_folder",
-        "copy_file",
-        "copy_folder",
+        "copy",
         "download_file",
         "get_metadata",
         "list_folder",
@@ -77,25 +76,14 @@ def test_client_create_folder() -> None:
     assert folder.is_folder is True
 
 
-def test_client_copy_file() -> None:
-    """``copy_file`` returns the metadata of the duplicate."""
+def test_client_copy() -> None:
+    """``copy`` returns the metadata of the copy, for a file or a folder."""
     mock_client = Mock(spec=Client)
-    mock_client.copy_file.return_value = _mock_file("/Docs/report (copy).pdf")
+    mock_client.copy.return_value = _mock_file("/Docs (copy)", is_folder=True)
 
-    duplicate = mock_client.copy_file("/Docs/report.pdf", "/Docs/report (copy).pdf")
+    duplicate = mock_client.copy("/Docs", "/Docs (copy)")
 
-    mock_client.copy_file.assert_called_once_with("/Docs/report.pdf", "/Docs/report (copy).pdf")
-    assert duplicate.name == "report (copy).pdf"
-
-
-def test_client_copy_folder() -> None:
-    """``copy_folder`` returns the metadata of the duplicated folder."""
-    mock_client = Mock(spec=Client)
-    mock_client.copy_folder.return_value = _mock_file("/Docs (copy)", is_folder=True)
-
-    duplicate = mock_client.copy_folder("/Docs", "/Docs (copy)")
-
-    mock_client.copy_folder.assert_called_once_with("/Docs", "/Docs (copy)")
+    mock_client.copy.assert_called_once_with("/Docs", "/Docs (copy)")
     assert duplicate.name == "Docs (copy)"
     assert duplicate.is_folder is True
 

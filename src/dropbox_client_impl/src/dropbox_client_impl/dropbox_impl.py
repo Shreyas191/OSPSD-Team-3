@@ -12,11 +12,12 @@ with a real Dropbox call on your own ``<name>-<feature>`` branch.
 
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 
 import cloud_storage_client_api
 import dropbox
 from dropbox import files
-from dropbox.files import SearchOptions
+from dropbox.files import SearchOptions, WriteMode
 
 from dropbox_client_impl.auth import get_dropbox_client
 from dropbox_client_impl.file_impl import DropboxFile
@@ -42,7 +43,6 @@ class DropboxClient(cloud_storage_client_api.Client):
         self.dbx = dbx if dbx is not None else get_dropbox_client()
 
     # ----- Create (Zesan) -----
-
     def upload_file(
         self,
         local_path: str,
@@ -50,20 +50,82 @@ class DropboxClient(cloud_storage_client_api.Client):
         *,
         overwrite: bool = False,
     ) -> cloud_storage_client_api.File:
-        """Upload a local file to Dropbox. TODO(Zesan): implement with ``files_upload``."""
-        raise NotImplementedError
+        """Upload a local file to Dropbox with ``files_upload``.
+
+        Dropbox's autorename is disabled, so an existing file is either replaced
+        (``overwrite=True``) or reported as a conflict.
+
+        Raises:
+            FileNotFoundError: If ``local_path`` does not exist.
+            FileExistsError: If something already exists at ``remote_path`` and
+                ``overwrite`` is false.
+
+        """
+        mode = WriteMode.overwrite if overwrite else WriteMode.add
+
+        with Path(local_path).open("rb") as source:
+            try:
+                metadata = self.dbx.files_upload(
+                    source.read(),
+                    remote_path,
+                    mode=mode,
+                    autorename=False,
+                )
+            except dropbox.exceptions.ApiError as e:
+                # UploadError.path wraps the WriteError in UploadWriteFailed.reason.
+                reason = e.error
+                if (
+                    isinstance(reason, files.UploadError)
+                    and reason.is_path()
+                    and reason.get_path().reason.is_conflict()
+                ):
+                    msg = f"Something already exists at {remote_path!r}"
+                    raise FileExistsError(msg) from e
+                raise
+
+        return DropboxFile(metadata)
 
     def create_folder(self, remote_path: str) -> cloud_storage_client_api.File:
-        """Create a folder. TODO(Zesan): implement with ``files_create_folder_v2``."""
-        raise NotImplementedError
+        """Create a folder (and any missing parents) with ``files_create_folder_v2``.
 
-    def copy_file(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Duplicate a file. TODO(Zesan): implement with ``files_copy_v2``."""
-        raise NotImplementedError
+        Raises:
+            FileExistsError: If something already exists at ``remote_path``.
 
-    def copy_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Duplicate a folder. TODO(Zesan): implement with ``files_copy_v2``."""
-        raise NotImplementedError
+        """
+        try:
+            res = self.dbx.files_create_folder_v2(remote_path)
+        except dropbox.exceptions.ApiError as e:
+            # Unlike UploadError, CreateFolderError.path is the WriteError itself.
+            reason = e.error
+            if (
+                isinstance(reason, files.CreateFolderError)
+                and reason.is_path()
+                and reason.get_path().is_conflict()
+            ):
+                msg = f"Something already exists at {remote_path!r}"
+                raise FileExistsError(msg) from e
+            raise
+        return DropboxFile(res.metadata)
+
+    def copy(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
+        """Copy a file or folder to ``to_path`` with ``files_copy_v2``.
+
+        Dropbox copies files and folders with the same call, so one method covers both.
+        Autorename is disabled, so on success the copy's path is exactly ``to_path``.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``from_path``.
+            FileExistsError: If something already exists at ``to_path``.
+
+        """
+        try:
+            result = self.dbx.files_copy_v2(from_path, to_path, autorename=False)
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_relocation_error(e.error, from_path, to_path)
+            if translated is None:
+                raise
+            raise translated from e
+        return DropboxFile(result.metadata)
 
     # ----- Read (Jing) -----
 
