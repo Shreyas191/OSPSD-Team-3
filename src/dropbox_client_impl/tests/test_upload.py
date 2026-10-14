@@ -208,24 +208,57 @@ def test_upload_file_empty_file_success(
     assert result.size == 0
 
 
-def test_upload_file_api_error_propagates(
+def _api_error(error: object) -> ApiError:
+    """Wrap a Dropbox SDK error union the way the SDK raises it."""
+    return ApiError(
+        request_id="req",
+        error=error,
+        user_message_text=None,
+        user_message_locale=None,
+    )
+
+
+def _write_conflict() -> files.WriteError:
+    return files.WriteError.conflict(files.WriteConflictError.file)
+
+
+def test_upload_file_conflict_raises_file_exists_error(
     client: DropboxClient,
     mock_dbx: Mock,
     tmp_path: Path,
 ) -> None:
-    """Upload_file propagates Dropbox ApiError when files_upload fails on server."""
+    """A Dropbox write conflict on upload becomes FileExistsError."""
     local_file = tmp_path / "upload_fail.txt"
     local_file.write_bytes(b"data")
-
-    mock_dbx.files_upload.side_effect = ApiError(
-        request_id="up123",
-        error=Mock(),
-        user_message_text="Conflict: file already exists",
-        user_message_locale="en",
+    mock_dbx.files_upload.side_effect = _api_error(
+        files.UploadError.path(
+            files.UploadWriteFailed(reason=_write_conflict(), upload_session_id="session"),
+        ),
     )
 
-    with pytest.raises(FileExistsError):
+    with pytest.raises(FileExistsError, match="upload_fail"):
         client.upload_file(str(local_file), "/upload_fail.txt")
+
+
+def test_upload_file_other_api_errors_propagate(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    tmp_path: Path,
+) -> None:
+    """Upload errors without a domain meaning (e.g. a full account) are re-raised unchanged."""
+    local_file = tmp_path / "big.txt"
+    local_file.write_bytes(b"data")
+    mock_dbx.files_upload.side_effect = _api_error(
+        files.UploadError.path(
+            files.UploadWriteFailed(
+                reason=files.WriteError.insufficient_space,
+                upload_session_id="session",
+            ),
+        ),
+    )
+
+    with pytest.raises(ApiError):
+        client.upload_file(str(local_file), "/big.txt")
 
 
 def test_upload_file_missing_local_path_raises_file_not_found(
@@ -284,24 +317,34 @@ def test_create_folder_nested_path_success(client: DropboxClient, mock_dbx: Mock
     assert result.is_folder is True
 
 
-def test_create_folder_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Create_folder propagates Dropbox ApiError when folder creation fails."""
-    mock_dbx.files_create_folder_v2.side_effect = ApiError(
-        request_id="cf456",
-        error=Mock(),
-        user_message_text="Folder already exists",
-        user_message_locale="en",
+def test_create_folder_conflict_raises_file_exists_error(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """A Dropbox write conflict on folder creation becomes FileExistsError."""
+    mock_dbx.files_create_folder_v2.side_effect = _api_error(
+        files.CreateFolderError.path(files.WriteError.conflict(files.WriteConflictError.folder)),
     )
 
-    with pytest.raises(FileExistsError):
+    with pytest.raises(FileExistsError, match="/already_existing_folder"):
         client.create_folder("/already_existing_folder")
 
 
-# copy_file tests
+def test_create_folder_other_api_errors_propagate(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Folder-creation errors without a domain meaning are re-raised unchanged."""
+    mock_dbx.files_create_folder_v2.side_effect = _api_error(
+        files.CreateFolderError.path(files.WriteError.insufficient_space),
+    )
+
+    with pytest.raises(ApiError):
+        client.create_folder("/new_folder")
+
+
+# copy tests
 
 
 def test_copy_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Copy_file calls files_copy_v2 with from/to paths and returns destination File."""
+    """Copying a file calls files_copy_v2 with from/to paths and returns the copy."""
     copied_meta = create_fake_file_metadata(
         name="report_copy.pdf",
         path="/backup/report_copy.pdf",
@@ -311,7 +354,7 @@ def test_copy_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
     relocation_result = create_fake_relocation_result(copied_meta)
     mock_dbx.files_copy_v2.return_value = relocation_result
 
-    result = client.copy_file("/docs/report.pdf", "/backup/report_copy.pdf")
+    result = client.copy("/docs/report.pdf", "/backup/report_copy.pdf")
 
     mock_dbx.files_copy_v2.assert_called_once()
     call_args, call_kwargs = mock_dbx.files_copy_v2.call_args
@@ -330,34 +373,32 @@ def test_copy_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
     assert result.modified == copied_meta.server_modified
 
 
-def test_copy_file_raises_file_not_found_error(
+def test_copy_missing_source_raises_file_not_found_error(
     client: DropboxClient,
     mock_dbx: Mock,
 ) -> None:
     """Raise FileNotFoundError when the copied source does not exist."""
-    relocation_error = Mock(spec=files.RelocationError)
-    relocation_error.is_from_lookup.return_value = True
-
-    lookup_error = Mock()
-    lookup_error.is_not_found.return_value = True
-    relocation_error.get_from_lookup.return_value = lookup_error
-
-    mock_dbx.files_copy_v2.side_effect = ApiError(
-        request_id="cp789",
-        error=relocation_error,
-        user_message_text="Source file not found",
-        user_message_locale="en",
+    mock_dbx.files_copy_v2.side_effect = _api_error(
+        files.RelocationError.from_lookup(files.LookupError.not_found),
     )
 
     with pytest.raises(FileNotFoundError):
-        client.copy_file("/missing.txt", "/backup/missing.txt")
+        client.copy("/missing.txt", "/backup/missing.txt")
 
 
-# copy_folder tests
+def test_copy_onto_existing_destination_raises_file_exists_error(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Raise FileExistsError when something already exists at the destination."""
+    mock_dbx.files_copy_v2.side_effect = _api_error(files.RelocationError.to(_write_conflict()))
+
+    with pytest.raises(FileExistsError):
+        client.copy("/a.txt", "/b.txt")
 
 
 def test_copy_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Copy_folder calls files_copy_v2 with from/to paths and returns destination Folder."""
+    """Copying a folder uses the same files_copy_v2 call and returns the copied folder."""
     copied_folder_meta = create_fake_folder_metadata(
         name="project_backup",
         path="/archives/project_backup",
@@ -366,7 +407,7 @@ def test_copy_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
     relocation_result = create_fake_relocation_result(copied_folder_meta)
     mock_dbx.files_copy_v2.return_value = relocation_result
 
-    result = client.copy_folder("/active/project", "/archives/project_backup")
+    result = client.copy("/active/project", "/archives/project_backup")
 
     mock_dbx.files_copy_v2.assert_called_once()
     call_args, call_kwargs = mock_dbx.files_copy_v2.call_args
@@ -385,22 +426,22 @@ def test_copy_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
     assert result.modified is None
 
 
-def test_copy_folder_raises_file_exists_error(
+def test_copy_other_api_errors_propagate(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Copy errors without a domain meaning (e.g. a full account) are re-raised unchanged."""
+    mock_dbx.files_copy_v2.side_effect = _api_error(files.RelocationError.insufficient_quota)
+
+    with pytest.raises(ApiError):
+        client.copy("/a.txt", "/b.txt")
+
+
+def test_copy_folder_into_itself_raises_file_exists_error(
     client: DropboxClient,
     mock_dbx: Mock,
 ) -> None:
     """Raise FileExistsError when the destination overlaps the source folder."""
-    relocation_error = Mock(spec=files.RelocationError)
-    relocation_error.is_from_lookup.return_value = False
-    relocation_error.is_to.return_value = False
-    relocation_error.is_duplicated_or_nested_paths.return_value = True
-
-    mock_dbx.files_copy_v2.side_effect = ApiError(
-        request_id="cp999",
-        error=relocation_error,
-        user_message_text="Cannot copy folder into itself",
-        user_message_locale="en",
+    mock_dbx.files_copy_v2.side_effect = _api_error(
+        files.RelocationError.duplicated_or_nested_paths,
     )
 
     with pytest.raises(FileExistsError):
-        client.copy_folder("/work", "/work/nested")
+        client.copy("/work", "/work/nested")

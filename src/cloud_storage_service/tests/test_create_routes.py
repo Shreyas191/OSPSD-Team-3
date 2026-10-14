@@ -1,52 +1,57 @@
-"""HTTP-layer tests for app.py.
+"""HTTP contract tests for the create routes (upload, create folder, copy).
 
-The storage client is replaced with a mock through ``app.dependency_overrides``, so these
-tests need no Dropbox credentials and no network.
+The storage client is replaced through ``app.dependency_overrides`` with the in-memory
+``FakeStorageClient`` from ``tests/fakes.py``, so these tests need no Dropbox credentials
+and no network. They check status codes, response bodies, and what storage holds
+afterwards.
 """
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import MagicMock
+from typing import cast
 
 import cloud_storage_client_api
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 from httpx import Response
+from tests.fakes import FakeStorageClient
 
 from cloud_storage_service.app import FileResponse, app, get_storage_client
 
 MODIFIED = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
 
 
-def make_file(
-    path: str = "/Docs/report.pdf",
-    *,
-    is_folder: bool = False,
-) -> cloud_storage_client_api.File:
-    """Build a stand-in for any ``cloud_storage_client_api.File`` implementation."""
-    return cast(
-        "cloud_storage_client_api.File",
-        SimpleNamespace(
-            id="id:abc123",
-            name=path.rsplit("/", 1)[-1],
-            path=path,
-            is_folder=is_folder,
-            size=None if is_folder else 2048,
-            modified=None if is_folder else MODIFIED,
-        ),
-    )
+class RecordingStorageClient(FakeStorageClient):
+    """A fake that also records what the upload route handed to ``upload_file``."""
+
+    def __init__(self) -> None:
+        """Start empty, with nothing recorded."""
+        super().__init__()
+        self.uploaded_bytes: bytes | None = None
+        self.uploaded_from: str | None = None
+
+    def upload_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        *,
+        overwrite: bool = False,
+    ) -> cloud_storage_client_api.File:
+        """Record the local file, which only exists while the route is handling the request."""
+        self.uploaded_from = local_path
+        self.uploaded_bytes = Path(local_path).read_bytes()
+        return super().upload_file(local_path, remote_path, overwrite=overwrite)
 
 
 @pytest.fixture
-def storage() -> Iterator[MagicMock]:
-    """Inject a mock storage client in place of the real one."""
-    mock = MagicMock()
-    app.dependency_overrides[get_storage_client] = lambda: mock
-    yield mock
+def storage() -> Iterator[RecordingStorageClient]:
+    """Install an empty fake storage client for the duration of a test."""
+    client = RecordingStorageClient()
+    app.dependency_overrides[get_storage_client] = lambda: client
+    yield client
     app.dependency_overrides.clear()
 
 
@@ -61,10 +66,22 @@ def http() -> TestClient:
 # --- FileResponse.from_file: domain File -> HTTP response model -----------------------
 
 
+def make_file(path: str = "/Docs/report.pdf", *, is_folder: bool = False) -> FileResponse:
+    """Build a response from a stand-in for any ``cloud_storage_client_api.File``."""
+    file = SimpleNamespace(
+        id="id:abc123",
+        name=path.rsplit("/", 1)[-1],
+        path=path,
+        is_folder=is_folder,
+        size=None if is_folder else 2048,
+        modified=None if is_folder else MODIFIED,
+    )
+    return FileResponse.from_file(cast("cloud_storage_client_api.File", file))
+
+
 def test_from_file_maps_every_field() -> None:
     """Map every domain file field into the response model."""
-    response = FileResponse.from_file(make_file())
-    assert response.model_dump() == {
+    assert make_file().model_dump() == {
         "id": "id:abc123",
         "name": "report.pdf",
         "path": "/Docs/report.pdf",
@@ -76,211 +93,187 @@ def test_from_file_maps_every_field() -> None:
 
 def test_from_file_folder_has_null_size_and_modified() -> None:
     """Keep folder size and modification time null in the response."""
-    response = FileResponse.from_file(make_file("/Docs", is_folder=True))
-    assert response.is_folder is True
-    assert response.size is None
-    assert response.modified is None
+    response = make_file("/Docs", is_folder=True)
+    assert (response.is_folder, response.size, response.modified) == (True, None, None)
 
 
-# --- JSON routes: copy file or folder, create folder ----------------------------------
-
-# (url, request body, client method). The body's values are exactly the positional
-# arguments the route should pass to that client method, in order.
-JSON_ROUTES: tuple[tuple[str, dict[str, str], str], ...] = (
-    (
-        "/files_or_folders/copy",
-        {"from_path": "/Docs/a.pdf", "to_path": "/Copy/a.pdf"},
-        "copy_file_or_folder",
-    ),
-    ("/folders/create", {"remote_path": "/Docs/New"}, "create_folder"),
-)
-ROUTES_MAPPING_VALUE_ERROR = {"copy_file_or_folder", "create_folder"}
+# --- POST /folders/create ----------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("url", "body", "method"), JSON_ROUTES)
-def test_success_returns_file_metadata(
-    http: TestClient,
-    storage: MagicMock,
-    url: str,
-    body: dict[str, str],
-    method: str,
-) -> None:
-    """Return file metadata after a successful JSON route call."""
-    getattr(storage, method).return_value = make_file()
-
-    response = http.post(url, json=body)
+def test_create_folder_returns_new_folder(storage: FakeStorageClient, http: TestClient) -> None:
+    """Creating a folder returns it with null size and modified, and stores it."""
+    response = http.post("/folders/create", json={"remote_path": "/Docs/New"})
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["id"] == "id:abc123"
-    assert response.json()["path"] == "/Docs/report.pdf"
-    getattr(storage, method).assert_called_once_with(*body.values())
+    body = response.json()
+    assert (body["path"], body["is_folder"], body["size"], body["modified"]) == (
+        "/Docs/New",
+        True,
+        None,
+        None,
+    )
+    assert storage.entries["/Docs/New"].is_folder
 
 
-@pytest.mark.parametrize(
-    ("route", "error", "expected_status"),
-    [
-        (route, error, expected_status)
-        for route in JSON_ROUTES
-        for error, expected_status in (
-            (FileNotFoundError, status.HTTP_404_NOT_FOUND),
-            (FileExistsError, status.HTTP_409_CONFLICT),
-        )
-    ],
-)
-def test_client_errors_map_to_http_status(
+def test_create_existing_folder_returns_409(storage: FakeStorageClient, http: TestClient) -> None:
+    """Creating a folder where something already exists returns 409 and changes nothing."""
+    existing = storage.add("/Docs", is_folder=True)
+
+    response = http.post("/folders/create", json={"remote_path": "/Docs"})
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json() == {"detail": "Something already exists at '/Docs'"}
+    assert storage.entries == {"/Docs": existing}
+
+
+# --- POST /files/copy --------------------------------------------------------------------
+
+
+def test_copy_file_returns_copy_and_keeps_source(
+    storage: FakeStorageClient,
     http: TestClient,
-    storage: MagicMock,
-    route: tuple[str, dict[str, str], str],
-    error: type[Exception],
-    expected_status: int,
 ) -> None:
-    """Map client not-found and conflict errors to their HTTP status codes."""
-    url, body, method = route
-    getattr(storage, method).side_effect = error("boom")
+    """Copying a file returns a new entry at the destination; the source is unchanged."""
+    source = storage.add("/Docs/a.pdf", size=2048)
 
-    response = http.post(url, json=body)
+    response = http.post("/files/copy", json={"from_path": "/Docs/a.pdf", "to_path": "/Copy/a.pdf"})
 
-    assert response.status_code == expected_status
-    assert response.json()["detail"] == "boom"
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert (body["path"], body["size"], body["is_folder"]) == ("/Copy/a.pdf", 2048, False)
+    assert body["id"] != source.id
+    assert storage.entries["/Docs/a.pdf"] is source
 
 
-@pytest.mark.parametrize(
-    ("url", "body", "method"),
-    [r for r in JSON_ROUTES if r[2] in ROUTES_MAPPING_VALUE_ERROR],
-)
-def test_value_error_maps_to_422(
+def test_copy_folder_copies_contents(storage: FakeStorageClient, http: TestClient) -> None:
+    """The same route copies a folder together with its contents."""
+    storage.add("/Docs", is_folder=True)
+    storage.add("/Docs/a.pdf")
+
+    response = http.post("/files/copy", json={"from_path": "/Docs", "to_path": "/Backup"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["is_folder"] is True
+    assert set(storage.entries) == {"/Docs", "/Docs/a.pdf", "/Backup", "/Backup/a.pdf"}
+
+
+def test_copy_missing_source_returns_404(storage: FakeStorageClient, http: TestClient) -> None:
+    """Copying something that does not exist returns 404."""
+    response = http.post("/files/copy", json={"from_path": "/missing.pdf", "to_path": "/b.pdf"})
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json() == {"detail": "No file or folder at '/missing.pdf'"}
+    assert storage.entries == {}
+
+
+def test_copy_onto_existing_destination_returns_409(
+    storage: FakeStorageClient,
     http: TestClient,
-    storage: MagicMock,
-    url: str,
-    body: dict[str, str],
-    method: str,
 ) -> None:
-    """Map client value errors to HTTP 422 responses."""
-    getattr(storage, method).side_effect = ValueError("wrong type")
+    """Copying onto an existing entry returns 409 and overwrites nothing."""
+    a = storage.add("/a.pdf", size=1)
+    b = storage.add("/b.pdf", size=2)
 
-    response = http.post(url, json=body)
+    response = http.post("/files/copy", json={"from_path": "/a.pdf", "to_path": "/b.pdf"})
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    assert response.json()["detail"] == "wrong type"
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert storage.entries == {"/a.pdf": a, "/b.pdf": b}
 
 
 @pytest.mark.parametrize(
     ("url", "body"),
     [
-        ("/files_or_folders/copy", {"from_path": "/a"}),
+        ("/files/copy", {"from_path": "/a"}),
+        ("/files/copy", {"from_path": "a.pdf", "to_path": "/b.pdf"}),
         ("/folders/create", {"remote_path": "NoSlash"}),
     ],
 )
-def test_invalid_request_is_rejected_before_reaching_client(
+def test_invalid_request_is_rejected_and_changes_nothing(
+    storage: FakeStorageClient,
     http: TestClient,
-    storage: MagicMock,
     url: str,
     body: dict[str, str],
 ) -> None:
-    """Reject malformed JSON requests before calling the storage client."""
+    """Missing fields and relative paths return 422 before reaching storage."""
+    storage.add("/a", is_folder=True)
+
     response = http.post(url, json=body)
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    assert storage.method_calls == []
+    assert set(storage.entries) == {"/a"}
 
 
-# --- Upload (multipart) -----------------------------------------------------------------
+# --- POST /files/upload (multipart) --------------------------------------------------------
 
 
-def post_upload(http: TestClient, **form_fields: str) -> Response:
+def post_upload(http: TestClient, content: bytes = b"%PDF-data", **form_fields: str) -> Response:
     """Post a multipart upload request with the supplied form fields."""
     data = {"remote_path": "/Docs/report.pdf", **form_fields}
     response: Response = http.post(
         "/files/upload",
-        files={"file": ("report.pdf", b"%PDF-data")},
+        files={"file": ("report.pdf", content)},
         data=data,
     )
     return response
 
 
-def test_upload_passes_sent_bytes_to_client_and_cleans_up(
+def test_upload_stores_sent_bytes_and_cleans_up(
+    storage: RecordingStorageClient,
     http: TestClient,
-    storage: MagicMock,
 ) -> None:
-    """Pass uploaded bytes to the client and remove the temporary file."""
-    seen: dict[str, Any] = {}
-
-    def fake_upload(
-        local_path: str,
-        remote_path: str,
-        *,
-        overwrite: bool = False,
-    ) -> cloud_storage_client_api.File:
-        """Capture uploaded bytes while the route's temporary file exists."""
-        # Read inside the call: the temp file is deleted once the route returns.
-        seen["bytes"] = Path(local_path).read_bytes()
-        seen["local_path"] = local_path
-        return make_file()
-
-    storage.upload_file.side_effect = fake_upload
-
-    response = post_upload(http, overwrite="true")
+    """The client receives exactly the uploaded bytes, and the temporary file is removed."""
+    response = post_upload(http)
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["name"] == "report.pdf"
-    assert seen["bytes"] == b"%PDF-data"
-    assert not Path(seen["local_path"]).exists()
-    args, kwargs = storage.upload_file.call_args
-    assert args[1] == "/Docs/report.pdf"
-    assert kwargs == {"overwrite": True}
+    assert response.json()["path"] == "/Docs/report.pdf"
+    assert response.json()["size"] == len(b"%PDF-data")
+    assert storage.uploaded_bytes == b"%PDF-data"
+    assert storage.uploaded_from is not None
+    assert not Path(storage.uploaded_from).exists()
 
 
-def test_upload_overwrite_defaults_to_false(
+def test_upload_existing_file_without_overwrite_returns_409(
+    storage: FakeStorageClient,
     http: TestClient,
-    storage: MagicMock,
 ) -> None:
-    """Use false as the default upload overwrite setting."""
-    storage.upload_file.return_value = make_file()
-
-    post_upload(http)
-
-    assert storage.upload_file.call_args.kwargs == {"overwrite": False}
-
-
-def test_upload_existing_destination_returns_409(
-    http: TestClient,
-    storage: MagicMock,
-) -> None:
-    """Return HTTP 409 when upload finds an existing destination."""
-    storage.upload_file.side_effect = FileExistsError("already there")
+    """Without ``overwrite`` (the default), an existing file is not replaced."""
+    existing = storage.add("/Docs/report.pdf", size=1)
 
     response = post_upload(http)
 
     assert response.status_code == status.HTTP_409_CONFLICT
+    assert storage.entries["/Docs/report.pdf"] is existing
 
 
-def test_upload_client_value_error_maps_to_422(
+def test_upload_with_overwrite_replaces_existing_file(
+    storage: FakeStorageClient,
     http: TestClient,
-    storage: MagicMock,
 ) -> None:
-    """Map an upload value error to an HTTP 422 response."""
-    storage.upload_file.side_effect = ValueError("invalid upload")
+    """With ``overwrite=true`` the file is replaced and keeps its ID."""
+    existing = storage.add("/Docs/report.pdf", size=1)
 
-    response = post_upload(http)
+    response = post_upload(http, b"new content", overwrite="true")
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    assert response.json()["detail"] == "invalid upload"
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["id"] == existing.id
+    assert response.json()["size"] == len(b"new content")
 
 
 def test_upload_rejects_invalid_remote_path(
+    storage: RecordingStorageClient,
     http: TestClient,
-    storage: MagicMock,
 ) -> None:
-    """Reject an invalid remote path before calling the storage client."""
+    """Reject a relative remote path before calling the storage client."""
     response = post_upload(http, remote_path="relative.pdf")
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    storage.upload_file.assert_not_called()
+    assert storage.uploaded_bytes is None
+    assert storage.entries == {}
 
 
-def test_upload_requires_a_file(http: TestClient, storage: MagicMock) -> None:
+def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClient) -> None:
     """Reject an upload request that omits the file field."""
     response = http.post("/files/upload", data={"remote_path": "/Docs/report.pdf"})
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    storage.upload_file.assert_not_called()
+    assert storage.uploaded_bytes is None

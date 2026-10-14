@@ -130,7 +130,7 @@ class FakeStorageClient(Client):
             self.entries[new_path] = self.entries.pop(path).moved_to(new_path)
         return self.entries[to_path]
 
-    # ----- Not implemented until a test needs them -----
+    # ----- Create -----
 
     def upload_file(self, local_path: str, remote_path: str, *, overwrite: bool = False) -> File:
         """Upload a local file to ``remote_path``; overwrite files only when requested."""
@@ -161,16 +161,8 @@ class FakeStorageClient(Client):
             raise FileExistsError(msg)
         return self.add(remote_path, is_folder=True)
 
-    def copy_file(self, from_path: str, to_path: str) -> File:
-        """Copy the entry at ``from_path`` to ``to_path``."""
-        return self._copy_entry(from_path, to_path)
-
-    def copy_folder(self, from_path: str, to_path: str) -> File:
-        """Copy the entry at ``from_path`` and any descendants to ``to_path``."""
-        return self._copy_entry(from_path, to_path)
-
-    def _copy_entry(self, from_path: str, to_path: str) -> FakeFile:
-        """Copy a file or folder tree to a new path without changing the source."""
+    def copy(self, from_path: str, to_path: str) -> File:
+        """Copy a file, or a folder and its contents, to ``to_path``; the source is unchanged."""
         if from_path not in self.entries:
             msg = f"No file or folder at {from_path!r}"
             raise FileNotFoundError(msg)
@@ -196,6 +188,8 @@ class FakeStorageClient(Client):
         for copied in copies:
             self.entries[copied.path] = copied
         return self.entries[to_path]
+
+    # ----- Not implemented until a test needs them -----
 
     def download_file(self, remote_path: str, local_path: str) -> File:
         """Not implemented yet."""

@@ -19,22 +19,43 @@ class Client(ABC):
 
     @abstractmethod
     def upload_file(self, local_path: str, remote_path: str, *, overwrite: bool = False) -> File:
-        """Upload the file at ``local_path`` to ``remote_path`` and return its metadata."""
+        """Upload the file at ``local_path`` to ``remote_path`` and return its metadata.
+
+        An existing file at ``remote_path`` is replaced only when ``overwrite`` is true.
+
+        Raises:
+            FileNotFoundError: If ``local_path`` does not exist.
+            FileExistsError: If something already exists at ``remote_path`` and
+                ``overwrite`` is false.
+
+        """
         raise NotImplementedError
 
     @abstractmethod
     def create_folder(self, remote_path: str) -> File:
-        """Create a folder at ``remote_path`` and return its metadata."""
+        """Create a folder at ``remote_path`` and return its metadata.
+
+        Missing parent folders are created too.
+
+        Raises:
+            FileExistsError: If something already exists at ``remote_path``.
+
+        """
         raise NotImplementedError
 
     @abstractmethod
-    def copy_file(self, from_path: str, to_path: str) -> File:
-        """Duplicate the file at ``from_path`` to ``to_path`` and return the copy's metadata."""
-        raise NotImplementedError
+    def copy(self, from_path: str, to_path: str) -> File:
+        """Copy the file or folder at ``from_path`` to ``to_path`` and return the copy's metadata.
 
-    @abstractmethod
-    def copy_folder(self, from_path: str, to_path: str) -> File:
-        """Duplicate the folder at ``from_path`` (and its contents) to ``to_path``."""
+        ``to_path`` is the full destination path including the entry's name. A folder is
+        copied with its contents. The source is unchanged, the copy gets its own ID, and
+        existing entries are never overwritten.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``from_path``.
+            FileExistsError: If something already exists at ``to_path``.
+
+        """
         raise NotImplementedError
 
     # ----- Read -----

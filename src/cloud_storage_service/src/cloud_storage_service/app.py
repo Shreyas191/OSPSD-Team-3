@@ -191,11 +191,11 @@ def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileRe
     return FileResponse.from_file(created)
 
 
-@app.post("/files_or_folders/copy", responses=_ERROR_RESPONSES)
-def copy_file_or_folder(request: CopyRequest, client: StorageClient) -> FileResponse:
-    """Copy a file to a new path and return its metadata."""
+@app.post("/files/copy", responses=_ERROR_RESPONSES)
+def copy_entry(request: CopyRequest, client: StorageClient) -> FileResponse:
+    """Copy a file or folder (with its contents) to a new path and return the copy."""
     try:
-        copied = client.copy_file_or_folder(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError, ValueError) as e:
+        copied = client.copy(request.from_path, request.to_path)
+    except (FileNotFoundError, FileExistsError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(copied)

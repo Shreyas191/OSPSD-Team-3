@@ -27,6 +27,55 @@ Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dro
 
 - Errors return `{"detail": "<message>"}` with one of the status codes listed per endpoint.
 
+## Create endpoints
+
+### `POST /files/upload`
+Upload a file. The request is `multipart/form-data`, not JSON.
+
+- `file` (required): the file contents.
+- `remote_path` (required): absolute destination path, including the file name.
+- `overwrite` (optional, default `false`): replace an existing file at `remote_path`.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Uploaded; body is the File. An overwritten file keeps its `id`. |
+| `409` | Something already exists at `remote_path` and `overwrite` is `false` |
+| `422` | Invalid form (relative `remote_path`, missing `file`) |
+
+```bash
+curl -X POST http://127.0.0.1:8000/files/upload \
+  -F "file=@report.pdf" -F "remote_path=/Docs/report.pdf" -F "overwrite=false"
+```
+
+The whole file is read into memory and sent in one Dropbox request, which Dropbox limits to 150 MB.
+
+### `POST /folders/create`
+Create a folder. Missing parent folders are created too.
+
+```json
+{"remote_path": "/Docs/New"}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Created; body is the folder (`size` and `modified` are `null`) |
+| `409` | Something already exists at `remote_path` |
+| `422` | Invalid body (relative path, missing field) |
+
+### `POST /files/copy`
+Copy a file, or a folder with its contents, to a new full path. The source is unchanged, the copy gets its own `id`, and existing entries are never overwritten.
+
+```json
+{"from_path": "/Docs/report.pdf", "to_path": "/Archive/report.pdf"}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Copied; body is the File at `to_path` |
+| `404` | Nothing exists at `from_path` |
+| `409` | Something already exists at `to_path`, or `to_path` is inside the folder being copied |
+| `422` | Invalid body (relative path, missing field) |
+
 ## Update endpoints
 
 ### `POST /files/rename`
