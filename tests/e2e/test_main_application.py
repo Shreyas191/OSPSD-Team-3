@@ -27,7 +27,7 @@ def test_main_runs_with_mocked_client(capsys: pytest.CaptureFixture[str]) -> Non
     mock_dbx.files_list_folder.return_value = Mock(entries=[], has_more=False)  # mock of ListFolderResult
     client = DropboxClient(dbx=mock_dbx)
 
-    with patch("cloud_storage_client_api.get_client", return_valuesoles=client):
+    with patch("cloud_storage_client_api.get_client", return_value=client):
         main.main()
 
     assert "Demo complete." in capsys.readouterr().out
