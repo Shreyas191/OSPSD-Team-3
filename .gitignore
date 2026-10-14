@@ -31,6 +31,8 @@ site/
 token.json
 .env
 credentials.json
+.dropbox_token.json
 
 .coverage*
 TESTING_STATUS.md
+.DS_Store
