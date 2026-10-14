@@ -38,7 +38,10 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-AbsolutePath = Annotated[str, Field(pattern=r"^/.+", examples=["/Docs/report.pdf"])]
+# One or more "/name" segments: no empty segments ("/a//b") and no trailing slash
+# ("/a/"). Dropbox rejects those as malformed paths, so they are refused here with 422
+# instead of reaching the provider. The root ("/") is not an entry path either.
+AbsolutePath = Annotated[str, Field(pattern=r"^(/[^/]+)+$", examples=["/Docs/report.pdf"])]
 
 
 def build_storage_client() -> cloud_storage_client_api.Client:

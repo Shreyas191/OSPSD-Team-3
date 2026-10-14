@@ -13,7 +13,7 @@ Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dro
 `build_storage_client()` in `app.py` is the only place the service names a concrete provider (it returns a `DropboxClient`). The app calls it once at startup, stores the client on `app.state`, and routes receive it through the `get_storage_client` dependency as an abstract `Client`. Switching providers means changing `build_storage_client()` only; routes and response models stay the same.
 
 ## Conventions
-- Paths are absolute within the user's storage and start with `/` (e.g. `/Docs/report.pdf`). They go in the JSON body, not the URL, because they contain `/`.
+- Paths are absolute within the user's storage and start with `/` (e.g. `/Docs/report.pdf`). They must not end with `/` or contain empty segments (`/Docs//report.pdf`); such paths are rejected with `422`. `POST` routes take paths in the request body; `GET` and `DELETE` routes take a URL-encoded `path` query parameter. `GET /folders/list` also accepts `""` or `/` for the root.
 - Successful responses return a **File** object:
 
   | Field | Type | Meaning |
