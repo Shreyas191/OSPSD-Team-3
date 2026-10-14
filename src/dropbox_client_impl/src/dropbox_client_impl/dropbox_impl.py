@@ -68,6 +68,21 @@ class DropboxClient(cloud_storage_client_api.Client):
     def download_file(self, remote_path: str, local_path: str) -> cloud_storage_client_api.File:
         """Download a file from remote_path to local_path.
 
+        Inputs:
+            remote_path: Absolute path of the remote file on Dropbox.
+            local_path: Local filesystem path where the file contents should be written.
+
+        Returns:
+            The metadata of the downloaded file as a :class:`DropboxFile`.
+
+        Side effects:
+            Writes or overwrites the local file at ``local_path``.
+            Performs a read request on Dropbox.
+
+        Caller assumptions:
+            Parent directories for ``local_path`` exist and are writable. ``remote_path`` points
+            to a file, not a directory.
+
         Raises:
             FileNotFoundError: If nothing exists at ``remote_path``.
             IsADirectoryError: If ``remote_path`` is a folder.
@@ -88,6 +103,18 @@ class DropboxClient(cloud_storage_client_api.Client):
     def get_metadata(self, remote_path: str) -> cloud_storage_client_api.File:
         """Get file or folder metadata.
 
+        Inputs:
+            remote_path: Absolute path of the file or folder on Dropbox.
+
+        Returns:
+            A :class:`DropboxFile` instance representing the metadata.
+
+        Side effects:
+            None. Read-only query against Dropbox.
+
+        Caller assumptions:
+            ``remote_path`` is a non-empty absolute path starting with ``/``.
+
         Raises:
             FileNotFoundError: If nothing exists at ``remote_path``.
 
@@ -102,7 +129,19 @@ class DropboxClient(cloud_storage_client_api.Client):
         return DropboxFile(metadata)
 
     def list_folder(self, remote_path: str = "") -> Iterator[cloud_storage_client_api.File]:
-        """List a folder.
+        """List direct children in a folder, paginating until complete.
+
+        Inputs:
+            remote_path: Absolute path of the folder to list (or ``""`` for root).
+
+        Returns:
+            An iterator yielding a :class:`DropboxFile` for each child entry.
+
+        Side effects:
+            None. Read-only query against Dropbox.
+
+        Caller assumptions:
+            ``remote_path`` points to an existing folder (or is empty string for the root).
 
         Raises:
             FileNotFoundError: If the folder does not exist.
@@ -132,7 +171,20 @@ class DropboxClient(cloud_storage_client_api.Client):
                 yield DropboxFile(entry)
 
     def search(self, query: str, max_results: int = 10) -> Iterator[cloud_storage_client_api.File]:
-        """Search for a file by name.
+        """Search for files and folders by name.
+
+        Inputs:
+            query: Non-empty search string to match against entry names.
+            max_results: Maximum number of entries to yield (must be > 0, defaults to 10).
+
+        Returns:
+            An iterator yielding up to ``max_results`` matching :class:`DropboxFile` instances.
+
+        Side effects:
+            None. Read-only query against Dropbox.
+
+        Caller assumptions:
+            ``query`` is non-empty and ``max_results`` is a positive integer.
 
         Raises:
             ValueError: If ``query`` is empty or ``max_results`` <= 0.

@@ -41,22 +41,97 @@ class Client(ABC):
 
     @abstractmethod
     def download_file(self, remote_path: str, local_path: str) -> File:
-        """Download the file at ``remote_path`` to ``local_path`` and return its metadata."""
+        """Download the file at ``remote_path`` to ``local_path`` and return its metadata.
+
+        Inputs:
+            remote_path: Absolute path of the remote file to download (e.g. ``/Docs/report.pdf``).
+            local_path: Local filesystem path where the file contents should be written.
+
+        Returns:
+            The metadata of the downloaded file as a :class:`File`.
+
+        Side effects:
+            Writes or overwrites the local file at ``local_path``. Performs read-only operations
+            on the cloud storage provider.
+
+        Caller assumptions:
+            Parent directories for ``local_path`` exist and are writable. ``remote_path`` points
+            to a file, not a directory.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``remote_path``.
+            IsADirectoryError: If ``remote_path`` points to a folder rather than a file.
+
+        """
         raise NotImplementedError
 
     @abstractmethod
     def get_metadata(self, remote_path: str) -> File:
-        """Return the metadata (name, size, modified date, ...) for ``remote_path``."""
+        """Return metadata for the file or folder at ``remote_path``.
+
+        Inputs:
+            remote_path: Absolute path of the file or folder (e.g. ``/Docs/report.pdf``).
+
+        Returns:
+            A :class:`File` instance representing the file or folder's metadata.
+
+        Side effects:
+            None. This is a read-only query on the cloud storage provider.
+
+        Caller assumptions:
+            ``remote_path`` is a non-empty absolute path starting with ``/``.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``remote_path``.
+
+        """
         raise NotImplementedError
 
     @abstractmethod
     def list_folder(self, remote_path: str = "") -> Iterator[File]:
-        """Return an iterator over the entries in a folder (``""`` is the root)."""
+        """Return an iterator over the direct children of the folder at ``remote_path``.
+
+        Inputs:
+            remote_path: Absolute path of the folder to list (e.g. ``/Docs``), or ``""`` for root.
+
+        Returns:
+            An iterator yielding :class:`File` instances for each direct child entry in the folder.
+            Pagination is handled transparently by the implementation until all entries are yielded.
+
+        Side effects:
+            None. This is a read-only query on the cloud storage provider.
+
+        Caller assumptions:
+            ``remote_path`` points to an existing folder (or is empty string for the root).
+
+        Raises:
+            FileNotFoundError: If the folder does not exist.
+            ValueError: If ``remote_path`` points to a file rather than a folder.
+
+        """
         raise NotImplementedError
 
     @abstractmethod
     def search(self, query: str, max_results: int = 10) -> Iterator[File]:
-        """Return an iterator over files and folders whose name matches ``query``."""
+        """Return an iterator over files and folders whose name matches ``query``.
+
+        Inputs:
+            query: Non-empty search string to match against entry names.
+            max_results: Maximum number of entries to yield (must be > 0, defaults to 10).
+
+        Returns:
+            An iterator yielding up to ``max_results`` matching :class:`File` instances.
+
+        Side effects:
+            None. This is a read-only query on the cloud storage provider.
+
+        Caller assumptions:
+            ``query`` is non-empty and ``max_results`` is a positive integer.
+
+        Raises:
+            ValueError: If ``query`` is empty or ``max_results`` <= 0.
+
+        """
         raise NotImplementedError
 
     # ----- Update -----
