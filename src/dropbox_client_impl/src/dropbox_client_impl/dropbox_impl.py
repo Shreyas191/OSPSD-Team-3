@@ -17,11 +17,13 @@ from pathlib import Path
 import cloud_storage_client_api
 import dropbox
 from dropbox import files
-from dropbox.exceptions import ApiError
-from dropbox.files import FileMetadata, FolderMetadata, WriteMode
+from dropbox.files import WriteMode
 
 from dropbox_client_impl.auth import get_dropbox_client
 from dropbox_client_impl.file_impl import DropboxFile
+
+from dropbox.exceptions import ApiError
+from dropbox.files import FileMetadata, FolderMetadata
 
 
 class DropboxClient(cloud_storage_client_api.Client):
@@ -126,26 +128,20 @@ class DropboxClient(cloud_storage_client_api.Client):
             if e.error.is_path() and e.error.get_path().is_not_found():
                 raise FileNotFoundError(path) from e
             raise
-        file_not_folder = f"{path} is a file, not a folder"
-        folder_not_file = f"{path} is a folder, not a file"
         if folder and not isinstance(metadata, FolderMetadata):
-            raise ValueError(file_not_folder)
+            raise ValueError(f"{path} is a file, not a folder")
         if not folder and not isinstance(metadata, FileMetadata):
-            raise ValueError(folder_not_file)
+            raise ValueError(f"{path} is a folder, not a file")
 
     def copy_file(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Copy a file to ``to_path`` using ``files_copy_v2``."""
-        self._require_type(from_path, folder=False)
-        result = self.dbx.files_copy_v2(from_path, to_path)
-        return self._to_file(result.metadata)
+        """Duplicate a file."""
+        res = self.dbx.files_copy_v2(from_path, to_path)
+        return DropboxFile(res.metadata)
 
-    def copy_folder(
-        self, from_path: str, to_path: str,
-    ) -> cloud_storage_client_api.Folder:
-        """Copy a folder to ``to_path`` using ``files_copy_v2``."""
-        self._require_type(from_path, folder=True)
-        result = self.dbx.files_copy_v2(from_path, to_path)
-        return self._to_folder(result.metadata)
+    def copy_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
+        """Duplicate a folder."""
+        res = self.dbx.files_copy_v2(from_path, to_path)
+        return DropboxFile(res.metadata)
 
     # ----- Read (Jing) -----
 
