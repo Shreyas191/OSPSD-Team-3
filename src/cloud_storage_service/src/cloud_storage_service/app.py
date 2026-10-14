@@ -82,28 +82,37 @@ class FileResponse(BaseModel):
             size=file.size,
             modified=file.modified,
         )
+
+
 class UploadForm(BaseModel):
     """Upload a file as multipart/form-data."""
 
     file: UploadFile
     remote_path: AbsolutePath = Field(
-        description="Destination path in cloud storage", examples=["/Docs/report.pdf"],
+        description="Destination path in cloud storage",
+        examples=["/Docs/report.pdf"],
     )
     overwrite: bool = Field(
-        default=False, description="Whether to overwrite if the file already exists",
+        default=False,
+        description="Whether to overwrite if the file already exists",
     )
+
 
 class CreateFolderRequest(BaseModel):
     """Create a new folder at the specified path."""
 
-    remote_path: AbsolutePath = Field(description="Destination path in cloud storage",
-                                      examples=["/Docs/NewFolder"])
+    remote_path: AbsolutePath = Field(
+        description="Destination path in cloud storage",
+        examples=["/Docs/NewFolder"],
+    )
+
 
 class CopyRequest(BaseModel):
     """Copy the entry at ``from_path`` to the full destination path ``to_path``."""
 
     from_path: AbsolutePath
     to_path: AbsolutePath = Field(examples=["/Archive/report.pdf"])
+
 
 class RenameRequest(BaseModel):
     """Rename the entry at ``path`` to ``new_name`` within the same folder."""
@@ -153,6 +162,7 @@ def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
         raise _to_http_error(e) from e
     return FileResponse.from_file(moved)
 
+
 @app.post("/files/upload", responses=_ERROR_RESPONSES)
 def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> FileResponse:
     """Upload a file to cloud storage and return its metadata."""
@@ -162,11 +172,14 @@ def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> F
             shutil.copyfileobj(form.file.file, out)
         try:
             uploaded = client.upload_file(
-                str(tmp_path), form.remote_path, overwrite=form.overwrite,
+                str(tmp_path),
+                form.remote_path,
+                overwrite=form.overwrite,
             )
         except (FileNotFoundError, FileExistsError, ValueError) as e:
             raise _to_http_error(e) from e
     return FileResponse.from_file(uploaded)
+
 
 @app.post("/folders/create", responses=_ERROR_RESPONSES)
 def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
@@ -177,6 +190,7 @@ def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileRe
         raise _to_http_error(e) from e
     return FileResponse.from_file(created)
 
+
 @app.post("/files/copy", responses=_ERROR_RESPONSES)
 def copy_file(request: CopyRequest, client: StorageClient) -> FileResponse:
     """Copy a file to a new path and return its metadata."""
@@ -185,6 +199,7 @@ def copy_file(request: CopyRequest, client: StorageClient) -> FileResponse:
     except (FileNotFoundError, FileExistsError, ValueError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(copied)
+
 
 @app.post("/folders/copy", responses=_ERROR_RESPONSES)
 def copy_folder(request: CopyRequest, client: StorageClient) -> FileResponse:

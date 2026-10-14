@@ -23,7 +23,9 @@ MODIFIED = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
 
 
 def make_file(
-    path: str = "/Docs/report.pdf", *, is_folder: bool = False,
+    path: str = "/Docs/report.pdf",
+    *,
+    is_folder: bool = False,
 ) -> cloud_storage_client_api.File:
     """Build a stand-in for any ``cloud_storage_client_api.File`` implementation."""
     return cast(
@@ -173,7 +175,10 @@ def test_value_error_maps_to_422(
     ],
 )
 def test_invalid_request_is_rejected_before_reaching_client(
-    http: TestClient, storage: MagicMock, url: str, body: dict[str, str],
+    http: TestClient,
+    storage: MagicMock,
+    url: str,
+    body: dict[str, str],
 ) -> None:
     """Reject malformed JSON requests before calling the storage client."""
     response = http.post(url, json=body)
@@ -197,13 +202,17 @@ def post_upload(http: TestClient, **form_fields: str) -> Response:
 
 
 def test_upload_passes_sent_bytes_to_client_and_cleans_up(
-    http: TestClient, storage: MagicMock,
+    http: TestClient,
+    storage: MagicMock,
 ) -> None:
     """Pass uploaded bytes to the client and remove the temporary file."""
     seen: dict[str, Any] = {}
 
     def fake_upload(
-        local_path: str, remote_path: str, *, overwrite: bool = False,
+        local_path: str,
+        remote_path: str,
+        *,
+        overwrite: bool = False,
     ) -> cloud_storage_client_api.File:
         """Capture uploaded bytes while the route's temporary file exists."""
         # Read inside the call: the temp file is deleted once the route returns.
@@ -225,7 +234,8 @@ def test_upload_passes_sent_bytes_to_client_and_cleans_up(
 
 
 def test_upload_overwrite_defaults_to_false(
-    http: TestClient, storage: MagicMock,
+    http: TestClient,
+    storage: MagicMock,
 ) -> None:
     """Use false as the default upload overwrite setting."""
     storage.upload_file.return_value = make_file()
@@ -236,7 +246,8 @@ def test_upload_overwrite_defaults_to_false(
 
 
 def test_upload_existing_destination_returns_409(
-    http: TestClient, storage: MagicMock,
+    http: TestClient,
+    storage: MagicMock,
 ) -> None:
     """Return HTTP 409 when upload finds an existing destination."""
     storage.upload_file.side_effect = FileExistsError("already there")
@@ -247,7 +258,8 @@ def test_upload_existing_destination_returns_409(
 
 
 def test_upload_client_value_error_maps_to_422(
-    http: TestClient, storage: MagicMock,
+    http: TestClient,
+    storage: MagicMock,
 ) -> None:
     """Map an upload value error to an HTTP 422 response."""
     storage.upload_file.side_effect = ValueError("invalid upload")
@@ -259,7 +271,8 @@ def test_upload_client_value_error_maps_to_422(
 
 
 def test_upload_rejects_invalid_remote_path(
-    http: TestClient, storage: MagicMock,
+    http: TestClient,
+    storage: MagicMock,
 ) -> None:
     """Reject an invalid remote path before calling the storage client."""
     response = post_upload(http, remote_path="relative.pdf")

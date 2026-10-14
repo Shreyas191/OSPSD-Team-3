@@ -92,6 +92,7 @@ class DropboxClient(cloud_storage_client_api.Client):
         - path_lower (string): The lowercase path of the file in the user's Dropbox.
         - preview_url (string, optional): A URL that can be used to preview the file
     """
+
     def upload_file(
         self,
         local_path: str,
@@ -107,7 +108,7 @@ class DropboxClient(cloud_storage_client_api.Client):
                 source.read(),
                 remote_path,
                 mode=mode,
-                autorename=False, #Will return error on duplicate file name
+                autorename=False,  # Will return error on duplicate file name
             )
 
         return DropboxFile(metadata)

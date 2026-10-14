@@ -1,4 +1,5 @@
 """Tests for Dropbox client upload functionality."""
+
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -24,6 +25,7 @@ FILE_SIZE = 4096
 
 """TODO(Jing): merge these stubs with test_reads' implementations"""
 # fixtures
+
 
 @pytest.fixture
 def mock_dbx() -> Mock:
@@ -69,7 +71,9 @@ def create_fake_folder_metadata(
         path_display=path,
     )
 
+
 # below stubs don't with test_reads
+
 
 def create_fake_create_folder_result(folder_metadata: FolderMetadata) -> CreateFolderResult:
     """Create a real Dropbox SDK CreateFolderResult containing FolderMetadata."""
@@ -82,10 +86,12 @@ def create_fake_relocation_result(
     """Create a real Dropbox SDK RelocationResult containing FileMetadata or FolderMetadata."""
     return RelocationResult(metadata=metadata)
 
+
 # end fixtures
 
 
 # upload_file tests
+
 
 def test_client_upload_file(tmp_path: Path) -> None:
     """Upload a local file and return its metadata. This test uses a mock Dropbox client to avoid actual network calls."""
@@ -113,6 +119,7 @@ def test_client_upload_file(tmp_path: Path) -> None:
     assert uploaded.path == "/Docs/report.pdf"
     mock_dbx.files_upload.assert_called_once()
 
+
 def test_upload_file_default_mode_success(
     client: DropboxClient,
     mock_dbx: Mock,
@@ -138,7 +145,11 @@ def test_upload_file_default_mode_success(
     # check binary data and destination path
     f_data = call_kwargs.get("f") if "f" in call_kwargs else call_args[0]
     dest_path = call_kwargs.get("path") if "path" in call_kwargs else call_args[1]
-    mode = call_kwargs.get("mode") if "mode" in call_kwargs else (call_args[2] if len(call_args) > TWO else None)
+    mode = (
+        call_kwargs.get("mode")
+        if "mode" in call_kwargs
+        else (call_args[2] if len(call_args) > TWO else None)
+    )
     autorename = call_kwargs.get("autorename") if "autorename" in call_kwargs else False
 
     assert f_data == content
@@ -229,6 +240,7 @@ def test_upload_file_missing_local_path_raises_file_not_found(
 
 # create_folder tests
 
+
 def test_create_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
     """Create_folder calls files_create_folder_v2 and returns File with folder contract."""
     folder_meta = create_fake_folder_metadata("documents", "/documents", "id:folder101")
@@ -286,6 +298,7 @@ def test_create_folder_api_error_propagates(client: DropboxClient, mock_dbx: Moc
 
 # copy_file tests
 
+
 def test_copy_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
     """Copy_file calls files_copy_v2 with from/to paths and returns destination File."""
     copied_meta = create_fake_file_metadata(
@@ -330,6 +343,7 @@ def test_copy_file_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -
 
 
 # copy_folder tests
+
 
 def test_copy_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
     """Copy_folder calls files_copy_v2 with from/to paths and returns destination Folder."""
