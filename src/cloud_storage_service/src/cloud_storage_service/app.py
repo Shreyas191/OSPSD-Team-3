@@ -113,7 +113,7 @@ _ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
 
 _READ_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
     404: {"description": "The requested file or folder does not exist"},
-    422: {"description": "Validation error or invalid target path"},
+    422: {"description": "Validation error or invalid target path or target is a folder"},
 }
 
 
@@ -171,7 +171,7 @@ def download_file(path: AbsolutePath, client: StorageClient) -> Response:
 @app.get("/folders/list", responses=_READ_ERROR_RESPONSES)
 def list_folder(
     client: StorageClient,
-    path: str = "",
+    path: Annotated[str, Query(pattern=r"^(/.*)?$")] = "",
 ) -> list[FileResponse]:
     """List all direct children in the folder at ``path``."""
     try:
@@ -185,7 +185,7 @@ def list_folder(
 def search_files(
     q: Annotated[str, Query(min_length=1)],
     client: StorageClient,
-    max_results: Annotated[int, Query(gt=0)] = 10,
+    max_results: Annotated[int, Query(gt=0, le=1000)] = 10,
 ) -> list[FileResponse]:
     """Search for files and folders matching a query string."""
     try:

@@ -117,7 +117,8 @@ class Client(ABC):
 
         Inputs:
             query: Non-empty search string to match against entry names.
-            max_results: Maximum number of entries to yield (must be > 0, defaults to 10).
+            max_results: Maximum number of entries to yield (must be between 1 and 1000,
+                defaults to 10).
 
         Returns:
             An iterator yielding up to ``max_results`` matching :class:`File` instances.
@@ -126,10 +127,10 @@ class Client(ABC):
             None. This is a read-only query on the cloud storage provider.
 
         Caller assumptions:
-            ``query`` is non-empty and ``max_results`` is a positive integer.
+            ``query`` is non-empty and ``max_results`` is an integer between 1 and 1000.
 
         Raises:
-            ValueError: If ``query`` is empty or ``max_results`` <= 0.
+            ValueError: If ``query`` is empty or ``max_results`` is not between 1 and 1000.
 
         """
         raise NotImplementedError

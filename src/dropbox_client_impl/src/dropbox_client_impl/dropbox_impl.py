@@ -21,6 +21,8 @@ from dropbox.files import SearchOptions
 from dropbox_client_impl.auth import get_dropbox_client
 from dropbox_client_impl.file_impl import DropboxFile
 
+_SEARCH_MAX_RESULTS_LIMIT = 1000
+
 
 class DropboxClient(cloud_storage_client_api.Client):
     """Concrete implementation of the Client abstraction using the Dropbox API."""
@@ -175,7 +177,8 @@ class DropboxClient(cloud_storage_client_api.Client):
 
         Inputs:
             query: Non-empty search string to match against entry names.
-            max_results: Maximum number of entries to yield (must be > 0, defaults to 10).
+            max_results: Maximum number of entries to yield (must be between 1 and 1000,
+                defaults to 10).
 
         Returns:
             An iterator yielding up to ``max_results`` matching :class:`DropboxFile` instances.
@@ -184,17 +187,17 @@ class DropboxClient(cloud_storage_client_api.Client):
             None. Read-only query against Dropbox.
 
         Caller assumptions:
-            ``query`` is non-empty and ``max_results`` is a positive integer.
+            ``query`` is non-empty and ``max_results`` is an integer between 1 and 1000.
 
         Raises:
-            ValueError: If ``query`` is empty or ``max_results`` <= 0.
+            ValueError: If ``query`` is empty or ``max_results`` is not between 1 and 1000.
 
         """
         if not query:
             msg = "Search query must be non-empty"
             raise ValueError(msg)
-        if max_results <= 0:
-            msg = f"max_results must be greater than 0, got {max_results}"
+        if max_results <= 0 or max_results > _SEARCH_MAX_RESULTS_LIMIT:
+            msg = f"max_results must be greater than 0 and at most 1000, got {max_results}"
             raise ValueError(msg)
 
         options = SearchOptions(max_results=max_results, filename_only=True)

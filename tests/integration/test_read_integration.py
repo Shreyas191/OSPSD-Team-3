@@ -113,6 +113,9 @@ def test_search_operations_and_validation(client: DropboxClient) -> None:
     with pytest.raises(ValueError, match="max_results must be greater than 0"):
         list(client.search("test", max_results=-1))
 
+    with pytest.raises(ValueError, match="max_results must be greater than 0 and at most 1000"):
+        list(client.search("test", max_results=5000))
+
     # A search with an arbitrary unique string should execute and return without errors
     results = list(client.search("nonexistent_unique_query_12345_xyz", max_results=5))
     assert results == []

@@ -501,11 +501,15 @@ def test_search_empty_query_raises_value_error(client: DropboxClient) -> None:
 
 
 def test_search_invalid_max_results_raises_value_error(client: DropboxClient) -> None:
-    """Search raises ValueError when max_results <= 0."""
+    """Search raises ValueError when max_results is not in [1, 1000]."""
     with pytest.raises(ValueError, match="max_results must be greater than 0"):
         list(client.search("query", max_results=0))
     with pytest.raises(ValueError, match="max_results must be greater than 0"):
         list(client.search("query", max_results=-1))
+    with pytest.raises(ValueError, match="max_results must be greater than 0 and at most 1000"):
+        list(client.search("query", max_results=1001))
+    with pytest.raises(ValueError, match="max_results must be greater than 0 and at most 1000"):
+        list(client.search("query", max_results=5000))
 
 
 def test_search_skips_deleted_metadata_matches(client: DropboxClient, mock_dbx: Mock) -> None:

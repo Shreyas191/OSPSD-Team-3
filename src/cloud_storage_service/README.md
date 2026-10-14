@@ -117,13 +117,13 @@ curl -o downloaded.pdf "http://127.0.0.1:8000/files/download?path=/Docs/report.p
 List all direct children in the folder at `path`. Returns an empty list or root entries if `path` is empty or root (`/`).
 
 Query parameters:
-- `path` (optional, defaults to empty): absolute path of the folder to list (e.g. `?path=/Docs`).
+- `path` (optional, defaults to empty): absolute path of the folder to list (e.g. `?path=/Docs`), or empty for root. Must start with `/` or be empty.
 
 | Status | Meaning |
 |--------|---------|
 | `200` | Success; body is a JSON array of File objects |
 | `404` | Folder does not exist |
-| `422` | Path points to a file rather than a folder |
+| `422` | Path points to a file rather than a folder, or invalid path (relative path) |
 
 ```bash
 curl "http://127.0.0.1:8000/folders/list?path=/Docs"
@@ -134,12 +134,12 @@ Search for files and folders matching a query string, up to `max_results` entrie
 
 Query parameters:
 - `q` (required): non-empty search query string (e.g. `?q=report`).
-- `max_results` (optional, defaults to 10): maximum number of results to return (must be greater than 0).
+- `max_results` (optional, defaults to 10): maximum number of results to return (must be between 1 and 1000).
 
 | Status | Meaning |
 |--------|---------|
 | `200` | Success; body is a JSON array of matching File objects |
-| `422` | Invalid query (empty `q` or `max_results` ≤ 0) |
+| `422` | Invalid query (empty `q` or `max_results` not between 1 and 1000) |
 
 ```bash
 curl "http://127.0.0.1:8000/files/search?q=report&max_results=5"

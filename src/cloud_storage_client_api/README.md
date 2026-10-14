@@ -11,7 +11,7 @@
 ## Architecture
 
 ### `Client` operations
-All paths are absolute within the user's storage and start with `/` (e.g. `/Documents/report.pdf`).
+All paths are absolute within the user's storage and start with `/` (e.g. `/Documents/report.pdf`). For `search`, `max_results` must be between 1 and 1000.
 
 | Area   | Method | Returns |
 |--------|--------|---------|
