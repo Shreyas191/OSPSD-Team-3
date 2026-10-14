@@ -194,6 +194,26 @@ Query parameters:
 curl "http://127.0.0.1:8000/files/search?q=report&max_results=5"
 ```
 
+## Delete endpoints
+
+### `DELETE /files`
+Delete a file, or a folder together with everything inside it.
+
+Query parameters:
+- `path` (required): absolute path of the entry to delete (e.g. `?path=/Docs/report.pdf`). The root (`/`) can never be deleted.
+
+| Status | Meaning |
+|--------|---------|
+| `204` | Deleted; the response has no body |
+| `404` | Nothing exists at `path`, including a path that was already deleted |
+| `422` | Invalid query parameter (missing, empty, relative, or the root `/`) |
+
+```bash
+curl -X DELETE "http://127.0.0.1:8000/files?path=/Docs/report.pdf"
+```
+
+Delete is not idempotent: deleting the same path twice returns `204` the first time and `404` the second. The response has no body because the `Client.delete` contract returns only `True`, not the deleted entry. The root path is rejected before the provider is contacted. Dropbox implements delete as a single `files_delete_v2` call; deleted entries go to the Dropbox account's trash, but this service does not offer restore. Other provider failures (e.g. too many concurrent writes) currently surface as `500`.
+
 
 ## Testing
 ```bash

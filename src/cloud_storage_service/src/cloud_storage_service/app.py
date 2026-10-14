@@ -275,3 +275,20 @@ def search_files(
     except ValueError as e:
         raise _to_http_error(e) from e
     return [FileResponse.from_file(result) for result in results]
+
+
+# ----- Delete Endpoints -----
+
+_DELETE_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
+    404: {"description": "Nothing exists at the path (including a path already deleted)"},
+    422: {"description": "Missing, relative or root path"},
+}
+
+
+@app.delete("/files", status_code=status.HTTP_204_NO_CONTENT, responses=_DELETE_ERROR_RESPONSES)
+def delete_entry(path: AbsolutePath, client: StorageClient) -> None:
+    """Delete a file, or a folder with its contents, at the absolute ``path``."""
+    try:
+        client.delete(path)
+    except (FileNotFoundError, ValueError) as e:
+        raise _to_http_error(e) from e
