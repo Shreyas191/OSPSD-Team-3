@@ -31,7 +31,7 @@ Create a **Context** named `dropbox-client` with:
 
 CI cannot complete the browser-based OAuth flow, so it uses a refresh token instead. To get one, run `uv run python -m dropbox_client_impl login` locally while signed in to the Dropbox account CI should use. Then copy the `refresh_token` value from the generated `.dropbox_token.json` into the context. The Dropbox SDK uses it to obtain short-lived access tokens automatically, so it does not expire after a few hours. To rotate it, run `logout` (or remove the app under Dropbox **Settings → Connected apps**), log in again, and update the context.
 
-Without these variables, the real-Dropbox integration tests are skipped and everything else still runs.
+On `main` and `dev`, the `integration_test` job fails if any of these variables is missing, so the real-Dropbox tests can't be skipped silently. Other branches don't use the context: their integration tests are skipped and everything else still runs.
 
 ## Workflows
 
@@ -67,7 +67,7 @@ uv run pytest src/ tests/ -m "not local_credentials"
 
 **"Extra 'dev' is not defined"**: Use `[project.optional-dependencies]` instead of `[dependency-groups]` in `pyproject.toml`
 
-**Missing environment variables**: Ensure `dropbox-client` context is created and applied to integration jobs
+**`integration_test` fails with "Missing Dropbox environment variables"**: add all three variables above to the `dropbox-client` context (Organization Settings → Contexts). If the tests run but fail authentication, the refresh token was revoked (for example by `logout`); log in again and update `DROPBOX_REFRESH_TOKEN`.
 
 **Coverage failures**: Project requires 85% coverage - add tests or adjust threshold
 

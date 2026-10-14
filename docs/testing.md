@@ -19,7 +19,7 @@ The project uses pytest markers to categorize tests based on their requirements 
 
 ### All Unit Tests (Fast)
 ```bash
-uv run pytest src/ --cov=src --cov-fail-under=90
+uv run pytest src/ --cov=src --cov-fail-under=85
 ```
 
 ### CircleCI-Compatible Tests Only
