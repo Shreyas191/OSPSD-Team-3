@@ -25,6 +25,7 @@ from pathlib import Path
 from cloud_storage_client_api import Client, File
 
 FIXED_MODIFIED = datetime(2026, 10, 1, 12, 30)  # noqa: DTZ001 - providers may return naive UTC
+_SEARCH_MAX_RESULTS_LIMIT = 1000
 
 
 class FakeFile(File):
@@ -182,7 +183,7 @@ class FakeStorageClient(Client):
 
         prefix = f"{norm_path}/" if norm_path else "/"
         seen = set()
-        for path in self.entries:
+        for path in list(self.entries):
             if path.startswith(prefix) and path != norm_path:
                 rel = path[len(prefix) :]
                 direct_child_segment = rel.split("/")[0]
@@ -193,21 +194,23 @@ class FakeStorageClient(Client):
                         yield self.entries[child_path]
                     else:
                         # Synthetic folder entry if sub-items were added directly
-                        yield FakeFile(
+                        folder = FakeFile(
                             f"id:{next(self._ids)}",
                             child_path,
                             is_folder=True,
                             size=None,
                             modified=None,
                         )
+                        self.entries[child_path] = folder
+                        yield folder
 
     def search(self, query: str, max_results: int = 10) -> Iterator[File]:
         """Return an iterator over entries matching ``query`` by name."""
         if not query:
             msg = "Search query must be non-empty"
             raise ValueError(msg)
-        if max_results <= 0:
-            msg = f"max_results must be greater than 0, got {max_results}"
+        if max_results <= 0 or max_results > _SEARCH_MAX_RESULTS_LIMIT:
+            msg = f"max_results must be greater than 0 and at most 1000, got {max_results}"
             raise ValueError(msg)
 
         yielded = 0

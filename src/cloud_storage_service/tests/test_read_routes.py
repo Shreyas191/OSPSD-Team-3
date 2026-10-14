@@ -193,6 +193,34 @@ def test_list_folder_target_is_file_returns_422(
     assert response.json() == {"detail": "Path is a file: '/file.txt'"}
 
 
+@pytest.mark.parametrize("path", ["Docs", "Docs/sub", "relative"])
+def test_list_folder_relative_path_returns_422(
+    http: TestClient,
+    path: str,
+) -> None:
+    """Listing a folder with a relative path returns 422."""
+    response = http.get("/folders/list", params={"path": path})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+def test_list_folder_synthetic_ids_are_stable(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Listing synthetic parent folders repeatedly preserves entry IDs."""
+    storage.add("/Docs/report.pdf", size=100)
+
+    first_resp = http.get("/folders/list", params={"path": ""})
+    assert first_resp.status_code == HTTPStatus.OK
+    first_id = first_resp.json()[0]["id"]
+
+    second_resp = http.get("/folders/list", params={"path": ""})
+    assert second_resp.status_code == HTTPStatus.OK
+    second_id = second_resp.json()[0]["id"]
+
+    assert first_id == second_id
+
+
 # ----- GET /files/search -----
 
 
@@ -232,6 +260,8 @@ def test_search_files_respects_max_results(storage: FakeStorageClient, http: Tes
         ("", 10),
         ("report", 0),
         ("report", -5),
+        ("report", 1001),
+        ("report", 5000),
     ],
 )
 def test_search_files_invalid_parameters_return_422(
@@ -239,7 +269,7 @@ def test_search_files_invalid_parameters_return_422(
     q: str,
     max_results: int,
 ) -> None:
-    """Search returns 422 if q is empty or max_results <= 0."""
+    """Search returns 422 if q is empty or max_results is not in [1, 1000]."""
     response = http.get("/files/search", params={"q": q, "max_results": max_results})
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
