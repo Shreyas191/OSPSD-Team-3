@@ -15,19 +15,18 @@ see the abstract ``Client``. Tests replace it with
 ``app.dependency_overrides[get_storage_client]``.
 """
 
+import shutil
+import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 import cloud_storage_client_api
 from dropbox_client_impl import DropboxClient
-from fastapi import Depends, FastAPI, HTTPException, Request, status, UploadFile, Form
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
-
-import shutil
-import tempfile
-from pathlib import Path
 
 AbsolutePath = Annotated[str, Field(pattern=r"^/.+", examples=["/Docs/report.pdf"])]
 
@@ -88,10 +87,10 @@ class UploadForm(BaseModel):
 
     file: UploadFile
     remote_path: AbsolutePath = Field(
-        description="Destination path in cloud storage", examples=["/Docs/report.pdf"]
+        description="Destination path in cloud storage", examples=["/Docs/report.pdf"],
     )
     overwrite: bool = Field(
-        default=False, description="Whether to overwrite if the file already exists"
+        default=False, description="Whether to overwrite if the file already exists",
     )
 
 class CreateFolderRequest(BaseModel):
@@ -163,7 +162,7 @@ def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> F
             shutil.copyfileobj(form.file.file, out)
         try:
             uploaded = client.upload_file(
-                str(tmp_path), form.remote_path, overwrite=form.overwrite
+                str(tmp_path), form.remote_path, overwrite=form.overwrite,
             )
         except (FileNotFoundError, FileExistsError, ValueError) as e:
             raise _to_http_error(e) from e
