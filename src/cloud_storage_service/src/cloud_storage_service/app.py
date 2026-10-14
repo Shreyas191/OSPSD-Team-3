@@ -22,8 +22,12 @@ from typing import Annotated
 
 import cloud_storage_client_api
 from dropbox_client_impl import DropboxClient
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status, UploadFile, Form
 from pydantic import BaseModel, Field
+
+import shutil
+import tempfile
+from pathlib import Path
 
 AbsolutePath = Annotated[str, Field(pattern=r"^/.+", examples=["/Docs/report.pdf"])]
 
@@ -79,13 +83,17 @@ class FileResponse(BaseModel):
             size=file.size,
             modified=file.modified,
         )
-class UploadRequest(BaseModel):
-    """Upload a file to the specified path."""
+class UploadForm(BaseModel):
+    """Upload a file as multipart/form-data."""
 
-    remote_path: AbsolutePath = Field(description="Destination path in cloud storage",
-                                      examples=["/Docs/report.pdf"])
-    overwrite: bool = Field(default=False,
-                            description="Whether to overwrite if the file already exists")
+    file: UploadFile
+    remote_path: AbsolutePath = Field(
+        description="Destination path in cloud storage", examples=["/Docs/report.pdf"]
+    )
+    overwrite: bool = Field(
+        default=False, description="Whether to overwrite if the file already exists"
+    )
+
 class CreateFolderRequest(BaseModel):
     """Create a new folder at the specified path."""
 
@@ -147,12 +155,18 @@ def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
     return FileResponse.from_file(moved)
 
 @app.post("/files/upload", responses=_ERROR_RESPONSES)
-def upload_file(request: UploadRequest, client: StorageClient) -> FileResponse:
-    """Upload a file to the specified path and return its metadata."""
-    try:
-        uploaded = client.upload(request.path, request.file)
-    except (FileNotFoundError, FileExistsError) as e:
-        raise _to_http_error(e) from e
+def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> FileResponse:
+    """Upload a file to cloud storage and return its metadata."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "upload"
+        with tmp_path.open("wb") as out:
+            shutil.copyfileobj(form.file.file, out)
+        try:
+            uploaded = client.upload_file(
+                str(tmp_path), form.remote_path, overwrite=form.overwrite
+            )
+        except (FileNotFoundError, FileExistsError, ValueError) as e:
+            raise _to_http_error(e) from e
     return FileResponse.from_file(uploaded)
 
 @app.post("/folders/create", responses=_ERROR_RESPONSES)
@@ -160,7 +174,7 @@ def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileRe
     """Create a new folder at the specified path and return its metadata."""
     try:
         created = client.create_folder(request.remote_path)
-    except (FileNotFoundError, FileExistsError) as e:
+    except (FileNotFoundError, FileExistsError, ValueError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(created)
 
@@ -169,7 +183,7 @@ def copy_file(request: CopyRequest, client: StorageClient) -> FileResponse:
     """Copy a file to a new path and return its metadata."""
     try:
         copied = client.copy_file(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError) as e:
+    except (FileNotFoundError, FileExistsError, ValueError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(copied)
 
@@ -178,6 +192,6 @@ def copy_folder(request: CopyRequest, client: StorageClient) -> FileResponse:
     """Copy a folder to a new path and return its metadata."""
     try:
         copied = client.copy_folder(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError) as e:
+    except (FileNotFoundError, FileExistsError, ValueError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(copied)
