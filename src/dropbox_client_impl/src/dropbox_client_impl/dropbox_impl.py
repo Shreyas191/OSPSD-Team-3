@@ -41,58 +41,6 @@ class DropboxClient(cloud_storage_client_api.Client):
         self.dbx = dbx if dbx is not None else get_dropbox_client()
 
     # ----- Create (Zesan) -----
-    """"
-    Level 1.3: Specification
-    Operation: Create a new file with the contents provided in the request
-    HTTP Method: POST
-    route/endpoint: /2/files/upload
-
-    Request Header Parameters: (No body parameters are required for this operation)
-        - REQUIRED: Dropbox-API-Arg: A JSON object containing the following details:
-            - path (string): The path in the user's Dropbox where the file will be created. This
-            should include the file name and extension.
-            - auto_rename (boolean, optional): If true, the file will be automatically renamed if
-            a file with the same name already exists.
-            Default is false.
-            - client_modified (datetime, optional): The timestamp when the file was last modified
-            on the client side. If not provided, the
-            current time will be used.
-            - content_hash (string, optional): A hash of the file content. If provided, Dropbox
-            will verify that the uploaded file matches this hash.
-            - mode (string, optional): The file mode to use when creating the file. Possible
-            values are "add" (default), "overwrite", and "update".
-            - mute (boolean, optional): If true, the file will be created without sending a
-            notification to the user. Default is false.
-
-    Success Response Header:
-        - 200 OK: The file was successfully created.
-        - X-Dropbox-Request-Id: A unique identifier for the request, which can be used for
-        troubleshooting and support.
-
-    Success Response Body: A JSON object containing the following details:
-        - name (string): The name of the newly created file.
-        - id (string): A unique identifier for the file.
-        - rev (string): A revision identifier for the file, which can be used to track changes.
-        - server_modified (datetime): The timestamp when the file was last modified on the server
-        side.
-        - client_modified (datetime): The timestamp when the file was last modified on the client
-        side.
-        - size (integer): The size of the file in bytes.
-        - content_hash (string): A hash of the file content, which can be used to verify the
-        integrity of the uploaded file.
-        - export_info (object, optional): Information about the file's export settings, if
-        applicable.
-        - file_lock_info (object, optional): Information about the file's lock status, if
-        applicable.
-        - has_explicit_shared_members (boolean): Indicates whether the file has any explicitly
-        shared members.
-        - is_downloadable (boolean): Indicates whether the file can be downloaded.
-        - is_restorable (boolean): Indicates whether the file can be restored from a previous
-        version.
-        - path_lower (string): The lowercase path of the file in the user's Dropbox.
-        - preview_url (string, optional): A URL that can be used to preview the file
-    """
-
     def upload_file(
         self,
         local_path: str,
@@ -100,33 +48,46 @@ class DropboxClient(cloud_storage_client_api.Client):
         *,
         overwrite: bool = False,
     ) -> cloud_storage_client_api.File:
-        """Upload a local file to Dropbox. TODO(Zesan): implement with ``files_upload``."""
+        """Upload a local file to Dropbox."""
         mode = WriteMode.overwrite if overwrite else WriteMode.add
 
         with Path(local_path).open("rb") as source:
-            metadata = self.dbx.files_upload(
-                source.read(),
-                remote_path,
-                mode=mode,
-                autorename=False,  # Will return error on duplicate file name
-            )
+            try:
+                metadata = self.dbx.files_upload(
+                    source.read(),
+                    remote_path,
+                    mode=mode,
+                    autorename=False,  # Will return error on duplicate file name
+                )
+            except dropbox.exceptions.ApiError as exc:
+                error = exc.error
+                if error.is_path() and error.get_path().reason.is_conflict():
+                    raise FileExistsError(remote_path) from exc
+                raise
 
         return DropboxFile(metadata)
 
     def create_folder(self, remote_path: str) -> cloud_storage_client_api.File:
         """Create a folder."""
-        res = self.dbx.files_create_folder_v2(remote_path)
+        try:
+            res = self.dbx.files_create_folder_v2(remote_path)
+        except dropbox.exceptions.ApiError as exc:
+            error = exc.error
+            if error.is_path() and error.get_path().reason.is_conflict():
+                raise FileExistsError(remote_path) from exc
+            raise
         return DropboxFile(res.metadata)
 
-    def copy_file(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
+    def copy_file_or_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
         """Duplicate a file."""
-        res = self.dbx.files_copy_v2(from_path, to_path)
-        return DropboxFile(res.metadata)
-
-    def copy_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
-        """Duplicate a folder."""
-        res = self.dbx.files_copy_v2(from_path, to_path)
-        return DropboxFile(res.metadata)
+        try:
+            result = self.dbx.files_copy_v2(from_path, to_path)
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_relocation_error(e, from_path, to_path)
+            if translated is None:
+                raise
+            raise translated from e
+        return DropboxFile(result.metadata)
 
     # ----- Read (Jing) -----
 
