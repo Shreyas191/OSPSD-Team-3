@@ -11,6 +11,7 @@ from unittest.mock import Mock, call
 
 import pytest
 from cloud_storage_client_api.file import File
+from dropbox import files
 from dropbox.exceptions import ApiError
 from dropbox.files import FileMetadata, FolderMetadata
 
@@ -107,12 +108,36 @@ def test_download_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
     assert result.modified == fake_meta.server_modified
 
 
+def test_download_file_not_found_raises_file_not_found(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Download_file translates not_found lookup error to FileNotFoundError."""
+    error = files.DownloadError.path(files.LookupError.not_found)
+    mock_dbx.files_download_to_file.side_effect = ApiError("123", error, "File not found", "en")
+
+    with pytest.raises(FileNotFoundError, match=r"No file at '/missing.txt'"):
+        client.download_file("/missing.txt", "/local/missing.txt")
+
+
+def test_download_file_folder_raises_is_a_directory_error(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Download_file translates not_file lookup error to IsADirectoryError."""
+    error = files.DownloadError.path(files.LookupError.not_file)
+    mock_dbx.files_download_to_file.side_effect = ApiError("123", error, "Path is folder", "en")
+
+    with pytest.raises(IsADirectoryError, match="Path is a folder: '/folder'"):
+        client.download_file("/folder", "/local/folder")
+
+
 def test_download_file_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Download_file propagates Dropbox ApiError when download fails."""
+    """Download_file propagates Dropbox ApiError when download fails with unmapped error."""
     mock_dbx.files_download_to_file.side_effect = ApiError(
         request_id="123",
         error=Mock(),
-        user_message_text="File not found",
+        user_message_text="Download failed",
         user_message_locale="en",
     )
 
@@ -161,8 +186,20 @@ def test_get_metadata_folder_success(client: DropboxClient, mock_dbx: Mock) -> N
     assert result.modified is None
 
 
+def test_get_metadata_not_found_raises_file_not_found(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Get_metadata translates not_found lookup error to FileNotFoundError."""
+    error = files.GetMetadataError.path(files.LookupError.not_found)
+    mock_dbx.files_get_metadata.side_effect = ApiError("456", error, "Path not found", "en")
+
+    with pytest.raises(FileNotFoundError, match="No file or folder at '/invalid/path'"):
+        client.get_metadata("/invalid/path")
+
+
 def test_get_metadata_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Get_metadata propagates Dropbox ApiError on non-existent path."""
+    """Get_metadata propagates Dropbox ApiError on unmapped error."""
     mock_dbx.files_get_metadata.side_effect = ApiError(
         request_id="456",
         error=Mock(),
@@ -229,8 +266,26 @@ def test_list_folder_root(client: DropboxClient, mock_dbx: Mock) -> None:
     assert results == []
 
 
+def test_list_folder_not_found_raises_file_not_found(client: DropboxClient, mock_dbx: Mock) -> None:
+    """List_folder translates not_found lookup error to FileNotFoundError."""
+    error = files.ListFolderError.path(files.LookupError.not_found)
+    mock_dbx.files_list_folder.side_effect = ApiError("789", error, "Path not found", "en")
+
+    with pytest.raises(FileNotFoundError, match="No folder at '/nonexistent'"):
+        list(client.list_folder("/nonexistent"))
+
+
+def test_list_folder_file_raises_value_error(client: DropboxClient, mock_dbx: Mock) -> None:
+    """List_folder translates not_folder lookup error to ValueError."""
+    error = files.ListFolderError.path(files.LookupError.not_folder)
+    mock_dbx.files_list_folder.side_effect = ApiError("789", error, "Not folder", "en")
+
+    with pytest.raises(ValueError, match=r"Path is a file: '/file.txt'"):
+        list(client.list_folder("/file.txt"))
+
+
 def test_list_folder_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """List_folder propagates Dropbox ApiError when initial call fails."""
+    """List_folder propagates Dropbox ApiError when initial call fails with unmapped error."""
     mock_dbx.files_list_folder.side_effect = ApiError(
         request_id="789",
         error=Mock(),
@@ -242,11 +297,27 @@ def test_list_folder_initial_api_error_propagates(client: DropboxClient, mock_db
         list(client.list_folder("/nonexistent"))
 
 
+def test_list_folder_continuation_not_found_raises_file_not_found(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """List_folder translates continuation not_found error to FileNotFoundError."""
+    entry1 = create_fake_file_metadata("file1.txt", "/paginated/file1.txt")
+    page1 = Mock(entries=[entry1], has_more=True, cursor="cur1")
+    error = files.ListFolderContinueError.path(files.LookupError.not_found)
+
+    mock_dbx.files_list_folder.return_value = page1
+    mock_dbx.files_list_folder_continue.side_effect = ApiError("790", error, "Not found", "en")
+
+    with pytest.raises(FileNotFoundError, match="No folder at '/paginated'"):
+        list(client.list_folder("/paginated"))
+
+
 def test_list_folder_continuation_api_error_propagates(
     client: DropboxClient,
     mock_dbx: Mock,
 ) -> None:
-    """List_folder propagates Dropbox ApiError when pagination continuation fails."""
+    """List_folder propagates Dropbox ApiError when pagination continuation fails with unmapped error."""
     entry1 = create_fake_file_metadata("file1.txt", "/paginated/file1.txt")
     page1 = Mock(entries=[entry1], has_more=True, cursor="cur1")
 
@@ -377,6 +448,38 @@ def test_search_respects_max_results_limit_on_yield(client: DropboxClient, mock_
 
     assert len(results) == EXPECTED_COUNT_TWO
     mock_dbx.files_search_continue_v2.assert_not_called()
+
+
+def test_search_empty_query_raises_value_error(client: DropboxClient) -> None:
+    """Search raises ValueError when query is empty."""
+    with pytest.raises(ValueError, match="Search query must be non-empty"):
+        list(client.search(""))
+
+
+def test_search_invalid_max_results_raises_value_error(client: DropboxClient) -> None:
+    """Search raises ValueError when max_results <= 0."""
+    with pytest.raises(ValueError, match="max_results must be greater than 0"):
+        list(client.search("query", max_results=0))
+    with pytest.raises(ValueError, match="max_results must be greater than 0"):
+        list(client.search("query", max_results=-1))
+
+
+def test_search_skips_deleted_metadata_matches(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Search ignores matches where metadata is DeletedMetadata."""
+    deleted_meta = files.DeletedMetadata(name="deleted.txt")
+    match_deleted = Mock()
+    match_deleted.metadata.is_metadata.return_value = True
+    match_deleted.metadata.get_metadata.return_value = deleted_meta
+
+    file_meta = create_fake_file_metadata("active.txt", "/active.txt")
+    match_active = create_search_match(file_meta)
+
+    search_result = Mock(matches=[match_deleted, match_active], has_more=False)
+    mock_dbx.files_search_v2.return_value = search_result
+
+    results = list(client.search("active"))
+    assert len(results) == EXPECTED_COUNT_ONE
+    assert results[0].name == "active.txt"
 
 
 def test_search_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:

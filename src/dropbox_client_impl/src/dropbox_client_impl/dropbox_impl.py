@@ -66,31 +66,85 @@ class DropboxClient(cloud_storage_client_api.Client):
     # ----- Read (Jing) -----
 
     def download_file(self, remote_path: str, local_path: str) -> cloud_storage_client_api.File:
-        """Download a file from remote_path to local_path."""
-        metadata = self.dbx.files_download_to_file(
-            download_path=local_path,
-            path=remote_path,
-        )
+        """Download a file from remote_path to local_path.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``remote_path``.
+            IsADirectoryError: If ``remote_path`` is a folder.
+
+        """
+        try:
+            metadata = self.dbx.files_download_to_file(
+                download_path=local_path,
+                path=remote_path,
+            )
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_download_error(e.error, remote_path)
+            if translated is None:
+                raise
+            raise translated from e
         return DropboxFile(metadata)
 
     def get_metadata(self, remote_path: str) -> cloud_storage_client_api.File:
-        """Get file or folder metadata."""
-        metadata = self.dbx.files_get_metadata(remote_path)
+        """Get file or folder metadata.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``remote_path``.
+
+        """
+        try:
+            metadata = self.dbx.files_get_metadata(remote_path)
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_get_metadata_error(e.error, remote_path)
+            if translated is None:
+                raise
+            raise translated from e
         return DropboxFile(metadata)
 
     def list_folder(self, remote_path: str = "") -> Iterator[cloud_storage_client_api.File]:
-        """List a folder."""
-        result = self.dbx.files_list_folder(remote_path)
+        """List a folder.
+
+        Raises:
+            FileNotFoundError: If the folder does not exist.
+            ValueError: If ``remote_path`` is a file rather than a folder.
+
+        """
+        try:
+            result = self.dbx.files_list_folder(remote_path)
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_list_folder_error(e.error, remote_path)
+            if translated is None:
+                raise
+            raise translated from e
+
         for entry in result.entries:
             yield DropboxFile(entry)
 
         while result.has_more:
-            result = self.dbx.files_list_folder_continue(result.cursor)
+            try:
+                result = self.dbx.files_list_folder_continue(result.cursor)
+            except dropbox.exceptions.ApiError as e:
+                translated = _translate_list_folder_continue_error(e.error, remote_path)
+                if translated is None:
+                    raise
+                raise translated from e
             for entry in result.entries:
                 yield DropboxFile(entry)
 
     def search(self, query: str, max_results: int = 10) -> Iterator[cloud_storage_client_api.File]:
-        """Search for a file by name."""
+        """Search for a file by name.
+
+        Raises:
+            ValueError: If ``query`` is empty or ``max_results`` <= 0.
+
+        """
+        if not query:
+            msg = "Search query must be non-empty"
+            raise ValueError(msg)
+        if max_results <= 0:
+            msg = f"max_results must be greater than 0, got {max_results}"
+            raise ValueError(msg)
+
         options = SearchOptions(max_results=max_results, filename_only=True)
         result = self.dbx.files_search_v2(query=query, options=options)
         yielded = 0
@@ -98,10 +152,12 @@ class DropboxClient(cloud_storage_client_api.Client):
         while True:
             for match in result.matches:
                 if match.metadata.is_metadata():
-                    yield DropboxFile(match.metadata.get_metadata())
-                    yielded += 1
-                    if yielded >= max_results:
-                        return
+                    meta = match.metadata.get_metadata()
+                    if isinstance(meta, files.FileMetadata | files.FolderMetadata):
+                        yield DropboxFile(meta)
+                        yielded += 1
+                        if yielded >= max_results:
+                            return
 
             if not result.has_more:
                 break
@@ -158,6 +214,62 @@ class DropboxClient(cloud_storage_client_api.Client):
     def delete(self, remote_path: str) -> bool:
         """Delete a file or folder. TODO(John): implement with ``files_delete_v2``."""
         raise NotImplementedError
+
+
+def _translate_download_error(reason: object, remote_path: str) -> Exception | None:
+    """Map a Dropbox ``DownloadError`` onto the built-in exceptions the contract documents.
+
+    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
+    """
+    if not isinstance(reason, files.DownloadError):
+        return None
+    if reason.is_path():
+        lookup = reason.get_path()
+        if lookup.is_not_found():
+            return FileNotFoundError(f"No file at {remote_path!r}")
+        if lookup.is_not_file():
+            return IsADirectoryError(f"Path is a folder: {remote_path!r}")
+    return None
+
+
+def _translate_get_metadata_error(reason: object, remote_path: str) -> Exception | None:
+    """Map a Dropbox ``GetMetadataError`` onto the built-in exceptions the contract documents.
+
+    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
+    """
+    if not isinstance(reason, files.GetMetadataError):
+        return None
+    if reason.is_path() and reason.get_path().is_not_found():
+        return FileNotFoundError(f"No file or folder at {remote_path!r}")
+    return None
+
+
+def _translate_list_folder_error(reason: object, remote_path: str) -> Exception | None:
+    """Map a Dropbox ``ListFolderError`` onto the built-in exceptions the contract documents.
+
+    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
+    """
+    if not isinstance(reason, files.ListFolderError):
+        return None
+    if reason.is_path():
+        lookup = reason.get_path()
+        if lookup.is_not_found():
+            return FileNotFoundError(f"No folder at {remote_path!r}")
+        if lookup.is_not_folder():
+            return ValueError(f"Path is a file: {remote_path!r}")
+    return None
+
+
+def _translate_list_folder_continue_error(reason: object, remote_path: str) -> Exception | None:
+    """Map a ``ListFolderContinueError`` onto the built-in exceptions the contract documents.
+
+    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
+    """
+    if not isinstance(reason, files.ListFolderContinueError):
+        return None
+    if reason.is_path() and reason.get_path().is_not_found():
+        return FileNotFoundError(f"No folder at {remote_path!r}")
+    return None
 
 
 def _translate_relocation_error(reason: object, from_path: str, to_path: str) -> Exception | None:
