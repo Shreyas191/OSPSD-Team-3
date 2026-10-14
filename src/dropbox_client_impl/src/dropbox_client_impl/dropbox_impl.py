@@ -22,9 +22,6 @@ from dropbox.files import WriteMode
 from dropbox_client_impl.auth import get_dropbox_client
 from dropbox_client_impl.file_impl import DropboxFile
 
-from dropbox.exceptions import ApiError
-from dropbox.files import FileMetadata, FolderMetadata
-
 
 class DropboxClient(cloud_storage_client_api.Client):
     """Concrete implementation of the Client abstraction using the Dropbox API."""
@@ -119,19 +116,6 @@ class DropboxClient(cloud_storage_client_api.Client):
         """Create a folder."""
         res = self.dbx.files_create_folder_v2(remote_path)
         return DropboxFile(res.metadata)
-
-    def _require_type(self, path: str, *, folder: bool) -> None:
-        """Raise unless ``path`` exists and is a folder (``folder=True``) or a file."""
-        try:
-            metadata = self.dbx.files_get_metadata(path)
-        except ApiError as e:
-            if e.error.is_path() and e.error.get_path().is_not_found():
-                raise FileNotFoundError(path) from e
-            raise
-        if folder and not isinstance(metadata, FolderMetadata):
-            raise ValueError(f"{path} is a file, not a folder")
-        if not folder and not isinstance(metadata, FileMetadata):
-            raise ValueError(f"{path} is a folder, not a file")
 
     def copy_file(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
         """Duplicate a file."""
