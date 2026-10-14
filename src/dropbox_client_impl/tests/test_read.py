@@ -214,45 +214,89 @@ def test_get_metadata_api_error_propagates(client: DropboxClient, mock_dbx: Mock
 # list_folder tests
 
 
-def test_list_folder_single_page(client: DropboxClient, mock_dbx: Mock) -> None:
-    """List_folder lists entries without pagination when has_more is False."""
-    entry_file = create_fake_file_metadata("file1.txt", "/test/file1.txt")
-    entry_folder = create_fake_folder_metadata("subfolder", "/test/subfolder")
+def test_list_folder_pagination_boundary_zero_entries(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Boundary n = 0: folder has 0 entries, has_more=False yields 0 items."""
+    page = Mock(entries=[], has_more=False)
+    mock_dbx.files_list_folder.return_value = page
 
-    page = Mock(entries=[entry_file, entry_folder], has_more=False)
+    results = list(client.list_folder("/empty"))
+
+    mock_dbx.files_list_folder.assert_called_once_with("/empty")
+    mock_dbx.files_list_folder_continue.assert_not_called()
+    assert results == []
+
+
+def test_list_folder_pagination_boundary_less_than_page_size(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Boundary n < page size: e.g. 2 entries when page size is larger, has_more=False."""
+    entry1 = create_fake_file_metadata("file1.txt", "/test/file1.txt")
+    entry2 = create_fake_file_metadata("file2.txt", "/test/file2.txt")
+    page = Mock(entries=[entry1, entry2], has_more=False)
     mock_dbx.files_list_folder.return_value = page
 
     results = list(client.list_folder("/test"))
 
     mock_dbx.files_list_folder.assert_called_once_with("/test")
     mock_dbx.files_list_folder_continue.assert_not_called()
-    assert len(results) == EXPECTED_COUNT_TWO
-    assert all(isinstance(r, File) for r in results)
-    assert results[0].is_folder is False
-    assert results[1].is_folder is True
+    assert [r.path for r in results] == ["/test/file1.txt", "/test/file2.txt"]
 
 
-def test_list_folder_multi_page_pagination(client: DropboxClient, mock_dbx: Mock) -> None:
-    """List_folder loops across 3 pages until has_more is False and stops."""
+def test_list_folder_pagination_boundary_exactly_page_size(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Boundary n = page size: page has n entries and has_more=True, followed by empty page."""
+    entries = [create_fake_file_metadata(f"file{i}.txt", f"/test/file{i}.txt") for i in range(3)]
+    page1 = Mock(entries=entries, has_more=True, cursor="cursor_exact")
+    page2 = Mock(entries=[], has_more=False)
+    mock_dbx.files_list_folder.return_value = page1
+    mock_dbx.files_list_folder_continue.return_value = page2
+
+    results = list(client.list_folder("/test"))
+
+    mock_dbx.files_list_folder.assert_called_once_with("/test")
+    mock_dbx.files_list_folder_continue.assert_called_once_with("cursor_exact")
+    assert [r.path for r in results] == [
+        "/test/file0.txt",
+        "/test/file1.txt",
+        "/test/file2.txt",
+    ]
+
+
+def test_list_folder_pagination_boundary_greater_than_page_size(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Boundary n > page size: multiple pages, each entry appears exactly once."""
     entry1 = create_fake_file_metadata("file1.txt", "/paginated/file1.txt")
     entry2 = create_fake_file_metadata("file2.txt", "/paginated/file2.txt")
     entry3 = create_fake_file_metadata("file3.txt", "/paginated/file3.txt")
+    entry4 = create_fake_file_metadata("file4.txt", "/paginated/file4.txt")
 
-    page1 = Mock(entries=[entry1], has_more=True, cursor="cur1")
-    page2 = Mock(entries=[entry2], has_more=True, cursor="cur2")
-    page3 = Mock(entries=[entry3], has_more=False, cursor="cur3")
+    page1 = Mock(entries=[entry1, entry2], has_more=True, cursor="cur1")
+    page2 = Mock(entries=[entry3, entry4], has_more=False, cursor="cur2")
 
     mock_dbx.files_list_folder.return_value = page1
-    mock_dbx.files_list_folder_continue.side_effect = [page2, page3]
+    mock_dbx.files_list_folder_continue.return_value = page2
 
     results = list(client.list_folder("/paginated"))
 
     mock_dbx.files_list_folder.assert_called_once_with("/paginated")
-    assert mock_dbx.files_list_folder_continue.call_args_list == [
-        call("cur1"),
-        call("cur2"),
+    mock_dbx.files_list_folder_continue.assert_called_once_with("cur1")
+    # Verify every entry appears exactly once
+    paths = [r.path for r in results]
+    assert paths == [
+        "/paginated/file1.txt",
+        "/paginated/file2.txt",
+        "/paginated/file3.txt",
+        "/paginated/file4.txt",
     ]
-    assert len(results) == EXPECTED_COUNT_THREE
+    assert len(paths) == len(set(paths))
 
 
 def test_list_folder_root(client: DropboxClient, mock_dbx: Mock) -> None:

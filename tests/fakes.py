@@ -20,6 +20,7 @@ Usage::
 from collections.abc import Iterator
 from datetime import datetime
 from itertools import count
+from pathlib import Path
 
 from cloud_storage_client_api import Client, File
 
@@ -147,21 +148,75 @@ class FakeStorageClient(Client):
         """Not implemented yet."""
         raise NotImplementedError
 
-    def download_file(self, remote_path: str, local_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+    # ----- Read -----
 
     def get_metadata(self, remote_path: str) -> File:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Return the metadata for the file or folder at ``remote_path``."""
+        if remote_path not in self.entries:
+            msg = f"No file or folder at {remote_path!r}"
+            raise FileNotFoundError(msg)
+        return self.entries[remote_path]
+
+    def download_file(self, remote_path: str, local_path: str) -> File:
+        """Download file content to ``local_path`` and return file metadata."""
+        if remote_path not in self.entries:
+            msg = f"No file at {remote_path!r}"
+            raise FileNotFoundError(msg)
+        entry = self.entries[remote_path]
+        if entry.is_folder:
+            msg = f"Path is a folder: {remote_path!r}"
+            raise IsADirectoryError(msg)
+        # Write dummy bytes representing the file content
+        Path(local_path).write_bytes(b"content for " + remote_path.encode("utf-8"))
+        return entry
 
     def list_folder(self, remote_path: str = "") -> Iterator[File]:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Return an iterator over the direct children of the folder at ``remote_path``."""
+        norm_path = remote_path.rstrip("/")
+        if norm_path and norm_path not in self.entries:
+            msg = f"No folder at {remote_path!r}"
+            raise FileNotFoundError(msg)
+        if norm_path and not self.entries[norm_path].is_folder:
+            msg = f"Path is a file: {remote_path!r}"
+            raise ValueError(msg)
+
+        prefix = f"{norm_path}/" if norm_path else "/"
+        seen = set()
+        for path in self.entries:
+            if path.startswith(prefix) and path != norm_path:
+                rel = path[len(prefix) :]
+                direct_child_segment = rel.split("/")[0]
+                child_path = f"{prefix.rstrip('/')}/{direct_child_segment}"
+                if child_path not in seen:
+                    seen.add(child_path)
+                    if child_path in self.entries:
+                        yield self.entries[child_path]
+                    else:
+                        # Synthetic folder entry if sub-items were added directly
+                        yield FakeFile(
+                            f"id:{next(self._ids)}",
+                            child_path,
+                            is_folder=True,
+                            size=None,
+                            modified=None,
+                        )
 
     def search(self, query: str, max_results: int = 10) -> Iterator[File]:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Return an iterator over entries matching ``query`` by name."""
+        if not query:
+            msg = "Search query must be non-empty"
+            raise ValueError(msg)
+        if max_results <= 0:
+            msg = f"max_results must be greater than 0, got {max_results}"
+            raise ValueError(msg)
+
+        yielded = 0
+        for entry in self.entries.values():
+            if query.lower() in entry.name.lower():
+                yield entry
+                yielded += 1
+                if yielded >= max_results:
+                    return
 
     def delete(self, remote_path: str) -> bool:
         """Not implemented yet."""
