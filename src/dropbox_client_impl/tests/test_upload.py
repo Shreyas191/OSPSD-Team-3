@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import dropbox
 import pytest
 from cloud_storage_client_api.file import File
+from dropbox import files
 from dropbox.exceptions import ApiError
 from dropbox.files import (
     CreateFolderResult,
@@ -296,11 +297,11 @@ def test_create_folder_api_error_propagates(client: DropboxClient, mock_dbx: Moc
         client.create_folder("/already_existing_folder")
 
 
-# copy_file_or_folder tests
+# copy_file tests
 
 
-def test_copy_file_or_folder_with_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """copy_file_or_folder calls files_copy_v2 with from/to paths and returns destination File."""
+def test_copy_file_success(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Copy_file calls files_copy_v2 with from/to paths and returns destination File."""
     copied_meta = create_fake_file_metadata(
         name="report_copy.pdf",
         path="/backup/report_copy.pdf",
@@ -310,7 +311,7 @@ def test_copy_file_or_folder_with_file_success(client: DropboxClient, mock_dbx: 
     relocation_result = create_fake_relocation_result(copied_meta)
     mock_dbx.files_copy_v2.return_value = relocation_result
 
-    result = client.copy_file_or_folder("/docs/report.pdf", "/backup/report_copy.pdf")
+    result = client.copy_file("/docs/report.pdf", "/backup/report_copy.pdf")
 
     mock_dbx.files_copy_v2.assert_called_once()
     call_args, call_kwargs = mock_dbx.files_copy_v2.call_args
@@ -329,24 +330,34 @@ def test_copy_file_or_folder_with_file_success(client: DropboxClient, mock_dbx: 
     assert result.modified == copied_meta.server_modified
 
 
-def test_copy_file_or_folder_with_file_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """copy_file_or_folder propagates Dropbox ApiError when source file not found or conflict occurs."""
+def test_copy_file_raises_file_not_found_error(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Raise FileNotFoundError when the copied source does not exist."""
+    relocation_error = Mock(spec=files.RelocationError)
+    relocation_error.is_from_lookup.return_value = True
+
+    lookup_error = Mock()
+    lookup_error.is_not_found.return_value = True
+    relocation_error.get_from_lookup.return_value = lookup_error
+
     mock_dbx.files_copy_v2.side_effect = ApiError(
         request_id="cp789",
-        error=Mock(),
+        error=relocation_error,
         user_message_text="Source file not found",
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
-        client.copy_file_or_folder("/missing.txt", "/backup/missing.txt")
+    with pytest.raises(FileNotFoundError):
+        client.copy_file("/missing.txt", "/backup/missing.txt")
 
 
-# copy_file_or_folder tests
+# copy_folder tests
 
 
-def test_copy_file_or_folder_with_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
-    """copy_file_or_folder calls files_copy_v2 with from/to paths and returns destination Folder."""
+def test_copy_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Copy_folder calls files_copy_v2 with from/to paths and returns destination Folder."""
     copied_folder_meta = create_fake_folder_metadata(
         name="project_backup",
         path="/archives/project_backup",
@@ -355,7 +366,7 @@ def test_copy_file_or_folder_with_folder_success(client: DropboxClient, mock_dbx
     relocation_result = create_fake_relocation_result(copied_folder_meta)
     mock_dbx.files_copy_v2.return_value = relocation_result
 
-    result = client.copy_file_or_folder("/active/project", "/archives/project_backup")
+    result = client.copy_folder("/active/project", "/archives/project_backup")
 
     mock_dbx.files_copy_v2.assert_called_once()
     call_args, call_kwargs = mock_dbx.files_copy_v2.call_args
@@ -374,14 +385,22 @@ def test_copy_file_or_folder_with_folder_success(client: DropboxClient, mock_dbx
     assert result.modified is None
 
 
-def test_copy_file_or_folder_with_folder_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """copy_file_or_folder propagates Dropbox ApiError when folder copying fails."""
+def test_copy_folder_raises_file_exists_error(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Raise FileExistsError when the destination overlaps the source folder."""
+    relocation_error = Mock(spec=files.RelocationError)
+    relocation_error.is_from_lookup.return_value = False
+    relocation_error.is_to.return_value = False
+    relocation_error.is_duplicated_or_nested_paths.return_value = True
+
     mock_dbx.files_copy_v2.side_effect = ApiError(
         request_id="cp999",
-        error=Mock(),
+        error=relocation_error,
         user_message_text="Cannot copy folder into itself",
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
-        client.copy_file_or_folder("/work", "/work/nested")
+    with pytest.raises(FileExistsError):
+        client.copy_folder("/work", "/work/nested")

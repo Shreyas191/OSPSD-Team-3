@@ -78,12 +78,23 @@ class DropboxClient(cloud_storage_client_api.Client):
             raise
         return DropboxFile(res.metadata)
 
-    def copy_file_or_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
+    def copy_file(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
         """Duplicate a file."""
         try:
             result = self.dbx.files_copy_v2(from_path, to_path)
         except dropbox.exceptions.ApiError as e:
-            translated = _translate_relocation_error(e, from_path, to_path)
+            translated = _translate_relocation_error(e.error, from_path, to_path)
+            if translated is None:
+                raise
+            raise translated from e
+        return DropboxFile(result.metadata)
+
+    def copy_folder(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
+        """Duplicate a folder."""
+        try:
+            result = self.dbx.files_copy_v2(from_path, to_path)
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_relocation_error(e.error, from_path, to_path)
             if translated is None:
                 raise
             raise translated from e
