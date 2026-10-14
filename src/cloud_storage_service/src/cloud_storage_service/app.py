@@ -25,7 +25,17 @@ from typing import Annotated
 
 import cloud_storage_client_api
 from dropbox_client_impl import DropboxClient
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 
 AbsolutePath = Annotated[str, Field(pattern=r"^/.+", examples=["/Docs/report.pdf"])]
@@ -142,6 +152,11 @@ _ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
     409: {"description": "The destination already exists"},
 }
 
+_READ_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
+    404: {"description": "The requested file or folder does not exist"},
+    422: {"description": "Validation error or invalid target path or target is a folder"},
+}
+
 
 @app.post("/files/rename", responses=_ERROR_RESPONSES)
 def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
@@ -161,6 +176,9 @@ def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
     except (FileNotFoundError, FileExistsError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(moved)
+
+
+# ----- Create Endpoints -----
 
 
 @app.post("/files/upload", responses=_ERROR_RESPONSES)
@@ -199,3 +217,61 @@ def copy_entry(request: CopyRequest, client: StorageClient) -> FileResponse:
     except (FileNotFoundError, FileExistsError) as e:
         raise _to_http_error(e) from e
     return FileResponse.from_file(copied)
+
+
+# ----- Read Endpoints -----
+
+
+@app.get("/files/metadata", responses=_READ_ERROR_RESPONSES)
+def get_file_metadata(path: AbsolutePath, client: StorageClient) -> FileResponse:
+    """Get metadata for a single file or folder by absolute path."""
+    try:
+        meta = client.get_metadata(path)
+    except FileNotFoundError as e:
+        raise _to_http_error(e) from e
+    return FileResponse.from_file(meta)
+
+
+@app.get(
+    "/files/download",
+    response_class=Response,
+    responses=_READ_ERROR_RESPONSES,
+)
+def download_file(path: AbsolutePath, client: StorageClient) -> Response:
+    """Download the raw bytes of the file located at ``path``."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = Path(temp_dir) / "downloaded_file"
+        try:
+            client.download_file(path, str(local_path))
+        except (FileNotFoundError, IsADirectoryError) as e:
+            raise _to_http_error(e) from e
+        file_bytes = local_path.read_bytes()
+
+    return Response(content=file_bytes, media_type="application/octet-stream")
+
+
+@app.get("/folders/list", responses=_READ_ERROR_RESPONSES)
+def list_folder(
+    client: StorageClient,
+    path: Annotated[str, Query(pattern=r"^(/.*)?$")] = "",
+) -> list[FileResponse]:
+    """List all direct children in the folder at ``path``."""
+    try:
+        entries = list(client.list_folder(path))
+    except (FileNotFoundError, ValueError) as e:
+        raise _to_http_error(e) from e
+    return [FileResponse.from_file(entry) for entry in entries]
+
+
+@app.get("/files/search", responses=_READ_ERROR_RESPONSES)
+def search_files(
+    q: Annotated[str, Query(min_length=1)],
+    client: StorageClient,
+    max_results: Annotated[int, Query(gt=0, le=1000)] = 10,
+) -> list[FileResponse]:
+    """Search for files and folders matching a query string."""
+    try:
+        results = list(client.search(q, max_results=max_results))
+    except ValueError as e:
+        raise _to_http_error(e) from e
+    return [FileResponse.from_file(result) for result in results]
