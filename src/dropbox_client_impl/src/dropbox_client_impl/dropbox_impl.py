@@ -329,8 +329,28 @@ class DropboxClient(cloud_storage_client_api.Client):
     # ----- Delete (John) -----
 
     def delete(self, remote_path: str) -> bool:
-        """Delete a file or folder. TODO(John): implement with ``files_delete_v2``."""
-        raise NotImplementedError
+        """Delete a file or folder (with its contents) using ``files_delete_v2``.
+
+        Dropbox moves the entry to the account's trash, from where it can be restored in
+        the Dropbox web app; this client does not expose restore.
+
+        Raises:
+            ValueError: If ``remote_path`` is empty or the root; Dropbox is not contacted.
+            FileNotFoundError: If nothing exists at ``remote_path``.
+
+        """
+        if not remote_path.strip("/"):
+            msg = f"Refusing to delete the root folder (path {remote_path!r})"
+            raise ValueError(msg)
+        try:
+            self.dbx.files_delete_v2(remote_path)
+        except dropbox.exceptions.ApiError as e:
+            translated = _translate_delete_error(e.error, remote_path)
+            if translated is None:
+                raise
+            raise translated from e
+        self.logger.info("Deleted %s", remote_path)
+        return True
 
 
 def _translate_download_error(reason: object, remote_path: str) -> Exception | None:
@@ -403,6 +423,18 @@ def _translate_relocation_error(reason: object, from_path: str, to_path: str) ->
     # the destination is occupied (by the source itself), so it is the same conflict.
     if (reason.is_to() and reason.get_to().is_conflict()) or reason.is_duplicated_or_nested_paths():
         return FileExistsError(f"Something already exists at {to_path!r}")
+    return None
+
+
+def _translate_delete_error(reason: object, remote_path: str) -> Exception | None:
+    """Map a Dropbox ``DeleteError`` onto the built-in exceptions the contract documents.
+
+    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
+    """
+    if not isinstance(reason, files.DeleteError):
+        return None
+    if reason.is_path_lookup() and reason.get_path_lookup().is_not_found():
+        return FileNotFoundError(f"No file or folder at {remote_path!r}")
     return None
 
 

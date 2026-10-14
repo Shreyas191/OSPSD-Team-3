@@ -191,7 +191,29 @@ class Client(ABC):
 
     @abstractmethod
     def delete(self, remote_path: str) -> bool:
-        """Delete the file or folder at ``remote_path``. Return ``True`` on success."""
+        """Delete the file or folder at ``remote_path``, including a folder's contents.
+
+        Inputs:
+            remote_path: Absolute path of the file or folder to delete (e.g. ``/Docs/report.pdf``).
+
+        Returns:
+            ``True`` once the entry has been deleted. Failures raise instead of returning
+            ``False``.
+
+        Side effects:
+            Removes the entry, and everything inside it if it is a folder, from the cloud
+            storage provider. Deleting the same path again raises ``FileNotFoundError``.
+
+        Caller assumptions:
+            ``remote_path`` is an absolute path starting with ``/`` that names an entry
+            below the root; the root itself can never be deleted.
+
+        Raises:
+            ValueError: If ``remote_path`` is empty or the root (``/``). This is checked
+                before contacting the provider.
+            FileNotFoundError: If nothing exists at ``remote_path``.
+
+        """
         raise NotImplementedError
 
 
