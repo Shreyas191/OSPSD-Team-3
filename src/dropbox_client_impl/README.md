@@ -81,10 +81,9 @@ client = get_client()  # -> DropboxClient
 
 | Method | Owner | Dropbox SDK call |
 |--------|-------|------------------|
-| `upload_file` | Zesan | `files_upload` (or `files_upload_session_*` for large files) |
+| `upload_file` | Zesan | `files_upload` (single request, up to 150 MB) |
 | `create_folder` | Zesan | `files_create_folder_v2` |
-| `copy_file` | Zesan | `files_copy_v2` |
-| `copy_folder` | Zesan | `files_copy_v2` |
+| `copy` | Zesan | `files_copy_v2` (files and folders) |
 | `download_file` | Jing | `files_download_to_file` |
 | `get_metadata` | Jing | `files_get_metadata` |
 | `list_folder` | Jing | `files_list_folder` / `files_list_folder_continue` |
@@ -93,7 +92,7 @@ client = get_client()  # -> DropboxClient
 | `move` | Shreyas | `files_move_v2` |
 | `delete` | John | `files_delete_v2` |
 
-`rename` and `move` are implemented: both call `files_move_v2` with `autorename=False`, and translate Dropbox's `not_found` and `conflict` errors into `FileNotFoundError` and `FileExistsError`. The remaining methods are stubs that raise `NotImplementedError`. Implement yours on a `<name>-<feature>` branch, wrap SDK metadata with `DropboxFile(metadata)`, and add unit tests that mock `client.dbx`.
+`rename` and `move` are implemented: both call `files_move_v2` with `autorename=False`, and translate Dropbox's `not_found` and `conflict` errors into `FileNotFoundError` and `FileExistsError`. `delete` rejects an empty or root path with `ValueError` without calling Dropbox, and translates `path_lookup.not_found` into `FileNotFoundError`. The remaining methods are stubs that raise `NotImplementedError`. Implement yours on a `<name>-<feature>` branch, wrap SDK metadata with `DropboxFile(metadata)`, and add unit tests that mock `client.dbx`.
 
 ## Testing
 ```bash

@@ -1,16 +1,19 @@
 # Cloud Storage Service
 
 ## Overview
-`cloud_storage_service` is a FastAPI app that exposes the `cloud_storage_client_api.Client` contract over HTTP. Routes only talk to the abstract `Client`; importing the package registers the Dropbox implementation, so a running service acts on the Dropbox account configured in `.env`.
+`cloud_storage_service` is a FastAPI app that exposes the `cloud_storage_client_api.Client` contract over HTTP. Routes only talk to the abstract `Client`; a running service acts on the Dropbox account you logged in with (see the root README).
 
 ## Running locally
 ```bash
 uv run uvicorn cloud_storage_service.app:app --reload
 ```
-Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`.
+Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dropbox credentials are missing, the service stops at startup with a `DropboxAuthError` telling you to run `uv run python -m dropbox_client_impl login`.
+
+## Choosing the provider
+`build_storage_client()` in `app.py` is the only place the service names a concrete provider (it returns a `DropboxClient`). The app calls it once at startup, stores the client on `app.state`, and routes receive it through the `get_storage_client` dependency as an abstract `Client`. Switching providers means changing `build_storage_client()` only; routes and response models stay the same.
 
 ## Conventions
-- Paths are absolute within the user's storage and start with `/` (e.g. `/Docs/report.pdf`). They go in the JSON body, not the URL, because they contain `/`.
+- Paths are absolute within the user's storage and start with `/` (e.g. `/Docs/report.pdf`). They must not end with `/` or contain empty segments (`/Docs//report.pdf`); such paths are rejected with `422`. `POST` routes take paths in the request body; `GET` and `DELETE` routes take a URL-encoded `path` query parameter. `GET /folders/list` also accepts `""` or `/` for the root.
 - Successful responses return a **File** object:
 
   | Field | Type | Meaning |
@@ -23,6 +26,55 @@ Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`.
   | `modified` | datetime or null | Last modified time (ISO 8601); `null` for folders |
 
 - Errors return `{"detail": "<message>"}` with one of the status codes listed per endpoint.
+
+## Create endpoints
+
+### `POST /files/upload`
+Upload a file. The request is `multipart/form-data`, not JSON.
+
+- `file` (required): the file contents.
+- `remote_path` (required): absolute destination path, including the file name.
+- `overwrite` (optional, default `false`): replace an existing file at `remote_path`.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Uploaded; body is the File. An overwritten file keeps its `id`. |
+| `409` | Something already exists at `remote_path` and `overwrite` is `false` |
+| `422` | Invalid form (relative `remote_path`, missing `file`) |
+
+```bash
+curl -X POST http://127.0.0.1:8000/files/upload \
+  -F "file=@report.pdf" -F "remote_path=/Docs/report.pdf" -F "overwrite=false"
+```
+
+The whole file is read into memory and sent in one Dropbox request, which Dropbox limits to 150 MB.
+
+### `POST /folders/create`
+Create a folder. Missing parent folders are created too.
+
+```json
+{"remote_path": "/Docs/New"}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Created; body is the folder (`size` and `modified` are `null`) |
+| `409` | Something already exists at `remote_path` |
+| `422` | Invalid body (relative path, missing field) |
+
+### `POST /files/copy`
+Copy a file, or a folder with its contents, to a new full path. The source is unchanged, the copy gets its own `id`, and existing entries are never overwritten.
+
+```json
+{"from_path": "/Docs/report.pdf", "to_path": "/Archive/report.pdf"}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Copied; body is the File at `to_path` |
+| `404` | Nothing exists at `from_path` |
+| `409` | Something already exists at `to_path`, or `to_path` is inside the folder being copied |
+| `422` | Invalid body (relative path, missing field) |
 
 ## Update endpoints
 
@@ -76,8 +128,95 @@ Destinations are compared case-insensitively (Dropbox paths are case-insensitive
 
 Both operations change state in the provider. Dropbox implements each as a single `files_move_v2` call with autorename disabled; the entry keeps its Dropbox `id`. Other provider failures (e.g. moving a folder into itself, quota) currently surface as `500`.
 
+## Read endpoints
+
+### `GET /files/metadata`
+Get metadata for a single file or folder by absolute path.
+
+Query parameters:
+- `path` (required): absolute path of the entry (e.g. `?path=/Docs/report.pdf`).
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body is the File object |
+| `404` | Nothing exists at `path` |
+| `422` | Invalid query parameter (missing `path` or not an absolute path) |
+
+```bash
+curl "http://127.0.0.1:8000/files/metadata?path=/Docs/report.pdf"
+```
+
+### `GET /files/download`
+Download the raw bytes of the file located at `path`.
+
+Query parameters:
+- `path` (required): absolute path of the remote file to download (e.g. `?path=/Docs/report.pdf`).
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body contains raw file bytes (`application/octet-stream`) |
+| `404` | Nothing exists at `path` |
+| `422` | Path points to a folder, or invalid query parameter |
+
+```bash
+curl -o downloaded.pdf "http://127.0.0.1:8000/files/download?path=/Docs/report.pdf"
+```
+
+### `GET /folders/list`
+List all direct children in the folder at `path`. Returns an empty list or root entries if `path` is empty or root (`/`).
+
+Query parameters:
+- `path` (optional, defaults to empty): absolute path of the folder to list (e.g. `?path=/Docs`), or empty for root. Must start with `/` or be empty.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body is a JSON array of File objects |
+| `404` | Folder does not exist |
+| `422` | Path points to a file rather than a folder, or invalid path (relative path) |
+
+```bash
+curl "http://127.0.0.1:8000/folders/list?path=/Docs"
+```
+
+### `GET /files/search`
+Search for files and folders matching a query string, up to `max_results` entries.
+
+Query parameters:
+- `q` (required): non-empty search query string (e.g. `?q=report`).
+- `max_results` (optional, defaults to 10): maximum number of results to return (must be between 1 and 1000).
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success; body is a JSON array of matching File objects |
+| `422` | Invalid query (empty `q` or `max_results` not between 1 and 1000) |
+
+```bash
+curl "http://127.0.0.1:8000/files/search?q=report&max_results=5"
+```
+
+## Delete endpoints
+
+### `DELETE /files`
+Delete a file, or a folder together with everything inside it.
+
+Query parameters:
+- `path` (required): absolute path of the entry to delete (e.g. `?path=/Docs/report.pdf`). The root (`/`) can never be deleted.
+
+| Status | Meaning |
+|--------|---------|
+| `204` | Deleted; the response has no body |
+| `404` | Nothing exists at `path`, including a path that was already deleted |
+| `422` | Invalid query parameter (missing, empty, relative, or the root `/`) |
+
+```bash
+curl -X DELETE "http://127.0.0.1:8000/files?path=/Docs/report.pdf"
+```
+
+Delete is not idempotent: deleting the same path twice returns `204` the first time and `404` the second. The response has no body because the `Client.delete` contract returns only `True`, not the deleted entry. The root path is rejected before the provider is contacted. Dropbox implements delete as a single `files_delete_v2` call; deleted entries go to the Dropbox account's trash, but this service does not offer restore. Other provider failures (e.g. too many concurrent writes) currently surface as `500`.
+
+
 ## Testing
 ```bash
 uv run pytest src/cloud_storage_service/tests/
 ```
-Route tests override `get_storage_client` with a mock, so they need no credentials.
+Route tests replace the client with `app.dependency_overrides[get_storage_client]`, so they need no credentials or network. They use `FakeStorageClient` from [`tests/fakes.py`](../../tests/fakes.py), an in-memory `Client` you seed with `storage.add(path)` and then check through `storage.entries`. It implements only the operations some test needs; when you add routes for another operation, implement that method in the fake following the `Client` contract.
