@@ -272,6 +272,22 @@ def test_upload_file_missing_local_path_raises_file_not_found(
     mock_dbx.files_upload.assert_not_called()
 
 
+def test_upload_file_identical_content_without_overwrite_raises_file_exists_error(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    tmp_path: Path,
+) -> None:
+    """Uploading identical content when the file already exists raises FileExistsError if overwrite is False."""
+    local_file = tmp_path / "input.txt"
+    local_file.write_bytes(b"identical bytes")
+    # dropbox returns 200 with FileMetadata with existing rev when uploading identical content under mode=add
+    existing_meta = create_fake_file_metadata(name="input.txt", path="/input.txt", size=len(b"identical bytes"))
+    mock_dbx.files_upload.return_value = existing_meta
+
+    with pytest.raises(FileExistsError, match="input.txt"):
+        client.upload_file(str(local_file), "/input.txt", overwrite=False)
+
+
 # create_folder tests
 
 
