@@ -70,6 +70,7 @@ class DropboxClient(cloud_storage_client_api.Client):
                     remote_path,
                     mode=mode,
                     autorename=False,
+                    strict_conflict=not overwrite,
                 )
             except dropbox.exceptions.ApiError as e:
                 # UploadError.path wraps the WriteError in UploadWriteFailed.reason.
