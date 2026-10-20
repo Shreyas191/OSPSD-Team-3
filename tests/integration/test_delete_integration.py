@@ -73,6 +73,7 @@ def test_delete_file_then_repeat_returns_404(client: DropboxClient, scratch: str
 
     again = http.delete("/files", params={"path": path})
     assert again.status_code == HTTPStatus.NOT_FOUND, again.text
+    assert again.json() == {"error": {"code": "not_found", "message": f"No file or folder at {path!r}"}}
 
 
 def test_delete_folder_removes_contents(client: DropboxClient, scratch: str, http: TestClient) -> None:

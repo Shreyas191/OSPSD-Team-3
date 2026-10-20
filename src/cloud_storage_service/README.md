@@ -25,7 +25,26 @@ Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dro
   | `size` | int or null | Size in bytes; `null` for folders |
   | `modified` | datetime or null | Last modified time (ISO 8601); `null` for folders |
 
-- Errors return `{"detail": "<message>"}` with one of the status codes listed per endpoint.
+- Errors return one of the status codes listed per endpoint. Endpoints that use the team's shared error format (so far `DELETE /files`) return `{"error": {"code": "<code>", "message": "<message>"}}`; the others still return `{"detail": "<message>"}` until they adopt it.
+
+### Shared error format
+The format is defined in `errors.py`: a route opts in by being registered on the `shared_errors` router in `app.py`, without its own `try`/`except`. Request validation errors and the built-in exceptions the `Client` contract documents are mapped as follows; any other exception is a bug and still surfaces as `500`.
+
+| Status | `code` | Cause |
+|--------|--------|-------|
+| `422` | `invalid_input` | Request validation failed, or the client raised `ValueError` |
+| `404` | `not_found` | `FileNotFoundError` |
+| `403` | `permission_denied` | `PermissionError`: the provider does not allow the operation on this entry |
+| `502` | `provider_failure` | Any other `OSError`: the provider failed |
+| `503` | `provider_unavailable` | `ConnectionError`: the provider is unreachable or busy; try again later |
+
+`502` and `503` responses carry a fixed message, so provider details never reach the caller. Every failure is logged as a warning on the `cloud_storage_service.errors` logger, as `key=value` pairs that are also attached to the log record as attributes:
+
+```text
+Request failed: operation='delete_entry' status=502 code='provider_failure' provider_failure=True reason="Dropbox failed to delete '/Docs' (DeleteError('too_many_files', None))"
+```
+
+The log never includes credentials, and validation failures record which parameter was wrong but not the value sent.
 
 ## Create endpoints
 
@@ -202,17 +221,24 @@ Delete a file, or a folder together with everything inside it.
 Query parameters:
 - `path` (required): absolute path of the entry to delete (e.g. `?path=/Docs/report.pdf`). The root (`/`) can never be deleted.
 
-| Status | Meaning |
-|--------|---------|
-| `204` | Deleted; the response has no body |
-| `404` | Nothing exists at `path`, including a path that was already deleted |
-| `422` | Invalid query parameter (missing, empty, relative, or the root `/`) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `204` | | Deleted; the response has no body |
+| `403` | `permission_denied` | The provider does not allow deleting the entry (e.g. it is locked, a team folder, or read-only for this account) |
+| `404` | `not_found` | Nothing exists at `path`, including a path that was already deleted |
+| `422` | `invalid_input` | Invalid query parameter (missing, empty, relative, or the root `/`), or a path the provider rejects as malformed |
+| `502` | `provider_failure` | The provider failed (e.g. the folder holds too many files to delete in one call, or the service's Dropbox credentials have expired) |
+| `503` | `provider_unavailable` | The provider is unreachable or busy (e.g. too many write operations in progress); nothing was deleted, so try again later |
 
 ```bash
 curl -X DELETE "http://127.0.0.1:8000/files?path=/Docs/report.pdf"
+# 404 response body:
+# {"error": {"code": "not_found", "message": "No file or folder at '/Docs/report.pdf'"}}
 ```
 
-Delete is not idempotent: deleting the same path twice returns `204` the first time and `404` the second. The response has no body because the `Client.delete` contract returns only `True`, not the deleted entry. The root path is rejected before the provider is contacted. Dropbox implements delete as a single `files_delete_v2` call; deleted entries go to the Dropbox account's trash, but this service does not offer restore. Other provider failures (e.g. too many concurrent writes) currently surface as `500`.
+Delete is not idempotent: deleting the same path twice returns `204` the first time and `404` the second. The response has no body because the `Client.delete` contract returns only `True`, not the deleted entry. The root path is rejected before the provider is contacted. Dropbox implements delete as a single `files_delete_v2` call; deleted entries go to the Dropbox account's trash, but this service does not offer restore.
 
 
 ## Testing
