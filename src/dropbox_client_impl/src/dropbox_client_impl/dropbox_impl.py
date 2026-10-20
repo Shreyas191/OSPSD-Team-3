@@ -16,7 +16,8 @@ from pathlib import Path
 
 import cloud_storage_client_api
 import dropbox
-from dropbox import files
+import requests
+from dropbox import files, stone_validators
 from dropbox.files import SearchOptions, WriteMode
 
 from dropbox_client_impl.auth import get_dropbox_client
@@ -334,9 +335,17 @@ class DropboxClient(cloud_storage_client_api.Client):
         Dropbox moves the entry to the account's trash, from where it can be restored in
         the Dropbox web app; this client does not expose restore.
 
+        Every Dropbox failure is translated (see :func:`_translate_delete_error`), so no
+        SDK exception reaches the caller.
+
         Raises:
-            ValueError: If ``remote_path`` is empty or the root; Dropbox is not contacted.
+            ValueError: If ``remote_path`` is empty or the root (Dropbox is not contacted),
+                or Dropbox rejects it as malformed.
             FileNotFoundError: If nothing exists at ``remote_path``.
+            PermissionError: If Dropbox does not allow deleting the entry.
+            ConnectionError: If Dropbox could not be reached, rate limited the request,
+                or had too many write operations in progress.
+            OSError: For any other Dropbox failure.
 
         """
         if not remote_path.strip("/"):
@@ -344,11 +353,12 @@ class DropboxClient(cloud_storage_client_api.Client):
             raise ValueError(msg)
         try:
             self.dbx.files_delete_v2(remote_path)
-        except dropbox.exceptions.ApiError as e:
-            translated = _translate_delete_error(e.error, remote_path)
-            if translated is None:
-                raise
-            raise translated from e
+        except (
+            dropbox.exceptions.DropboxException,
+            stone_validators.ValidationError,
+            requests.exceptions.RequestException,
+        ) as e:
+            raise _translate_delete_error(e, remote_path) from e
         self.logger.info("Deleted %s", remote_path)
         return True
 
@@ -426,15 +436,72 @@ def _translate_relocation_error(reason: object, from_path: str, to_path: str) ->
     return None
 
 
-def _translate_delete_error(reason: object, remote_path: str) -> Exception | None:
-    """Map a Dropbox ``DeleteError`` onto the built-in exceptions the contract documents.
+# Message for each exception ``Client.delete`` documents. Messages of the 4xx kinds are
+# shown to API callers, so only provider failures carry the Dropbox error ``detail``.
+_DELETE_FAILURE_MESSAGES: dict[type[Exception], str] = {
+    FileNotFoundError: "No file or folder at {path!r}",
+    ValueError: "Dropbox rejected {path!r} as an invalid path",
+    PermissionError: "Dropbox does not allow deleting {path!r}",
+    ConnectionError: "Dropbox is unreachable or busy, so {path!r} was not deleted ({detail})",
+    OSError: "Dropbox failed to delete {path!r} ({detail})",
+}
 
-    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
+
+def _translate_delete_error(error: Exception, remote_path: str) -> Exception:
+    """Map a failed ``files_delete_v2`` call onto the exceptions ``Client.delete`` documents.
+
+    The ``detail`` kept for provider failures is the Dropbox error tag or the SDK exception's
+    class name; neither can contain credentials.
     """
-    if not isinstance(reason, files.DeleteError):
-        return None
-    if reason.is_path_lookup() and reason.get_path_lookup().is_not_found():
-        return FileNotFoundError(f"No file or folder at {remote_path!r}")
+    kind = _delete_failure_kind(error)
+    detail = error.error if isinstance(error, dropbox.exceptions.ApiError) else type(error).__name__
+    return kind(_DELETE_FAILURE_MESSAGES[kind].format(path=remote_path, detail=detail))
+
+
+def _delete_failure_kind(error: Exception) -> type[Exception]:
+    """Pick the exception for a failed delete; ``OSError`` when nothing more specific fits."""
+    # The SDK checks the path format locally before sending, e.g. a path without a leading "/".
+    if isinstance(error, stone_validators.ValidationError):
+        return ValueError
+    if isinstance(error, dropbox.exceptions.RateLimitError | requests.exceptions.RequestException):
+        return ConnectionError
+    reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
+    if isinstance(reason, files.DeleteError):
+        if reason.is_too_many_write_operations():
+            return ConnectionError
+        if reason.is_path_lookup():
+            return _lookup_failure_kind(reason.get_path_lookup()) or OSError
+        if reason.is_path_write():
+            return _write_failure_kind(reason.get_path_write()) or OSError
+    # Other SDK errors (auth, 5xx, bad input), ``too_many_files`` (the folder is too large to
+    # delete in one call) and unknown tags.
+    return OSError
+
+
+def _lookup_failure_kind(lookup: files.LookupError) -> type[Exception] | None:
+    """Return the exception for a ``DeleteError.path_lookup`` reason, or ``None`` if none fits."""
+    if lookup.is_not_found():
+        return FileNotFoundError
+    if lookup.is_malformed_path():
+        return ValueError
+    if lookup.is_restricted_content() or lookup.is_locked():
+        return PermissionError
+    return None
+
+
+def _write_failure_kind(write: files.WriteError) -> type[Exception] | None:
+    """Return the exception for a ``DeleteError.path_write`` reason, or ``None`` if none fits."""
+    if write.is_malformed_path() or write.is_disallowed_name():
+        return ValueError
+    if (
+        write.is_no_write_permission()
+        or write.is_team_folder()
+        or write.is_access_restricted()
+        or write.is_operation_suppressed()
+    ):
+        return PermissionError
+    if write.is_too_many_write_operations():
+        return ConnectionError
     return None
 
 

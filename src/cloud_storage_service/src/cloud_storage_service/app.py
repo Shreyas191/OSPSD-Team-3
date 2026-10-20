@@ -3,8 +3,9 @@
 Request flow: FastAPI validates the JSON body against a request model, the route calls the
 provider-independent ``cloud_storage_client_api.Client``, and the returned ``File`` is
 serialized as a :class:`FileResponse`. Routes never see Dropbox types: the client raises
-built-in exceptions (``FileNotFoundError``, ``FileExistsError``, ``ValueError``), which are
-mapped to HTTP status codes here.
+built-in exceptions (``FileNotFoundError``, ``FileExistsError``, ``ValueError``, ...), which
+are mapped to HTTP status codes here, or in ``errors.py`` for routes that use the team's
+shared error format.
 
 Paths are passed in the request body rather than the URL because they contain ``/``.
 
@@ -21,11 +22,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import cloud_storage_client_api
 from dropbox_client_impl import DropboxClient
 from fastapi import (
+    APIRouter,
     Depends,
     FastAPI,
     Form,
@@ -37,6 +39,8 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field
+
+from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute
 
 # One or more "/name" segments: no empty segments ("/a//b") and no trailing slash
 # ("/a/"). Dropbox rejects those as malformed paths, so they are refused here with 422
@@ -280,18 +284,32 @@ def search_files(
     return [FileResponse.from_file(result) for result in results]
 
 
-# ----- Delete Endpoints -----
+# ----- Routes using the shared error format -----
 
-_DELETE_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
-    404: {"description": "Nothing exists at the path (including a path already deleted)"},
-    422: {"description": "Missing, relative or root path"},
+# Routes on this router report failures as ``{"error": {"code", "message"}}`` (see
+# ``errors.py``); the routes above still return ``{"detail": ...}`` until they move here.
+shared_errors = APIRouter(route_class=SharedErrorRoute)
+
+_DELETE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow deleting the entry"},
+    404: {
+        "model": ErrorResponse,
+        "description": "Nothing at the path (including one already deleted)",
+    },
+    422: {"model": ErrorResponse, "description": "Missing, relative or root path"},
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
 }
 
 
-@app.delete("/files", status_code=status.HTTP_204_NO_CONTENT, responses=_DELETE_ERROR_RESPONSES)
+@shared_errors.delete(
+    "/files",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=_DELETE_ERROR_RESPONSES,
+)
 def delete_entry(path: AbsolutePath, client: StorageClient) -> None:
     """Delete a file, or a folder with its contents, at the absolute ``path``."""
-    try:
-        client.delete(path)
-    except (FileNotFoundError, ValueError) as e:
-        raise _to_http_error(e) from e
+    client.delete(path)
+
+
+app.include_router(shared_errors)

@@ -209,9 +209,16 @@ class Client(ABC):
             below the root; the root itself can never be deleted.
 
         Raises:
-            ValueError: If ``remote_path`` is empty or the root (``/``). This is checked
-                before contacting the provider.
+            ValueError: If ``remote_path`` is empty or the root (``/``), which is checked
+                before contacting the provider, or if the provider rejects the path as
+                malformed.
             FileNotFoundError: If nothing exists at ``remote_path``.
+            PermissionError: If the provider does not allow deleting the entry (for
+                example, it is locked or read-only for this account).
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; nothing was deleted and retrying later may succeed.
+            OSError: If the provider failed for any other reason. The exceptions above
+                except ``ValueError`` are ``OSError`` subclasses, so catch them first.
 
         """
         raise NotImplementedError
