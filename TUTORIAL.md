@@ -56,7 +56,7 @@ The full mapping is in [`src/cloud_storage_service/README.md`](src/cloud_storage
 `POST /files/upload` with `file` = `report.txt`, `remote_path` = `/ospsd-tutorial/Docs/report.txt`, `overwrite` = `false`.
 
 - **Expected:** `200` and the new file's metadata. The missing folders `/ospsd-tutorial/Docs` are created automatically.
-- **Actual:** `200`, `"path": "/ospsd-tutorial/Docs/report.txt"`, `"size": 27`, `"id": "id:OqsTuff5gbwAAAAAAAAC7g"`.
+- **Actual:** `200`, `"path": "/ospsd-tutorial/Docs/report.txt"`, `"size": 27`, `"id": "id:OqsTuff5gbwAAAAAAAAEvw"`.
 
 ![Upload a new file](docs/images/tutorial/create-1-upload.png)
 
@@ -72,7 +72,7 @@ Same request, but with `file` = `report-v2.txt` and `overwrite` still `false`.
 ### 1.3 Upload again with `overwrite` = `true` → `200`
 
 - **Expected:** `200`; the file is replaced but keeps the same `id`.
-- **Actual:** `200`, `"size": 37` (the revised file), and the same `"id": "id:OqsTuff5gbwAAAAAAAAC7g"` as in 1.1.
+- **Actual:** `200`, `"size": 37` (the revised file), and the same `"id": "id:OqsTuff5gbwAAAAAAAAEvw"` as in 1.1.
 
 ![Upload with overwrite](docs/images/tutorial/create-3-upload-overwrite.png)
 
@@ -97,7 +97,7 @@ Same request, but with `file` = `report-v2.txt` and `overwrite` still `false`.
 `POST /files/copy` with `{"from_path": "/ospsd-tutorial/Docs/report.txt", "to_path": "/ospsd-tutorial/Archive/report-copy.txt"}`.
 
 - **Expected:** `200`; the copy is a new entry with its own `id`, and the source stays in place.
-- **Actual:** `200`, `"path": "/ospsd-tutorial/Archive/report-copy.txt"`, `"id": "id:OqsTuff5gbwAAAAAAAAC8g"` (different from the source's).
+- **Actual:** `200`, `"path": "/ospsd-tutorial/Archive/report-copy.txt"`, `"id": "id:OqsTuff5gbwAAAAAAAAEww"` (different from the source's).
 
 ![Copy a file](docs/images/tutorial/create-6-copy.png)
 
@@ -114,15 +114,75 @@ Same request, but with `file` = `report-v2.txt` and `overwrite` still `false`.
 
 ## 2. Read
 
-*Presented by Jing Qian.*
+*Presented by Jing Qian.* Read the files created in section 1. Nothing here changes Dropbox. At this point `/ospsd-tutorial/Docs/report.txt` (37 bytes, the revised upload) and `/ospsd-tutorial/Archive/report-copy.txt` exist.
 
-> **To be completed by Jing.** Run these steps at this point in the walkthrough, after section 1, while `/ospsd-tutorial/Docs/report.txt` (37 bytes) and `/ospsd-tutorial/Archive/report-copy.txt` exist. Suggested steps, each with **Expected**, **Actual** and a Swagger screenshot saved in `docs/images/tutorial/read-*.png`:
->
-> - [ ] `GET /files/metadata` for `/ospsd-tutorial/Docs/report.txt` → `200`, then for a missing path → `404`
-> - [ ] `GET /files/download` for `/ospsd-tutorial/Docs/report.txt` → `200` with the uploaded bytes; compare them with `report-v2.txt`
-> - [ ] `GET /folders/list` for `/ospsd-tutorial/Archive` → `200` listing `report-copy.txt`
-> - [ ] `GET /files/search` with `q` = `report` → `200`
-> - [ ] One failure case, e.g. downloading a folder
+### 2.1 Get a file's metadata → `200`
+
+`GET /files/metadata` with `path` = `/ospsd-tutorial/Docs/report.txt`.
+
+- **Expected:** `200` with the same `id` and size as the upload in 1.3.
+- **Actual:** `200`, `"id": "id:OqsTuff5gbwAAAAAAAAEvw"`, `"size": 37`.
+
+![Get metadata](docs/images/tutorial/read-1-metadata.png)
+
+### 2.2 Metadata for a path that doesn't exist → `404`
+
+`GET /files/metadata` with `path` = `/ospsd-tutorial/Docs/missing.txt`.
+
+- **Expected:** `404 not_found`.
+- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Docs/missing.txt'"`.
+
+![Metadata for a missing path](docs/images/tutorial/read-2-metadata-missing.png)
+
+### 2.3 Download a file → `200`
+
+`GET /files/download` with `path` = `/ospsd-tutorial/Docs/report.txt`.
+
+- **Expected:** `200` with the file's raw bytes, identical to `report-v2.txt` (the last version uploaded).
+- **Actual:** `200`. Swagger offers the body as **Download file**. Downloading the same path with curl and comparing it with the local file shows identical bytes:
+  ```bash
+  curl -s -o downloaded.txt "http://127.0.0.1:8000/files/download?path=/ospsd-tutorial/Docs/report.txt"
+  cmp report-v2.txt downloaded.txt && echo identical
+  ```
+  Output: `identical`.
+
+![Download a file](docs/images/tutorial/read-3-download.png)
+
+### 2.4 Download a folder → `422`
+
+`GET /files/download` with `path` = `/ospsd-tutorial/Docs`.
+
+- **Expected:** `422 invalid_input`, because only files can be downloaded.
+- **Actual:** `422`, `"Path is a folder: '/ospsd-tutorial/Docs'"`.
+
+![Download a folder](docs/images/tutorial/read-4-download-folder.png)
+
+### 2.5 List a folder → `200`
+
+`GET /folders/list` with `path` = `/ospsd-tutorial/Archive`.
+
+- **Expected:** `200` with the folder's direct children: just `report-copy.txt` from step 1.6.
+- **Actual:** `200`, a one-item array with `"path": "/ospsd-tutorial/Archive/report-copy.txt"`, `"id": "id:OqsTuff5gbwAAAAAAAAEww"`.
+
+![List a folder](docs/images/tutorial/read-5-list.png)
+
+### 2.6 List a file → `422`
+
+`GET /folders/list` with `path` = `/ospsd-tutorial/Docs/report.txt`.
+
+- **Expected:** `422 invalid_input`, because only folders can be listed.
+- **Actual:** `422`, `"Path is a file: '/ospsd-tutorial/Docs/report.txt'"`.
+
+![List a file](docs/images/tutorial/read-6-list-file.png)
+
+### 2.7 Search by name → `200`
+
+`GET /files/search` with `q` = `report-copy`, `max_results` = `5`.
+
+- **Expected:** `200` with matching files and folders, at most 5. Search matches names across the whole account; `report-copy` keeps it to the file from step 1.6.
+- **Actual:** `200`, one result: `"path": "/ospsd-tutorial/Archive/report-copy.txt"`.
+
+![Search by name](docs/images/tutorial/read-7-search.png)
 
 ---
 
@@ -135,7 +195,7 @@ Same request, but with `file` = `report-v2.txt` and `overwrite` still `false`.
 `POST /files/rename` with `{"path": "/ospsd-tutorial/Docs/report.txt", "new_name": "summary.txt"}`.
 
 - **Expected:** `200`; the file stays in `Docs` and keeps its `id`.
-- **Actual:** `200`, `"path": "/ospsd-tutorial/Docs/summary.txt"`, same `"id": "id:OqsTuff5gbwAAAAAAAAC7g"` as the uploaded file.
+- **Actual:** `200`, `"path": "/ospsd-tutorial/Docs/summary.txt"`, same `"id": "id:OqsTuff5gbwAAAAAAAAEvw"` as the uploaded file.
 
 ![Rename a file](docs/images/tutorial/update-1-rename.png)
 
@@ -219,6 +279,9 @@ Every failed request is logged once as a structured warning on the `cloud_storag
 Request failed: operation='upload_file' status=409 code='conflict' provider_failure=False reason="Something already exists at '/ospsd-tutorial/Docs/report.txt'"
 Request failed: operation='create_folder' status=409 code='conflict' provider_failure=False reason="Something already exists at '/ospsd-tutorial/Archive'"
 Request failed: operation='copy_entry' status=422 code='invalid_input' provider_failure=False reason="Cannot copy '/ospsd-tutorial/Docs' into itself: '/ospsd-tutorial/Docs/Backup' is inside the source"
+Request failed: operation='get_file_metadata' status=404 code='not_found' provider_failure=False reason="No file or folder at '/ospsd-tutorial/Docs/missing.txt'"
+Request failed: operation='download_file' status=422 code='invalid_input' provider_failure=False reason="Path is a folder: '/ospsd-tutorial/Docs'"
+Request failed: operation='list_folder' status=422 code='invalid_input' provider_failure=False reason="Path is a file: '/ospsd-tutorial/Docs/report.txt'"
 Request failed: operation='move_file' status=404 code='not_found' provider_failure=False reason="No file or folder at '/ospsd-tutorial/Docs/summary.txt'"
 Request failed: operation='rename_file' status=409 code='conflict' provider_failure=False reason="Something already exists at '/ospsd-tutorial/Archive/report-copy.txt'"
 Request failed: operation='move_file' status=422 code='invalid_input' provider_failure=False reason="Cannot move '/ospsd-tutorial/Archive' into itself: '/ospsd-tutorial/Archive/Old' is inside the source"
