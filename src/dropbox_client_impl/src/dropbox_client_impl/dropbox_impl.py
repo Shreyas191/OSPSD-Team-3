@@ -77,6 +77,7 @@ class DropboxClient(cloud_storage_client_api.Client):
                     remote_path,
                     mode=mode,
                     autorename=False,
+                    strict_conflict=not overwrite,
                 )
             except _DROPBOX_FAILURES as e:
                 raise _translate_write_error(e, "upload", remote_path) from e

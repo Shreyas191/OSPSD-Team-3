@@ -158,6 +158,7 @@ def test_upload_file_default_mode_success(
     assert dest_path == "/notes.txt"
     assert mode == WriteMode.add
     assert autorename is False
+    assert call_kwargs.get("strict_conflict") is True
 
     assert isinstance(result, File)
     assert result.name == "notes.txt"
@@ -172,7 +173,7 @@ def test_upload_file_overwrite_mode_success(
     mock_dbx: Mock,
     tmp_path: Path,
 ) -> None:
-    """Upload_file passes WriteMode.overwrite when overwrite=True."""
+    """Upload_file passes WriteMode.overwrite and strict_conflict=False when overwrite=True."""
     local_file = tmp_path / "data.csv"
     local_file.write_bytes(b"a,b,c\n1,2,3")
 
@@ -184,6 +185,7 @@ def test_upload_file_overwrite_mode_success(
     mock_dbx.files_upload.assert_called_once()
     _, call_kwargs = mock_dbx.files_upload.call_args
     assert call_kwargs.get("mode") == WriteMode.overwrite
+    assert call_kwargs.get("strict_conflict") is False
     assert isinstance(result, File)
     assert result.path == "/data.csv"
 
@@ -250,6 +252,29 @@ def test_upload_file_missing_local_path_raises_file_not_found(
         client.upload_file("/non/existent/local/path.txt", "/remote.txt")
 
     mock_dbx.files_upload.assert_not_called()
+
+
+def test_upload_file_identical_content_without_overwrite_raises_file_exists_error(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    tmp_path: Path,
+) -> None:
+    """Uploading when overwrite is False enables strict_conflict=True and raises FileExistsError on conflict."""
+    local_file = tmp_path / "input.txt"
+    local_file.write_bytes(b"identical bytes")
+    # With strict_conflict=True, Dropbox raises a conflict ApiError even if byte contents are identical
+    mock_dbx.files_upload.side_effect = _api_error(
+        files.UploadError.path(
+            files.UploadWriteFailed(reason=_write_conflict(), upload_session_id="session"),
+        ),
+    )
+
+    with pytest.raises(FileExistsError, match=r"input\.txt"):
+        client.upload_file(str(local_file), "/input.txt", overwrite=False)
+
+    mock_dbx.files_upload.assert_called_once()
+    _, call_kwargs = mock_dbx.files_upload.call_args
+    assert call_kwargs.get("strict_conflict") is True
 
 
 # create_folder tests
