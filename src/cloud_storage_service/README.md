@@ -25,14 +25,14 @@ Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dro
   | `size` | int or null | Size in bytes; `null` for folders |
   | `modified` | datetime or null | Last modified time (ISO 8601); `null` for folders |
 
-- Errors return one of the status codes listed per endpoint. Endpoints that use the team's shared error format (the Create, Update and Delete endpoints) return `{"error": {"code": "<code>", "message": "<message>"}}`; the others still return `{"detail": "<message>"}` until they adopt it.
+- Errors return one of the status codes listed per endpoint in the team's shared error format: `{"error": {"code": "<code>", "message": "<message>"}}`.
 
 ### Shared error format
 The format is defined in `errors.py`: a route opts in by being registered on the `shared_errors` router in `app.py`, without its own `try`/`except`. Request validation errors and the built-in exceptions the `Client` contract documents are mapped as follows; any other exception is a bug and still surfaces as `500`.
 
 | Status | `code` | Cause |
 |--------|--------|-------|
-| `422` | `invalid_input` | Request validation failed, or the client raised `ValueError` |
+| `422` | `invalid_input` | Request validation failed, or the client raised `ValueError` or `IsADirectoryError` |
 | `404` | `not_found` | `FileNotFoundError` |
 | `409` | `conflict` | `FileExistsError`: the destination is already taken |
 | `403` | `permission_denied` | `PermissionError`: the provider does not allow the operation on this entry |
@@ -191,11 +191,16 @@ Get metadata for a single file or folder by absolute path.
 Query parameters:
 - `path` (required): absolute path of the entry (e.g. `?path=/Docs/report.pdf`).
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Success; body is the File object |
-| `404` | Nothing exists at `path` |
-| `422` | Invalid query parameter (missing `path` or not an absolute path) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Success; body is the File object |
+| `403` | `permission_denied` | The provider does not allow reading metadata for the entry |
+| `404` | `not_found` | Nothing exists at `path` |
+| `422` | `invalid_input` | Invalid query parameter (missing `path`, relative or root path) |
+| `502` | `provider_failure` | The provider failed |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
 curl "http://127.0.0.1:8000/files/metadata?path=/Docs/report.pdf"
@@ -207,11 +212,16 @@ Download the raw bytes of the file located at `path`.
 Query parameters:
 - `path` (required): absolute path of the remote file to download (e.g. `?path=/Docs/report.pdf`).
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Success; body contains raw file bytes (`application/octet-stream`) |
-| `404` | Nothing exists at `path` |
-| `422` | Path points to a folder, or invalid query parameter |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Success; body contains raw file bytes (`application/octet-stream`) |
+| `403` | `permission_denied` | The provider does not allow reading the file |
+| `404` | `not_found` | Nothing exists at `path` |
+| `422` | `invalid_input` | Path points to a folder, or invalid query parameter |
+| `502` | `provider_failure` | The provider failed |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
 curl -o downloaded.pdf "http://127.0.0.1:8000/files/download?path=/Docs/report.pdf"
@@ -223,11 +233,16 @@ List all direct children in the folder at `path`. Returns an empty list or root 
 Query parameters:
 - `path` (optional, defaults to empty): absolute path of the folder to list (e.g. `?path=/Docs`), or empty for root. Must start with `/` or be empty.
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Success; body is a JSON array of File objects |
-| `404` | Folder does not exist |
-| `422` | Path points to a file rather than a folder, or invalid path (relative path) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Success; body is a JSON array of File objects |
+| `403` | `permission_denied` | The provider does not allow listing the folder |
+| `404` | `not_found` | Folder does not exist |
+| `422` | `invalid_input` | Path points to a file rather than a folder, or invalid relative path |
+| `502` | `provider_failure` | The provider failed |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
 curl "http://127.0.0.1:8000/folders/list?path=/Docs"
@@ -240,10 +255,14 @@ Query parameters:
 - `q` (required): non-empty search query string (e.g. `?q=report`).
 - `max_results` (optional, defaults to 10): maximum number of results to return (must be between 1 and 1000).
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Success; body is a JSON array of matching File objects |
-| `422` | Invalid query (empty `q` or `max_results` not between 1 and 1000) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Success; body is a JSON array of matching File objects |
+| `422` | `invalid_input` | Invalid query (empty `q` or `max_results` not between 1 and 1000) |
+| `502` | `provider_failure` | The provider failed |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
 curl "http://127.0.0.1:8000/files/search?q=report&max_results=5"
