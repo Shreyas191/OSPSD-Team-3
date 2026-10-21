@@ -9,6 +9,7 @@
 from datetime import UTC, datetime
 from unittest.mock import Mock, call
 
+import dropbox
 import pytest
 from cloud_storage_client_api.file import File
 from dropbox import files
@@ -132,8 +133,8 @@ def test_download_file_folder_raises_is_a_directory_error(
         client.download_file("/folder", "/local/folder")
 
 
-def test_download_file_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Download_file propagates Dropbox ApiError when download fails with unmapped error."""
+def test_download_file_api_error_becomes_oserror(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Download_file maps unmapped Dropbox ApiError to OSError."""
     mock_dbx.files_download_to_file.side_effect = ApiError(
         request_id="123",
         error=Mock(),
@@ -141,7 +142,7 @@ def test_download_file_api_error_propagates(client: DropboxClient, mock_dbx: Moc
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
+    with pytest.raises(OSError, match=r"Dropbox failed reading '/missing.txt'"):
         client.download_file("/missing.txt", "/local/missing.txt")
 
 
@@ -198,8 +199,8 @@ def test_get_metadata_not_found_raises_file_not_found(
         client.get_metadata("/invalid/path")
 
 
-def test_get_metadata_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Get_metadata propagates Dropbox ApiError on unmapped error."""
+def test_get_metadata_api_error_becomes_oserror(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Get_metadata maps unmapped Dropbox ApiError to OSError."""
     mock_dbx.files_get_metadata.side_effect = ApiError(
         request_id="456",
         error=Mock(),
@@ -207,7 +208,7 @@ def test_get_metadata_api_error_propagates(client: DropboxClient, mock_dbx: Mock
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
+    with pytest.raises(OSError, match="Dropbox failed reading '/invalid/path'"):
         client.get_metadata("/invalid/path")
 
 
@@ -328,8 +329,10 @@ def test_list_folder_file_raises_value_error(client: DropboxClient, mock_dbx: Mo
         list(client.list_folder("/file.txt"))
 
 
-def test_list_folder_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """List_folder propagates Dropbox ApiError when initial call fails with unmapped error."""
+def test_list_folder_initial_api_error_becomes_oserror(
+    client: DropboxClient, mock_dbx: Mock
+) -> None:
+    """List_folder maps unmapped Dropbox ApiError to OSError."""
     mock_dbx.files_list_folder.side_effect = ApiError(
         request_id="789",
         error=Mock(),
@@ -337,7 +340,7 @@ def test_list_folder_initial_api_error_propagates(client: DropboxClient, mock_db
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
+    with pytest.raises(OSError, match="Dropbox failed reading '/nonexistent'"):
         list(client.list_folder("/nonexistent"))
 
 
@@ -357,11 +360,11 @@ def test_list_folder_continuation_not_found_raises_file_not_found(
         list(client.list_folder("/paginated"))
 
 
-def test_list_folder_continuation_api_error_propagates(
+def test_list_folder_continuation_api_error_becomes_oserror(
     client: DropboxClient,
     mock_dbx: Mock,
 ) -> None:
-    """List_folder propagates Dropbox ApiError when pagination continuation fails with unmapped error."""
+    """List_folder maps unmapped Dropbox ApiError when pagination continuation fails to OSError."""
     entry1 = create_fake_file_metadata("file1.txt", "/paginated/file1.txt")
     page1 = Mock(entries=[entry1], has_more=True, cursor="cur1")
 
@@ -373,7 +376,27 @@ def test_list_folder_continuation_api_error_propagates(
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
+    with pytest.raises(OSError, match="Dropbox failed reading '/paginated'"):
+        list(client.list_folder("/paginated"))
+
+
+def test_list_folder_continuation_reset_becomes_oserror(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """List_folder maps cursor reset to OSError."""
+    entry1 = create_fake_file_metadata("file1.txt", "/paginated/file1.txt")
+    page1 = Mock(entries=[entry1], has_more=True, cursor="cur1")
+
+    mock_dbx.files_list_folder.return_value = page1
+    mock_dbx.files_list_folder_continue.side_effect = ApiError(
+        request_id="790",
+        error=files.ListFolderContinueError.reset,
+        user_message_text="Reset",
+        user_message_locale="en",
+    )
+
+    with pytest.raises(OSError, match="Dropbox cursor was invalidated while listing '/paginated'"):
         list(client.list_folder("/paginated"))
 
 
@@ -530,8 +553,8 @@ def test_search_skips_deleted_metadata_matches(client: DropboxClient, mock_dbx: 
     assert results[0].name == "active.txt"
 
 
-def test_search_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Search propagates Dropbox ApiError when initial search call fails."""
+def test_search_initial_api_error_becomes_oserror(client: DropboxClient, mock_dbx: Mock) -> None:
+    """Search maps unmapped Dropbox ApiError on initial search to OSError."""
     mock_dbx.files_search_v2.side_effect = ApiError(
         request_id="999",
         error=Mock(),
@@ -539,12 +562,14 @@ def test_search_initial_api_error_propagates(client: DropboxClient, mock_dbx: Mo
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
+    with pytest.raises(OSError, match="Dropbox search failed for 'fail'"):
         list(client.search("fail"))
 
 
-def test_search_continuation_api_error_propagates(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Search propagates Dropbox ApiError when search pagination continuation fails."""
+def test_search_continuation_api_error_becomes_oserror(
+    client: DropboxClient, mock_dbx: Mock
+) -> None:
+    """Search maps unmapped Dropbox ApiError on continuation to OSError."""
     m1 = create_search_match(create_fake_file_metadata("res1.txt", "/res1.txt"))
     page1 = Mock(matches=[m1], has_more=True, cursor="cur1")
 
@@ -556,5 +581,22 @@ def test_search_continuation_api_error_propagates(client: DropboxClient, mock_db
         user_message_locale="en",
     )
 
-    with pytest.raises(ApiError):
+    with pytest.raises(OSError, match="Dropbox search failed for 'res'"):
         list(client.search("res"))
+
+
+def test_read_operations_translate_permissions_and_connection_errors(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """Read operations map rate limits and restricted content to ConnectionError / PermissionError."""
+    # Rate limit error -> ConnectionError
+    mock_dbx.files_get_metadata.side_effect = dropbox.exceptions.RateLimitError("req-1")
+    with pytest.raises(ConnectionError, match="Dropbox is unreachable or busy"):
+        client.get_metadata("/file.txt")
+
+    # Restricted content -> PermissionError
+    error = files.GetMetadataError.path(files.LookupError.restricted_content)
+    mock_dbx.files_get_metadata.side_effect = ApiError("123", error, "Restricted", "en")
+    with pytest.raises(PermissionError, match=r"Dropbox does not allow reading '/file.txt'"):
+        client.get_metadata("/file.txt")
