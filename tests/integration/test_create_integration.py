@@ -107,6 +107,28 @@ def test_upload_onto_existing_file_without_overwrite_is_409(
     assert _download(client, path) == CONTENT
 
 
+def test_repeating_an_identical_upload_is_409(client: DropboxClient, scratch: str, http: TestClient) -> None:
+    """Uploading the same bytes again without ``overwrite`` is a conflict, not a silent success.
+
+    Without ``strict_conflict``, Dropbox treats an identical re-upload as a no-op and returns
+    the existing file (200), breaking the documented 409. Regression test for the sister-team
+    review in #21.
+    """
+    path = f"{scratch}/input.txt"
+    first = _upload(http, path, CONTENT)
+
+    again = http.post(
+        "/files/upload",
+        files={"file": ("input.txt", CONTENT)},
+        data={"remote_path": path},
+    )
+
+    assert again.status_code == HTTPStatus.CONFLICT, again.text
+    assert again.json()["error"]["code"] == "conflict"
+    metadata = client.dbx.files_get_metadata(path)
+    assert (metadata.id, metadata.size) == (first["id"], len(CONTENT))
+
+
 def test_create_folder_then_conflict(scratch: str, http: TestClient) -> None:
     """A new folder (with missing parents) is created; creating it again is a 409."""
     path = f"{scratch}/A/B"
