@@ -71,7 +71,7 @@ class SharedErrorRoute(APIRoute):
 
 def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
     """Return the status code, error code and caller-facing message for a contract exception."""
-    if isinstance(error, ValueError):
+    if isinstance(error, ValueError | IsADirectoryError):
         return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_input", str(error)
     if isinstance(error, FileNotFoundError):
         return status.HTTP_404_NOT_FOUND, "not_found", str(error)

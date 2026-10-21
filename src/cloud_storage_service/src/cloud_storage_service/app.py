@@ -32,7 +32,6 @@ from fastapi import (
     FastAPI,
     File,
     Form,
-    HTTPException,
     Query,
     Request,
     Response,
@@ -133,84 +132,85 @@ class MoveRequest(BaseModel):
     to_path: AbsolutePath = Field(examples=["/Archive/report.pdf"])
 
 
-def _to_http_error(error: Exception) -> HTTPException:
-    """Map the client contract's documented exceptions onto HTTP status codes."""
-    if isinstance(error, FileNotFoundError):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, FileExistsError):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+# ----- Routes using the shared error format -----
 
+shared_errors = APIRouter(route_class=SharedErrorRoute)
 
-_READ_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
-    404: {"description": "The requested file or folder does not exist"},
-    422: {"description": "Validation error or invalid target path or target is a folder"},
+_METADATA_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow reading metadata"},
+    404: {"model": ErrorResponse, "description": "Nothing exists at the path"},
+    422: {"model": ErrorResponse, "description": "Missing, relative or root path"},
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+_DOWNLOAD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow reading the file"},
+    404: {"model": ErrorResponse, "description": "Nothing exists at the path"},
+    422: {"model": ErrorResponse, "description": "Path points to a folder, or invalid path"},
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+_LIST_FOLDER_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow listing the folder"},
+    404: {"model": ErrorResponse, "description": "Folder does not exist"},
+    422: {"model": ErrorResponse, "description": "Path points to a file, or invalid relative path"},
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+_SEARCH_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    422: {"model": ErrorResponse, "description": "Invalid query parameters"},
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
 }
 
 
 # ----- Read Endpoints -----
 
 
-@app.get("/files/metadata", responses=_READ_ERROR_RESPONSES)
+@shared_errors.get("/files/metadata", responses=_METADATA_ERROR_RESPONSES)
 def get_file_metadata(path: AbsolutePath, client: StorageClient) -> FileResponse:
     """Get metadata for a single file or folder by absolute path."""
-    try:
-        meta = client.get_metadata(path)
-    except FileNotFoundError as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(meta)
+    return FileResponse.from_file(client.get_metadata(path))
 
 
-@app.get(
+@shared_errors.get(
     "/files/download",
     response_class=Response,
-    responses=_READ_ERROR_RESPONSES,
+    responses=_DOWNLOAD_ERROR_RESPONSES,
 )
 def download_file(path: AbsolutePath, client: StorageClient) -> Response:
     """Download the raw bytes of the file located at ``path``."""
     with tempfile.TemporaryDirectory() as temp_dir:
         local_path = Path(temp_dir) / "downloaded_file"
-        try:
-            client.download_file(path, str(local_path))
-        except (FileNotFoundError, IsADirectoryError) as e:
-            raise _to_http_error(e) from e
+        client.download_file(path, str(local_path))
         file_bytes = local_path.read_bytes()
 
     return Response(content=file_bytes, media_type="application/octet-stream")
 
 
-@app.get("/folders/list", responses=_READ_ERROR_RESPONSES)
+@shared_errors.get("/folders/list", responses=_LIST_FOLDER_ERROR_RESPONSES)
 def list_folder(
     client: StorageClient,
     path: Annotated[str, Query(pattern=r"^(/.*)?$")] = "",
 ) -> list[FileResponse]:
     """List all direct children in the folder at ``path``."""
-    try:
-        entries = list(client.list_folder(path))
-    except (FileNotFoundError, ValueError) as e:
-        raise _to_http_error(e) from e
+    entries = list(client.list_folder(path))
     return [FileResponse.from_file(entry) for entry in entries]
 
 
-@app.get("/files/search", responses=_READ_ERROR_RESPONSES)
+@shared_errors.get("/files/search", responses=_SEARCH_ERROR_RESPONSES)
 def search_files(
     q: Annotated[str, Query(min_length=1)],
     client: StorageClient,
     max_results: Annotated[int, Query(gt=0, le=1000)] = 10,
 ) -> list[FileResponse]:
     """Search for files and folders matching a query string."""
-    try:
-        results = list(client.search(q, max_results=max_results))
-    except ValueError as e:
-        raise _to_http_error(e) from e
+    results = list(client.search(q, max_results=max_results))
     return [FileResponse.from_file(result) for result in results]
 
-
-# ----- Routes using the shared error format -----
-
-# Routes on this router report failures as ``{"error": {"code", "message"}}`` (see
-# ``errors.py``); the routes above still return ``{"detail": ...}`` until they move here.
-shared_errors = APIRouter(route_class=SharedErrorRoute)
 
 _DELETE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     403: {"model": ErrorResponse, "description": "The provider does not allow deleting the entry"},
