@@ -74,7 +74,11 @@ def test_rename_then_move_round_trip(client: DropboxClient, scratch: str, http: 
 
 
 def test_missing_source_and_conflict(scratch: str, http: TestClient) -> None:
-    """Missing sources are 404; occupied destinations (including the source itself) are 409."""
+    """Dropbox's not_found and conflict errors reach the caller as 404 and 409 in the shared format.
+
+    Occupied destinations include the source itself, which Dropbox reports as
+    ``duplicated_or_nested_paths``.
+    """
     missing = http.post("/files/move", json={"from_path": f"{scratch}/nope.txt", "to_path": f"{scratch}/x.txt"})
     assert missing.status_code == HTTPStatus.NOT_FOUND
     assert missing.json()["error"]["code"] == "not_found"
@@ -91,7 +95,11 @@ def test_missing_source_and_conflict(scratch: str, http: TestClient) -> None:
 
 
 def test_folder_moved_into_itself_is_invalid_input(client: DropboxClient, scratch: str, http: TestClient) -> None:
-    """A failure only Dropbox can detect is translated: 422 in the shared format, nothing moved."""
+    """A folder moved into itself is 422 in the shared format, and nothing moves in Dropbox.
+
+    Dropbox reports this with the same error as a move onto the source's own path, so the
+    client rejects it before calling Dropbox; this checks the real folder is left in place.
+    """
     response = http.post("/files/move", json={"from_path": f"{scratch}/Archive", "to_path": f"{scratch}/Archive/Inner"})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
