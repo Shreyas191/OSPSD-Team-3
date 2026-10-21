@@ -9,6 +9,8 @@ uv run uvicorn cloud_storage_service.app:app --reload
 ```
 Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dropbox credentials are missing, the service stops at startup with a `DropboxAuthError` telling you to run `uv run python -m dropbox_client_impl login`.
 
+The service handles at most `MAX_IN_FLIGHT_REQUESTS` requests at once (default `10`, set in `.env` or the environment); any more get `503 service_busy` immediately. See [overload protection](../../docs/overload-protection.md).
+
 ## Choosing the provider
 `build_storage_client()` in `app.py` is the only place the service names a concrete provider (it returns a `DropboxClient`). The app calls it once at startup, stores the client on `app.state`, and routes receive it through the `get_storage_client` dependency as an abstract `Client`. Switching providers means changing `build_storage_client()` only; routes and response models stay the same.
 
@@ -38,6 +40,7 @@ The format is defined in `errors.py`: a route opts in by being registered on the
 | `403` | `permission_denied` | `PermissionError`: the provider does not allow the operation on this entry |
 | `502` | `provider_failure` | Any other `OSError`: the provider failed |
 | `503` | `provider_unavailable` | `ConnectionError`: the provider is unreachable or busy; try again later |
+| `503` | `service_busy` | Overload protection: the service already has `MAX_IN_FLIGHT_REQUESTS` requests in flight, so this one was rejected without contacting the provider. Comes with `Retry-After: 1`; retrying is always safe. Applies to every endpoint. See [overload protection](../../docs/overload-protection.md). |
 
 `502` and `503` responses carry a fixed message, so provider details never reach the caller. Every failure is logged as a warning on the `cloud_storage_service.errors` logger, as `key=value` pairs that are also attached to the log record as attributes:
 

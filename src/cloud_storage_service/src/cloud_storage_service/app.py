@@ -42,6 +42,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute
+from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
 
 # One or more "/name" segments: no empty segments ("/a//b") and no trailing slash
 # ("/a/"). Dropbox rejects those as malformed paths, so they are refused here with 422
@@ -69,6 +70,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Cloud Storage Service", lifespan=lifespan)
+# At most MAX_IN_FLIGHT_REQUESTS requests run at once; the rest get 503 service_busy at once
+# instead of queueing (see overload.py).
+app.add_middleware(ConcurrencyLimitMiddleware, max_in_flight=max_in_flight_from_env())
 
 
 def get_storage_client(request: Request) -> cloud_storage_client_api.Client:

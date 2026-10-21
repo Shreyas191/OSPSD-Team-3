@@ -24,6 +24,7 @@ nav:
   - 'Workflow': 'workflow.md'
   - 'Engineering Decision': 'engineering-decision.md'
   - 'Operation Cost': 'operation-cost.md'
+  - 'Overload Protection': 'overload-protection.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'

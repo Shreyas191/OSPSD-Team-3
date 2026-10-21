@@ -13,6 +13,7 @@ left alone, so it still surfaces as ``500``.
 | ``FileExistsError``                   | 409    | ``conflict``             |
 | ``PermissionError``                   | 403    | ``permission_denied``    |
 | ``ConnectionError``                   | 503    | ``provider_unavailable`` |
+| too many requests in flight (overload)| 503    | ``service_busy``         |
 | any other ``OSError``                 | 502    | ``provider_failure``     |
 
 For ``502`` and ``503`` the response carries a fixed message, so provider details never
@@ -62,7 +63,7 @@ class SharedErrorRoute(APIRoute):
             except (ValueError, OSError) as e:
                 status_code, code, message = _classify(e)
                 reason = str(e)
-            _log_failure(operation, status_code, code, reason)
+            log_failure(operation, status_code, code, reason)
             body = ErrorResponse(error=ErrorDetail(code=code, message=message))
             return JSONResponse(body.model_dump(), status_code=status_code)
 
@@ -94,13 +95,26 @@ def _describe(error: RequestValidationError) -> str:
     return "; ".join(problems)
 
 
-def _log_failure(operation: str, status_code: int, code: str, reason: str) -> None:
-    """Log a failed request as ``key=value`` pairs, also attached to the record as ``extra``."""
+def log_failure(
+    operation: str,
+    status_code: int,
+    code: str,
+    reason: str,
+    *,
+    provider_failure: bool | None = None,
+) -> None:
+    """Log a failed request as ``key=value`` pairs, also attached to the record as ``extra``.
+
+    ``provider_failure`` defaults to "the status is a 5xx". Callers that answer with a 5xx
+    the provider did not cause (e.g. the service shedding load) pass ``False``.
+    """
+    if provider_failure is None:
+        provider_failure = status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR
     fields = {
         "operation": operation,
         "status": status_code,
         "code": code,
-        "provider_failure": status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "provider_failure": provider_failure,
         "reason": reason,
     }
     pairs = " ".join(f"{key}={value!r}" for key, value in fields.items())
