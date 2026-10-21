@@ -229,6 +229,19 @@ def test_invalid_request_is_rejected_and_changes_nothing(
 # --- POST /files/upload (multipart) --------------------------------------------------------
 
 
+def test_upload_is_documented_as_multipart(http: TestClient) -> None:
+    """The OpenAPI schema declares multipart/form-data, so Swagger UI and generated clients send a file.
+
+    A single form model containing an ``UploadFile`` makes FastAPI declare
+    ``application/x-www-form-urlencoded`` instead, and Swagger's "Try it out" then sends an
+    empty body.
+    """
+    spec = http.get("/openapi.json").json()
+    content = spec["paths"]["/files/upload"]["post"]["requestBody"]["content"]
+
+    assert list(content) == ["multipart/form-data"]
+
+
 def post_upload(http: TestClient, content: bytes = b"%PDF-data", **form_fields: str) -> Response:
     """Post a multipart upload request with the supplied form fields."""
     data = {"remote_path": "/Docs/report.pdf", **form_fields}

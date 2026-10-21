@@ -30,6 +30,7 @@ from fastapi import (
     APIRouter,
     Depends,
     FastAPI,
+    File,
     Form,
     HTTPException,
     Query,
@@ -45,7 +46,8 @@ from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute
 # One or more "/name" segments: no empty segments ("/a//b") and no trailing slash
 # ("/a/"). Dropbox rejects those as malformed paths, so they are refused here with 422
 # instead of reaching the provider. The root ("/") is not an entry path either.
-AbsolutePath = Annotated[str, Field(pattern=r"^(/[^/]+)+$", examples=["/Docs/report.pdf"])]
+_ABSOLUTE_PATH_PATTERN = r"^(/[^/]+)+$"
+AbsolutePath = Annotated[str, Field(pattern=_ABSOLUTE_PATH_PATTERN, examples=["/Docs/report.pdf"])]
 
 
 def build_storage_client() -> cloud_storage_client_api.Client:
@@ -99,20 +101,6 @@ class FileResponse(BaseModel):
             size=file.size,
             modified=file.modified,
         )
-
-
-class UploadForm(BaseModel):
-    """Upload a file as multipart/form-data."""
-
-    file: UploadFile
-    remote_path: AbsolutePath = Field(
-        description="Destination path in cloud storage",
-        examples=["/Docs/report.pdf"],
-    )
-    overwrite: bool = Field(
-        default=False,
-        description="Whether to overwrite if the file already exists",
-    )
 
 
 class CreateFolderRequest(BaseModel):
@@ -275,13 +263,32 @@ _COPY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 @shared_errors.post("/files/upload", responses=_UPLOAD_ERROR_RESPONSES)
-def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> FileResponse:
+def upload_file(
+    file: Annotated[UploadFile, File(description="The file contents")],
+    remote_path: Annotated[
+        str,
+        Form(
+            pattern=_ABSOLUTE_PATH_PATTERN,
+            description="Destination path in cloud storage, including the file name",
+            examples=["/Docs/report.pdf"],
+        ),
+    ],
+    client: StorageClient,
+    *,
+    overwrite: Annotated[
+        bool,
+        Form(description="Replace an existing file at remote_path"),
+    ] = False,
+) -> FileResponse:
     """Upload a file to cloud storage and return its metadata."""
+    # The fields are declared one by one rather than as a single form model: FastAPI declares
+    # a form model that contains an ``UploadFile`` as ``application/x-www-form-urlencoded`` in
+    # the OpenAPI schema, so Swagger UI's "Try it out" could not send the file.
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / "upload"
         with tmp_path.open("wb") as out:
-            shutil.copyfileobj(form.file.file, out)
-        uploaded = client.upload_file(str(tmp_path), form.remote_path, overwrite=form.overwrite)
+            shutil.copyfileobj(file.file, out)
+        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=overwrite)
     return FileResponse.from_file(uploaded)
 
 
