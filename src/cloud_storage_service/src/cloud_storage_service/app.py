@@ -168,42 +168,6 @@ _READ_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
 # ----- Create Endpoints -----
 
 
-@app.post("/files/upload", responses=_ERROR_RESPONSES)
-def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> FileResponse:
-    """Upload a file to cloud storage and return its metadata."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "upload"
-        with tmp_path.open("wb") as out:
-            shutil.copyfileobj(form.file.file, out)
-        try:
-            uploaded = client.upload_file(
-                str(tmp_path),
-                form.remote_path,
-                overwrite=form.overwrite,
-            )
-        except (FileNotFoundError, FileExistsError, ValueError) as e:
-            raise _to_http_error(e) from e
-    return FileResponse.from_file(uploaded)
-
-
-@app.post("/folders/create", responses=_ERROR_RESPONSES)
-def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
-    """Create a new folder at the specified path and return its metadata."""
-    try:
-        created = client.create_folder(request.remote_path)
-    except (FileNotFoundError, FileExistsError, ValueError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(created)
-
-
-@app.post("/files/copy", responses=_ERROR_RESPONSES)
-def copy_entry(request: CopyRequest, client: StorageClient) -> FileResponse:
-    """Copy a file or folder (with its contents) to a new path and return the copy."""
-    try:
-        copied = client.copy(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(copied)
 
 
 # ----- Read Endpoints -----
@@ -297,6 +261,28 @@ _UPDATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
 }
 
+_CREATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {
+        "model": ErrorResponse,
+        "description": "Permission denied",
+    },
+    404: {
+        "model": ErrorResponse,
+        "description": "The source does not exist",
+    },
+    409: {
+        "model": ErrorResponse,
+        "description": "The destination exists",
+    },
+    422: {
+        "model": ErrorResponse,
+        "description": "Invalid input",
+    },
+    502: {
+        "model": ErrorResponse,
+        "description": "Provider failure; retry may succeed.",
+    },
+}
 
 @shared_errors.post("/files/rename", responses=_UPDATE_ERROR_RESPONSES)
 def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
@@ -319,5 +305,39 @@ def delete_entry(path: AbsolutePath, client: StorageClient) -> None:
     """Delete a file, or a folder with its contents, at the absolute ``path``."""
     client.delete(path)
 
+@shared_errors.post("/files/upload", responses=_CREATE_ERROR_RESPONSES)
+def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> FileResponse:
+    """Upload a file to cloud storage and return its metadata."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "upload"
+        with tmp_path.open("wb") as out:
+            shutil.copyfileobj(form.file.file, out)
+        try:
+            uploaded = client.upload_file(
+                str(tmp_path),
+                form.remote_path,
+                overwrite=form.overwrite,
+            )
+        except (FileNotFoundError, FileExistsError, ValueError) as e:
+            raise _to_http_error(e) from e
+    return FileResponse.from_file(uploaded)
+
+@shared_errors.post("/folders/create", responses=_ERROR_RESPONSES)
+def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
+    """Create a new folder at the specified path and return its metadata."""
+    try:
+        created = client.create_folder(request.remote_path)
+    except (FileNotFoundError, FileExistsError, ValueError) as e:
+        raise _to_http_error(e) from e
+    return FileResponse.from_file(created)
+
+@shared_errors.post("/files/copy", responses=_ERROR_RESPONSES)
+def copy_entry(request: CopyRequest, client: StorageClient) -> FileResponse:
+    """Copy a file or folder (with its contents) to a new path and return the copy."""
+    try:
+        copied = client.copy(request.from_path, request.to_path)
+    except (FileNotFoundError, FileExistsError) as e:
+        raise _to_http_error(e) from e
+    return FileResponse.from_file(copied)
 
 app.include_router(shared_errors)
