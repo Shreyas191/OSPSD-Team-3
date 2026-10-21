@@ -25,7 +25,7 @@ Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dro
   | `size` | int or null | Size in bytes; `null` for folders |
   | `modified` | datetime or null | Last modified time (ISO 8601); `null` for folders |
 
-- Errors return one of the status codes listed per endpoint. Endpoints that use the team's shared error format (so far `DELETE /files`) return `{"error": {"code": "<code>", "message": "<message>"}}`; the others still return `{"detail": "<message>"}` until they adopt it.
+- Errors return one of the status codes listed per endpoint. Endpoints that use the team's shared error format (so far `POST /files/rename`, `POST /files/move` and `DELETE /files`) return `{"error": {"code": "<code>", "message": "<message>"}}`; the others still return `{"detail": "<message>"}` until they adopt it.
 
 ### Shared error format
 The format is defined in `errors.py`: a route opts in by being registered on the `shared_errors` router in `app.py`, without its own `try`/`except`. Request validation errors and the built-in exceptions the `Client` contract documents are mapped as follows; any other exception is a bug and still surfaces as `500`.
@@ -34,6 +34,7 @@ The format is defined in `errors.py`: a route opts in by being registered on the
 |--------|--------|-------|
 | `422` | `invalid_input` | Request validation failed, or the client raised `ValueError` |
 | `404` | `not_found` | `FileNotFoundError` |
+| `409` | `conflict` | `FileExistsError`: the destination is already taken |
 | `403` | `permission_denied` | `PermissionError`: the provider does not allow the operation on this entry |
 | `502` | `provider_failure` | Any other `OSError`: the provider failed |
 | `503` | `provider_unavailable` | `ConnectionError`: the provider is unreachable or busy; try again later |
@@ -107,12 +108,17 @@ Request body:
 - `path` (required): absolute path of the entry to rename.
 - `new_name` (required): new name; non-empty and must not contain `/`.
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Renamed; body is the File at its new path |
-| `404` | Nothing exists at `path` |
-| `409` | The folder already contains an entry named `new_name` |
-| `422` | Invalid body (relative path, empty name, name with `/`, missing field) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Renamed; body is the File at its new path |
+| `403` | `permission_denied` | The provider does not allow the rename (e.g. the entry is locked or read-only for this account) |
+| `404` | `not_found` | Nothing exists at `path` |
+| `409` | `conflict` | The folder already contains an entry named `new_name`, including the entry itself |
+| `422` | `invalid_input` | Invalid body (relative path, empty name, name with `/`, missing field) |
+| `502` | `provider_failure` | The provider failed (e.g. the service's Dropbox credentials have expired) |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/files/rename \
@@ -130,22 +136,29 @@ Request body:
 - `from_path` (required): absolute path of the entry to move.
 - `to_path` (required): full destination path, including the entry's name.
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Moved; body is the File at `to_path` |
-| `404` | Nothing exists at `from_path` |
-| `409` | Something already exists at `to_path` |
-| `422` | Invalid body (relative path, root as source, missing field) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Moved; body is the File at `to_path` |
+| `403` | `permission_denied` | The provider does not allow the move (e.g. no write permission, or moving a shared folder somewhere it can't go) |
+| `404` | `not_found` | Nothing exists at `from_path`, including an entry that was already moved |
+| `409` | `conflict` | Something already exists at `to_path`, including the entry itself |
+| `422` | `invalid_input` | Invalid body (relative path, root as source, missing field), or `to_path` is inside `from_path` (a folder moved into itself) |
+| `502` | `provider_failure` | The provider failed (e.g. the account is out of space, or the service's Dropbox credentials have expired) |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/files/move \
   -H 'Content-Type: application/json' \
   -d '{"from_path": "/Docs/report.pdf", "to_path": "/Archive/report.pdf"}'
+# 409 response body when /Archive/report.pdf already exists:
+# {"error": {"code": "conflict", "message": "Something already exists at '/Archive/report.pdf'"}}
 ```
 
 Destinations are compared case-insensitively (Dropbox paths are case-insensitive), so renaming to the current name or to a name that differs only in letter case (e.g. `report.txt` → `Report.txt`) returns `409`.
 
-Both operations change state in the provider. Dropbox implements each as a single `files_move_v2` call with autorename disabled; the entry keeps its Dropbox `id`. Other provider failures (e.g. moving a folder into itself, quota) currently surface as `500`.
+Both operations change state in the provider. Dropbox implements each as a single `files_move_v2` call with autorename disabled; the entry keeps its Dropbox `id`. Neither is idempotent: repeating a successful rename or move returns `404`, because nothing is left at the source. That also makes a retry after a `503` safe: if the first attempt did go through, the retry returns `404` instead of moving anything twice.
 
 ## Read endpoints
 
