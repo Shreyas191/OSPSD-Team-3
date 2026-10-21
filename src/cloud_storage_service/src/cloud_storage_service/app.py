@@ -165,26 +165,6 @@ _READ_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
 }
 
 
-@app.post("/files/rename", responses=_ERROR_RESPONSES)
-def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
-    """Rename a file or folder in place and return its updated metadata."""
-    try:
-        renamed = client.rename(request.path, request.new_name)
-    except (FileNotFoundError, FileExistsError, ValueError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(renamed)
-
-
-@app.post("/files/move", responses=_ERROR_RESPONSES)
-def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
-    """Move a file or folder to a new path and return its updated metadata."""
-    try:
-        moved = client.move(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(moved)
-
-
 # ----- Create Endpoints -----
 
 
@@ -300,6 +280,34 @@ _DELETE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     502: {"model": ErrorResponse, "description": "The storage provider failed"},
     503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
 }
+
+
+_UPDATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow the change"},
+    404: {"model": ErrorResponse, "description": "Nothing exists at the source path"},
+    409: {
+        "model": ErrorResponse,
+        "description": "The destination is taken (including by the source itself)",
+    },
+    422: {
+        "model": ErrorResponse,
+        "description": "Invalid path or name, or a folder moved into itself",
+    },
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+
+@shared_errors.post("/files/rename", responses=_UPDATE_ERROR_RESPONSES)
+def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
+    """Rename a file or folder in place and return its updated metadata."""
+    return FileResponse.from_file(client.rename(request.path, request.new_name))
+
+
+@shared_errors.post("/files/move", responses=_UPDATE_ERROR_RESPONSES)
+def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
+    """Move a file or folder to a new path and return its updated metadata."""
+    return FileResponse.from_file(client.move(request.from_path, request.to_path))
 
 
 @shared_errors.delete(

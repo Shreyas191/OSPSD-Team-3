@@ -1,12 +1,14 @@
 """HTTP contract tests for the update routes (POST /files/rename and POST /files/move).
 
-The storage client is replaced through FastAPI's dependency overrides with the in-memory
-``FakeStorageClient`` from ``tests/fakes.py``, so these tests need no network or
-credentials. They check the public behaviour: status codes, response bodies, and what the
-storage holds afterwards.
+The storage client is replaced through FastAPI's dependency overrides, either with the
+in-memory ``FakeStorageClient`` from ``tests/fakes.py`` or, to simulate provider failures,
+a ``Mock(spec=Client)``, so these tests need no network or credentials. They check the
+public behaviour: status codes, the shared error body (``{"error": {"code", "message"}}``),
+what the storage holds afterwards, and the warning logged for each failure.
 """
 
 import importlib
+import logging
 from collections.abc import Iterator
 from http import HTTPStatus
 from unittest.mock import Mock
@@ -30,9 +32,29 @@ def storage() -> Iterator[FakeStorageClient]:
 
 
 @pytest.fixture
+def provider() -> Iterator[Mock]:
+    """Install a mock client whose ``rename``/``move`` a test can make fail like a provider."""
+    client = Mock(spec=Client)
+    app.dependency_overrides[get_storage_client] = lambda: client
+    yield client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
 def http() -> TestClient:
     """Return an HTTP client for the app."""
     return TestClient(app)
+
+
+RENAME = ("/files/rename", {"path": "/Docs/report.pdf", "new_name": "summary.pdf"})
+MOVE = ("/files/move", {"from_path": "/Docs/report.pdf", "to_path": "/Archive/report.pdf"})
+
+
+def _failure_log(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
+    """Return the single warning the service logged for a failed request."""
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
+    assert record.levelno == logging.WARNING
+    return record
 
 
 def test_rename_returns_updated_file(storage: FakeStorageClient, http: TestClient) -> None:
@@ -111,6 +133,7 @@ def test_invalid_input_is_rejected_and_changes_nothing(
     response = http.post(route, json=body)
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json()["error"]["code"] == "invalid_input"
     assert set(storage.entries) == {"/Docs/report.pdf"}
 
 
@@ -131,7 +154,9 @@ def test_missing_source_returns_404(
     response = http.post(route, json=body)
 
     assert response.status_code == HTTPStatus.NOT_FOUND
-    assert response.json() == {"detail": "No file or folder at '/Docs/missing.pdf'"}
+    assert response.json() == {
+        "error": {"code": "not_found", "message": "No file or folder at '/Docs/missing.pdf'"},
+    }
     assert storage.entries == {}
 
 
@@ -156,28 +181,139 @@ def test_occupied_destination_returns_409_and_overwrites_nothing(
     response = http.post(route, json=body)
 
     assert response.status_code == HTTPStatus.CONFLICT
+    assert response.json()["error"]["code"] == "conflict"
     assert storage.entries == {"/Docs/report.pdf": report, "/Docs/summary.pdf": summary}
 
 
-def test_value_error_from_client_returns_422(http: TestClient) -> None:
-    """A ``ValueError`` from the client maps to 422.
+def test_folder_moved_into_itself_returns_422_and_changes_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Moving a folder into its own subfolder is invalid input, and nothing moves."""
+    storage.add("/Docs", is_folder=True)
 
-    Request validation already rejects every name the contract forbids, so the fake can't
-    reach this branch through HTTP; a mock raises it directly instead.
-    """
-    client = Mock(spec=Client)
-    client.rename.side_effect = ValueError("Invalid name")
-    app.dependency_overrides[get_storage_client] = lambda: client
-    try:
-        response = http.post(
-            "/files/rename",
-            json={"path": "/Docs/report.pdf", "new_name": "summary.pdf"},
-        )
-    finally:
-        app.dependency_overrides.clear()
+    response = http.post("/files/move", json={"from_path": "/Docs", "to_path": "/Docs/Inner"})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json() == {"detail": "Invalid name"}
+    assert response.json()["error"]["code"] == "invalid_input"
+    assert set(storage.entries) == {"/Docs"}
+
+
+@pytest.mark.parametrize(("route", "body"), [RENAME, MOVE])
+def test_value_error_from_client_returns_422(
+    provider: Mock,
+    http: TestClient,
+    route: str,
+    body: dict[str, str],
+) -> None:
+    """A ``ValueError`` from the client (e.g. a path Dropbox rejects as malformed) maps to 422.
+
+    Request validation already rejects the malformed paths it can recognise, so a mock raises
+    the error the Dropbox client uses for paths only Dropbox can judge.
+    """
+    error = ValueError("Cannot move '/Docs/a' to '/Archive/a': a path is invalid")
+    provider.rename.side_effect = provider.move.side_effect = error
+
+    response = http.post(route, json=body)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json() == {"error": {"code": "invalid_input", "message": str(error)}}
+
+
+@pytest.mark.parametrize(("route", "body"), [RENAME, MOVE])
+def test_permission_denied_returns_403(
+    provider: Mock,
+    http: TestClient,
+    route: str,
+    body: dict[str, str],
+) -> None:
+    """A ``PermissionError`` from the client is a 403 that keeps the client's message."""
+    error = PermissionError("Dropbox does not allow moving '/Docs/report.pdf'")
+    provider.rename.side_effect = provider.move.side_effect = error
+
+    response = http.post(route, json=body)
+
+    assert response.status_code == HTTPStatus.FORBIDDEN
+    assert response.json() == {"error": {"code": "permission_denied", "message": str(error)}}
+
+
+@pytest.mark.parametrize(("route", "body"), [RENAME, MOVE])
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (ConnectionError("RateLimitError"), HTTPStatus.SERVICE_UNAVAILABLE, "provider_unavailable"),
+        (
+            OSError("RelocationError('insufficient_quota', None)"),
+            HTTPStatus.BAD_GATEWAY,
+            "provider_failure",
+        ),
+    ],
+)
+def test_provider_failure_returns_5xx_without_provider_details(  # noqa: PLR0913
+    provider: Mock,
+    http: TestClient,
+    route: str,
+    body: dict[str, str],
+    error: OSError,
+    status: HTTPStatus,
+    code: str,
+) -> None:
+    """Provider failures map to 503 (retry later) or 502, with a fixed message for callers."""
+    provider.rename.side_effect = provider.move.side_effect = error
+
+    response = http.post(route, json=body)
+
+    assert response.status_code == status
+    assert response.json()["error"]["code"] == code
+    assert str(error) not in response.json()["error"]["message"]
+
+
+def test_failure_is_logged_as_a_structured_warning(
+    provider: Mock,
+    http: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provider failure logs one warning with the operation, status, code and reason."""
+    provider.move.side_effect = OSError("Dropbox failed to move '/Docs/report.pdf' (quota)")
+
+    with caplog.at_level(logging.WARNING):
+        http.post(MOVE[0], json=MOVE[1])
+
+    record = _failure_log(caplog)
+    assert record.__dict__["operation"] == "move_file"
+    assert record.__dict__["status"] == HTTPStatus.BAD_GATEWAY
+    assert record.__dict__["code"] == "provider_failure"
+    assert record.__dict__["provider_failure"] is True
+    assert record.__dict__["reason"] == "Dropbox failed to move '/Docs/report.pdf' (quota)"
+
+
+def test_conflict_is_logged_as_a_client_error(
+    storage: FakeStorageClient,
+    http: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An occupied destination is logged as a 409 the provider did not cause."""
+    storage.add("/Docs/report.pdf")
+    storage.add("/Docs/summary.pdf")
+
+    with caplog.at_level(logging.WARNING):
+        http.post(RENAME[0], json=RENAME[1])
+
+    record = _failure_log(caplog)
+    assert record.__dict__["operation"] == "rename_file"
+    assert record.__dict__["status"] == HTTPStatus.CONFLICT
+    assert record.__dict__["provider_failure"] is False
+
+
+def test_unexpected_errors_are_not_disguised_as_provider_failures(
+    provider: Mock,
+    http: TestClient,
+) -> None:
+    """An exception outside the contract is a bug: it is not turned into a 4xx or 502/503."""
+    provider.move.side_effect = RuntimeError("bug")
+
+    with pytest.raises(RuntimeError, match="bug"):
+        http.post(MOVE[0], json=MOVE[1])
 
 
 def test_routes_use_the_client_built_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:

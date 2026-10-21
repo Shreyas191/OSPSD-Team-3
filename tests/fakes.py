@@ -123,6 +123,9 @@ class FakeStorageClient(Client):
         if from_path not in self.entries:
             msg = f"No file or folder at {from_path!r}"
             raise FileNotFoundError(msg)
+        if to_path.startswith(f"{from_path}/"):
+            msg = f"Cannot move {from_path!r} to {to_path!r}: the destination is inside the source"
+            raise ValueError(msg)
         if to_path in self.entries:
             msg = f"Something already exists at {to_path!r}"
             raise FileExistsError(msg)

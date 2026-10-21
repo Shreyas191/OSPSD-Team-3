@@ -10,6 +10,7 @@ left alone, so it still surfaces as ``500``.
 |---------------------------------------|--------|--------------------------|
 | request validation / ``ValueError``   | 422    | ``invalid_input``        |
 | ``FileNotFoundError``                 | 404    | ``not_found``            |
+| ``FileExistsError``                   | 409    | ``conflict``             |
 | ``PermissionError``                   | 403    | ``permission_denied``    |
 | ``ConnectionError``                   | 503    | ``provider_unavailable`` |
 | any other ``OSError``                 | 502    | ``provider_failure``     |
@@ -74,6 +75,8 @@ def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
         return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_input", str(error)
     if isinstance(error, FileNotFoundError):
         return status.HTTP_404_NOT_FOUND, "not_found", str(error)
+    if isinstance(error, FileExistsError):
+        return status.HTTP_409_CONFLICT, "conflict", str(error)
     if isinstance(error, PermissionError):
         return status.HTTP_403_FORBIDDEN, "permission_denied", str(error)
     if isinstance(error, ConnectionError):
