@@ -330,7 +330,8 @@ def test_list_folder_file_raises_value_error(client: DropboxClient, mock_dbx: Mo
 
 
 def test_list_folder_initial_api_error_becomes_oserror(
-    client: DropboxClient, mock_dbx: Mock
+    client: DropboxClient,
+    mock_dbx: Mock,
 ) -> None:
     """List_folder maps unmapped Dropbox ApiError to OSError."""
     mock_dbx.files_list_folder.side_effect = ApiError(
@@ -567,7 +568,8 @@ def test_search_initial_api_error_becomes_oserror(client: DropboxClient, mock_db
 
 
 def test_search_continuation_api_error_becomes_oserror(
-    client: DropboxClient, mock_dbx: Mock
+    client: DropboxClient,
+    mock_dbx: Mock,
 ) -> None:
     """Search maps unmapped Dropbox ApiError on continuation to OSError."""
     m1 = create_search_match(create_fake_file_metadata("res1.txt", "/res1.txt"))
