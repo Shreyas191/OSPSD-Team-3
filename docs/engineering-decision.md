@@ -43,7 +43,7 @@ The constraints:
   - **Case-insensitive paths.** A rename that only changes letter case (`report.txt` → `Report.txt`) comes back from Dropbox as a conflict, so it is a `FileExistsError`.
   - **Moving onto its own path.** Dropbox reports this as `duplicated_or_nested_paths` rather than a conflict. We map it to `FileExistsError`.
   - **A folder moved into itself.** Dropbox reports this with that same `duplicated_or_nested_paths` error, not its dedicated `cant_move_folder_into_itself` error. Our real-Dropbox test caught the service answering `409 "Something already exists"`. The fix lives entirely in `DropboxClient.move`, which rejects a nested destination before calling Dropbox and raises `ValueError` (`422`). The contract and the routes didn't change.
-- **Consistency:** delete (#26) and update (#27) were implemented by different people and report failures in the same format, because both only had to raise the documented built-ins.
+- **Consistency:** Create, Read, Update and Delete were built by four different owners, yet every route reports failures in the same `{"error": {"code", "message"}}` format with the same status codes. Each owner only had to raise the documented built-ins; `errors.py` does the mapping once for everyone.
 
 **Assumptions** (not yet established):
 
@@ -56,7 +56,6 @@ The constraints:
 - **Classification depends on order.** `FileExistsError`, `PermissionError` and `ConnectionError` all subclass `OSError`, so the mapping must check the specific types before the generic `OSError`. We hit this: until `FileExistsError → 409` was added to `errors.py`, a conflict on any route using the shared format would have been reported as `502 provider_failure`.
 - **Some distinctions are lost.** Running out of space is reported as a generic `OSError` (`502`), together with Dropbox outages. A caller can't tell "your account is full" from "Dropbox is down" except from the logged reason.
 - **`ConnectionError` doesn't say whether the write happened.** After a lost connection, a move may or may not have gone through. We document that retrying is safe (a repeat after success returns `404`), but the exception itself can't say which case happened.
-- **Not every operation follows it yet.** Create and Read still return the older `{"detail": ...}` responses, and some of their failures (e.g. downloading a folder raises `IsADirectoryError`) have no mapping in `errors.py` yet.
 
 ## When we would revisit this decision
 
