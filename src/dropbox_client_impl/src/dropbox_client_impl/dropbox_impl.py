@@ -54,12 +54,18 @@ class DropboxClient(cloud_storage_client_api.Client):
         """Upload a local file to Dropbox with ``files_upload``.
 
         Dropbox's autorename is disabled, so an existing file is either replaced
-        (``overwrite=True``) or reported as a conflict.
+        (``overwrite=True``) or reported as a conflict. Every Dropbox failure is translated
+        (see :func:`_translate_write_error`), so no SDK exception reaches the caller.
 
         Raises:
-            FileNotFoundError: If ``local_path`` does not exist.
+            FileNotFoundError: If ``local_path`` does not exist (Dropbox is not contacted).
             FileExistsError: If something already exists at ``remote_path`` and
-                ``overwrite`` is false.
+                ``overwrite`` is false, or a folder is there.
+            ValueError: If Dropbox rejects ``remote_path`` as malformed or the file is too
+                large for a single upload (150 MB).
+            PermissionError: If Dropbox does not allow writing to ``remote_path``.
+            ConnectionError: If Dropbox could not be reached or rate limited the request.
+            OSError: For any other Dropbox failure, such as a full account.
 
         """
         mode = WriteMode.overwrite if overwrite else WriteMode.add
@@ -72,40 +78,29 @@ class DropboxClient(cloud_storage_client_api.Client):
                     mode=mode,
                     autorename=False,
                 )
-            except dropbox.exceptions.ApiError as e:
-                # UploadError.path wraps the WriteError in UploadWriteFailed.reason.
-                reason = e.error
-                if (
-                    isinstance(reason, files.UploadError)
-                    and reason.is_path()
-                    and reason.get_path().reason.is_conflict()
-                ):
-                    msg = f"Something already exists at {remote_path!r}"
-                    raise FileExistsError(msg) from e
-                raise
+            except _DROPBOX_FAILURES as e:
+                raise _translate_write_error(e, "upload", remote_path) from e
 
         return DropboxFile(metadata)
 
     def create_folder(self, remote_path: str) -> cloud_storage_client_api.File:
         """Create a folder (and any missing parents) with ``files_create_folder_v2``.
 
+        Every Dropbox failure is translated (see :func:`_translate_write_error`), so no SDK
+        exception reaches the caller.
+
         Raises:
             FileExistsError: If something already exists at ``remote_path``.
+            ValueError: If Dropbox rejects ``remote_path`` as malformed.
+            PermissionError: If Dropbox does not allow creating a folder there.
+            ConnectionError: If Dropbox could not be reached or rate limited the request.
+            OSError: For any other Dropbox failure, such as a full account.
 
         """
         try:
             res = self.dbx.files_create_folder_v2(remote_path)
-        except dropbox.exceptions.ApiError as e:
-            # Unlike UploadError, CreateFolderError.path is the WriteError itself.
-            reason = e.error
-            if (
-                isinstance(reason, files.CreateFolderError)
-                and reason.is_path()
-                and reason.get_path().is_conflict()
-            ):
-                msg = f"Something already exists at {remote_path!r}"
-                raise FileExistsError(msg) from e
-            raise
+        except _DROPBOX_FAILURES as e:
+            raise _translate_write_error(e, "create_folder", remote_path) from e
         return DropboxFile(res.metadata)
 
     def copy(self, from_path: str, to_path: str) -> cloud_storage_client_api.File:
@@ -114,18 +109,26 @@ class DropboxClient(cloud_storage_client_api.Client):
         Dropbox copies files and folders with the same call, so one method covers both.
         Autorename is disabled, so on success the copy's path is exactly ``to_path``.
 
+        Every Dropbox failure is translated (see :func:`_translate_relocation_error`), so no
+        SDK exception reaches the caller.
+
         Raises:
+            ValueError: If ``to_path`` is inside ``from_path`` (a folder copied into itself;
+                Dropbox is not contacted), or Dropbox rejects a path as malformed.
             FileNotFoundError: If nothing exists at ``from_path``.
-            FileExistsError: If something already exists at ``to_path``.
+            FileExistsError: If something already exists at ``to_path``, including the
+                source itself.
+            PermissionError: If Dropbox does not allow the copy (no write permission, or
+                shared-folder restrictions).
+            ConnectionError: If Dropbox could not be reached or rate limited the request.
+            OSError: For any other Dropbox failure, such as a full account.
 
         """
+        _reject_nested_destination("copy", from_path, to_path)
         try:
             result = self.dbx.files_copy_v2(from_path, to_path, autorename=False)
-        except dropbox.exceptions.ApiError as e:
-            translated = _translate_relocation_error(e.error, from_path, to_path)
-            if translated is None:
-                raise
-            raise translated from e
+        except _DROPBOX_FAILURES as e:
+            raise _translate_relocation_error(e, "copy", from_path, to_path) from e
         return DropboxFile(result.metadata)
 
     # ----- Read (Jing) -----
@@ -314,7 +317,7 @@ class DropboxClient(cloud_storage_client_api.Client):
         Dropbox paths are case-insensitive, so a destination that differs from the source
         only in letter case (e.g. ``report.txt`` -> ``Report.txt``) counts as occupied.
 
-        Every Dropbox failure is translated (see :func:`_translate_move_error`), so no
+        Every Dropbox failure is translated (see :func:`_translate_relocation_error`), so no
         SDK exception reaches the caller.
 
         Raises:
@@ -328,20 +331,11 @@ class DropboxClient(cloud_storage_client_api.Client):
             OSError: For any other Dropbox failure, such as a full account.
 
         """
-        # Dropbox reports a folder moved into itself with the same error as a move onto the
-        # source's own path (``duplicated_or_nested_paths``), so the two can only be told
-        # apart here. Paths are compared case-insensitively, as Dropbox compares them.
-        if to_path.lower().startswith(f"{from_path.lower().rstrip('/')}/"):
-            msg = f"Cannot move {from_path!r} into itself: {to_path!r} is inside the source"
-            raise ValueError(msg)
+        _reject_nested_destination("move", from_path, to_path)
         try:
             result = self.dbx.files_move_v2(from_path, to_path, autorename=False)
-        except (
-            dropbox.exceptions.DropboxException,
-            stone_validators.ValidationError,
-            requests.exceptions.RequestException,
-        ) as e:
-            raise _translate_move_error(e, from_path, to_path) from e
+        except _DROPBOX_FAILURES as e:
+            raise _translate_relocation_error(e, "move", from_path, to_path) from e
         self.logger.info("Moved %s -> %s", from_path, to_path)
         return DropboxFile(result.metadata)
 
@@ -437,50 +431,83 @@ def _translate_list_folder_continue_error(reason: object, remote_path: str) -> E
     return None
 
 
-def _translate_relocation_error(reason: object, from_path: str, to_path: str) -> Exception | None:
-    """Map a Dropbox ``RelocationError`` onto the built-in exceptions the contract documents.
-
-    Returns ``None`` for errors without a domain meaning (quota, permissions, ...), which
-    callers should re-raise unchanged. Used by ``copy``; ``move`` translates every failure
-    with :func:`_translate_move_error`.
-    """
-    if not isinstance(reason, files.RelocationError):
-        return None
-    if reason.is_from_lookup() and reason.get_from_lookup().is_not_found():
-        return FileNotFoundError(f"No file or folder at {from_path!r}")
-    # Dropbox reports moving an entry onto its own path as ``duplicated_or_nested_paths``;
-    # the destination is occupied (by the source itself), so it is the same conflict.
-    if (reason.is_to() and reason.get_to().is_conflict()) or reason.is_duplicated_or_nested_paths():
-        return FileExistsError(f"Something already exists at {to_path!r}")
-    return None
+# Every failure an SDK call can raise: Dropbox API and HTTP errors, the SDK's local
+# validation of arguments (e.g. a path without a leading "/"), and network errors.
+_DROPBOX_FAILURES = (
+    dropbox.exceptions.DropboxException,
+    stone_validators.ValidationError,
+    requests.exceptions.RequestException,
+)
 
 
-# Message for each exception ``Client.move`` documents. As for delete, only provider
-# failures carry the Dropbox error ``detail``; the service never shows those to callers.
-_MOVE_FAILURE_MESSAGES: dict[type[Exception], str] = {
-    FileNotFoundError: "No file or folder at {from_path!r}",
-    FileExistsError: "Something already exists at {to_path!r}",
-    ValueError: "Dropbox rejected moving {from_path!r} to {to_path!r} as an invalid path",
-    PermissionError: "Dropbox does not allow moving {from_path!r} to {to_path!r}",
-    ConnectionError: "Dropbox is unreachable or busy, so {from_path!r} was not moved ({detail})",
-    OSError: "Dropbox failed to move {from_path!r} to {to_path!r} ({detail})",
-}
-
-
-def _translate_move_error(error: Exception, from_path: str, to_path: str) -> Exception:
-    """Map a failed ``files_move_v2`` call onto the exceptions ``Client.move`` documents."""
-    kind = _move_failure_kind(error)
-    detail = error.error if isinstance(error, dropbox.exceptions.ApiError) else type(error).__name__
-    message = _MOVE_FAILURE_MESSAGES[kind]
-    return kind(message.format(from_path=from_path, to_path=to_path, detail=detail))
-
-
-def _move_failure_kind(error: Exception) -> type[Exception]:  # noqa: PLR0911
-    """Pick the exception for a failed move; ``OSError`` when nothing more specific fits."""
+def _sdk_failure_kind(error: Exception) -> type[Exception] | None:
+    """Return the exception for failures that mean the same for every call, else ``None``."""
+    # The SDK checks the path format locally before sending, e.g. a path without a leading "/".
     if isinstance(error, stone_validators.ValidationError):
         return ValueError
     if isinstance(error, dropbox.exceptions.RateLimitError | requests.exceptions.RequestException):
         return ConnectionError
+    return None
+
+
+def _failure_detail(error: Exception) -> object:
+    """Return the Dropbox error tag, or the SDK exception's class name; neither holds secrets."""
+    return error.error if isinstance(error, dropbox.exceptions.ApiError) else type(error).__name__
+
+
+def _reject_nested_destination(operation: str, from_path: str, to_path: str) -> None:
+    """Raise ``ValueError`` if ``to_path`` is inside ``from_path``, without contacting Dropbox.
+
+    Dropbox reports a folder moved or copied into itself with the same
+    ``duplicated_or_nested_paths`` error as an operation onto the source's own path, so the
+    two can only be told apart here. Paths are compared case-insensitively, as Dropbox does.
+    """
+    if to_path.lower().startswith(f"{from_path.lower().rstrip('/')}/"):
+        msg = f"Cannot {operation} {from_path!r} into itself: {to_path!r} is inside the source"
+        raise ValueError(msg)
+
+
+# ----- Move and copy (files_move_v2 / files_copy_v2) -----
+
+# Message for each exception ``Client.move`` and ``Client.copy`` document. As for delete,
+# only provider failures carry the Dropbox error ``detail``; the service never shows those to
+# callers. ``{doing}`` and ``{done}`` come from ``_RELOCATION_VERBS``.
+_RELOCATION_FAILURE_MESSAGES: dict[type[Exception], str] = {
+    FileNotFoundError: "No file or folder at {from_path!r}",
+    FileExistsError: "Something already exists at {to_path!r}",
+    ValueError: "Dropbox rejected {doing} {from_path!r} to {to_path!r} as an invalid path",
+    PermissionError: "Dropbox does not allow {doing} {from_path!r} to {to_path!r}",
+    ConnectionError: "Dropbox is unreachable or busy, so {from_path!r} was not {done} ({detail})",
+    OSError: "Dropbox failed to {operation} {from_path!r} to {to_path!r} ({detail})",
+}
+_RELOCATION_VERBS = {"move": ("moving", "moved"), "copy": ("copying", "copied")}
+
+
+def _translate_relocation_error(
+    error: Exception,
+    operation: str,
+    from_path: str,
+    to_path: str,
+) -> Exception:
+    """Map a failed ``files_move_v2`` or ``files_copy_v2`` call onto the documented exceptions."""
+    kind = _relocation_failure_kind(error)
+    doing, done = _RELOCATION_VERBS[operation]
+    message = _RELOCATION_FAILURE_MESSAGES[kind].format(
+        operation=operation,
+        doing=doing,
+        done=done,
+        from_path=from_path,
+        to_path=to_path,
+        detail=_failure_detail(error),
+    )
+    return kind(message)
+
+
+def _relocation_failure_kind(error: Exception) -> type[Exception]:  # noqa: PLR0911
+    """Pick the exception for a failed move or copy; ``OSError`` when nothing more specific fits."""
+    sdk_kind = _sdk_failure_kind(error)
+    if sdk_kind is not None:
+        return sdk_kind
     reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
     if not isinstance(reason, files.RelocationError):
         # Other SDK errors (auth, 5xx, bad input) and unknown error types.
@@ -492,8 +519,8 @@ def _move_failure_kind(error: Exception) -> type[Exception]:  # noqa: PLR0911
     if reason.is_to():
         to = reason.get_to()
         return FileExistsError if to.is_conflict() else _write_failure_kind(to) or OSError
-    # ``move`` rejects nested destinations before calling Dropbox, so this means the
-    # destination is the source itself: it is occupied, the same conflict as above.
+    # ``move`` and ``copy`` reject nested destinations before calling Dropbox, so this means
+    # the destination is the source itself: it is occupied, the same conflict as above.
     if reason.is_duplicated_or_nested_paths():
         return FileExistsError
     if reason.is_cant_move_folder_into_itself():
@@ -510,6 +537,63 @@ def _move_failure_kind(error: Exception) -> type[Exception]:  # noqa: PLR0911
     # Quota (insufficient_quota and its team/member variants), too_many_files,
     # internal_error and unknown tags.
     return OSError
+
+
+# ----- Upload and create folder (files_upload / files_create_folder_v2) -----
+
+# Message for each exception ``Client.upload_file`` and ``Client.create_folder`` document.
+# ``{doing}`` and ``{done}`` come from ``_WRITE_VERBS``.
+_WRITE_FAILURE_MESSAGES: dict[type[Exception], str] = {
+    FileExistsError: "Something already exists at {path!r}",
+    ValueError: "Dropbox rejected {path!r} as an invalid path",
+    PermissionError: "Dropbox does not allow {doing} {path!r}",
+    ConnectionError: "Dropbox is unreachable or busy, so {path!r} was not {done} ({detail})",
+    OSError: "Dropbox failed {doing} {path!r} ({detail})",
+}
+_WRITE_VERBS = {
+    "upload": ("uploading to", "uploaded"),
+    "create_folder": ("creating a folder at", "created"),
+}
+_UPLOAD_TOO_LARGE_MESSAGE = (
+    "The file for {path!r} is too large to upload in one request (Dropbox's limit is 150 MB)"
+)
+
+
+def _translate_write_error(error: Exception, operation: str, path: str) -> Exception:
+    """Map a failed ``files_upload`` or ``files_create_folder_v2`` to the documented exceptions."""
+    reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
+    if isinstance(reason, files.UploadError) and reason.is_payload_too_large():
+        return ValueError(_UPLOAD_TOO_LARGE_MESSAGE.format(path=path))
+    kind = _write_operation_failure_kind(error)
+    doing, done = _WRITE_VERBS[operation]
+    message = _WRITE_FAILURE_MESSAGES[kind].format(
+        doing=doing,
+        done=done,
+        path=path,
+        detail=_failure_detail(error),
+    )
+    return kind(message)
+
+
+def _write_operation_failure_kind(error: Exception) -> type[Exception]:
+    """Pick the exception for a failed upload or folder creation; ``OSError`` if nothing fits."""
+    sdk_kind = _sdk_failure_kind(error)
+    if sdk_kind is not None:
+        return sdk_kind
+    reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
+    # UploadError.path wraps the WriteError in UploadWriteFailed.reason; CreateFolderError.path
+    # is the WriteError itself.
+    write: files.WriteError | None = None
+    if isinstance(reason, files.UploadError) and reason.is_path():
+        write = reason.get_path().reason
+    elif isinstance(reason, files.CreateFolderError) and reason.is_path():
+        write = reason.get_path()
+    if write is None:
+        # Other SDK errors (auth, 5xx, bad input), content_hash_mismatch, unknown tags.
+        return OSError
+    if write.is_conflict():
+        return FileExistsError
+    return _write_failure_kind(write) or OSError
 
 
 # Message for each exception ``Client.delete`` documents. Messages of the 4xx kinds are
@@ -530,7 +614,7 @@ def _translate_delete_error(error: Exception, remote_path: str) -> Exception:
     class name; neither can contain credentials.
     """
     kind = _delete_failure_kind(error)
-    detail = error.error if isinstance(error, dropbox.exceptions.ApiError) else type(error).__name__
+    detail = _failure_detail(error)
     return kind(_DELETE_FAILURE_MESSAGES[kind].format(path=remote_path, detail=detail))
 
 

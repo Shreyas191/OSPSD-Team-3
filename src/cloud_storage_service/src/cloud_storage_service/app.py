@@ -154,56 +154,10 @@ def _to_http_error(error: Exception) -> HTTPException:
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 
 
-_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
-    404: {"description": "The source file or folder does not exist"},
-    409: {"description": "The destination already exists"},
-}
-
 _READ_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
     404: {"description": "The requested file or folder does not exist"},
     422: {"description": "Validation error or invalid target path or target is a folder"},
 }
-
-
-# ----- Create Endpoints -----
-
-
-@app.post("/files/upload", responses=_ERROR_RESPONSES)
-def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> FileResponse:
-    """Upload a file to cloud storage and return its metadata."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "upload"
-        with tmp_path.open("wb") as out:
-            shutil.copyfileobj(form.file.file, out)
-        try:
-            uploaded = client.upload_file(
-                str(tmp_path),
-                form.remote_path,
-                overwrite=form.overwrite,
-            )
-        except (FileNotFoundError, FileExistsError, ValueError) as e:
-            raise _to_http_error(e) from e
-    return FileResponse.from_file(uploaded)
-
-
-@app.post("/folders/create", responses=_ERROR_RESPONSES)
-def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
-    """Create a new folder at the specified path and return its metadata."""
-    try:
-        created = client.create_folder(request.remote_path)
-    except (FileNotFoundError, FileExistsError, ValueError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(created)
-
-
-@app.post("/files/copy", responses=_ERROR_RESPONSES)
-def copy_entry(request: CopyRequest, client: StorageClient) -> FileResponse:
-    """Copy a file or folder (with its contents) to a new path and return the copy."""
-    try:
-        copied = client.copy(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(copied)
 
 
 # ----- Read Endpoints -----
@@ -280,6 +234,67 @@ _DELETE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     502: {"model": ErrorResponse, "description": "The storage provider failed"},
     503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
 }
+
+
+_UPLOAD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow writing there"},
+    409: {
+        "model": ErrorResponse,
+        "description": "Something is at the path: `overwrite` is false, or it's a folder",
+    },
+    422: {
+        "model": ErrorResponse,
+        "description": "Missing file, invalid path, or a file over the provider's upload limit",
+    },
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+_CREATE_FOLDER_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow creating it there"},
+    409: {"model": ErrorResponse, "description": "Something is already at the path"},
+    422: {"model": ErrorResponse, "description": "Missing, relative or root path"},
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+_COPY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow the copy"},
+    404: {"model": ErrorResponse, "description": "Nothing exists at the source path"},
+    409: {
+        "model": ErrorResponse,
+        "description": "The destination is taken (including by the source itself)",
+    },
+    422: {
+        "model": ErrorResponse,
+        "description": "Invalid path, or a folder copied into itself",
+    },
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+
+@shared_errors.post("/files/upload", responses=_UPLOAD_ERROR_RESPONSES)
+def upload_file(form: Annotated[UploadForm, Form()], client: StorageClient) -> FileResponse:
+    """Upload a file to cloud storage and return its metadata."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "upload"
+        with tmp_path.open("wb") as out:
+            shutil.copyfileobj(form.file.file, out)
+        uploaded = client.upload_file(str(tmp_path), form.remote_path, overwrite=form.overwrite)
+    return FileResponse.from_file(uploaded)
+
+
+@shared_errors.post("/folders/create", responses=_CREATE_FOLDER_ERROR_RESPONSES)
+def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
+    """Create a new folder at the specified path and return its metadata."""
+    return FileResponse.from_file(client.create_folder(request.remote_path))
+
+
+@shared_errors.post("/files/copy", responses=_COPY_ERROR_RESPONSES)
+def copy_entry(request: CopyRequest, client: StorageClient) -> FileResponse:
+    """Copy a file or folder (with its contents) to a new path and return the copy."""
+    return FileResponse.from_file(client.copy(request.from_path, request.to_path))
 
 
 _UPDATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {

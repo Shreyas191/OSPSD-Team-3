@@ -25,7 +25,7 @@ Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dro
   | `size` | int or null | Size in bytes; `null` for folders |
   | `modified` | datetime or null | Last modified time (ISO 8601); `null` for folders |
 
-- Errors return one of the status codes listed per endpoint. Endpoints that use the team's shared error format (so far `POST /files/rename`, `POST /files/move` and `DELETE /files`) return `{"error": {"code": "<code>", "message": "<message>"}}`; the others still return `{"detail": "<message>"}` until they adopt it.
+- Errors return one of the status codes listed per endpoint. Endpoints that use the team's shared error format (the Create, Update and Delete endpoints) return `{"error": {"code": "<code>", "message": "<message>"}}`; the others still return `{"detail": "<message>"}` until they adopt it.
 
 ### Shared error format
 The format is defined in `errors.py`: a route opts in by being registered on the `shared_errors` router in `app.py`, without its own `try`/`except`. Request validation errors and the built-in exceptions the `Client` contract documents are mapped as follows; any other exception is a bug and still surfaces as `500`.
@@ -56,11 +56,16 @@ Upload a file. The request is `multipart/form-data`, not JSON.
 - `remote_path` (required): absolute destination path, including the file name.
 - `overwrite` (optional, default `false`): replace an existing file at `remote_path`.
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Uploaded; body is the File. An overwritten file keeps its `id`. |
-| `409` | Something already exists at `remote_path` and `overwrite` is `false` |
-| `422` | Invalid form (relative `remote_path`, missing `file`) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Uploaded; body is the File. An overwritten file keeps its `id`. |
+| `403` | `permission_denied` | The provider does not allow writing at `remote_path` (e.g. no write permission, or a team folder) |
+| `409` | `conflict` | Something already exists at `remote_path` and `overwrite` is `false`, or a folder is there |
+| `422` | `invalid_input` | Invalid form (relative `remote_path`, missing `file`), a path the provider rejects, or a file over 150 MB |
+| `502` | `provider_failure` | The provider failed (e.g. the account is out of space, or the service's Dropbox credentials have expired) |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later. After a lost connection the upload may already have happened, so a retry without `overwrite` can return `409` |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/files/upload \
@@ -76,11 +81,16 @@ Create a folder. Missing parent folders are created too.
 {"remote_path": "/Docs/New"}
 ```
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Created; body is the folder (`size` and `modified` are `null`) |
-| `409` | Something already exists at `remote_path` |
-| `422` | Invalid body (relative path, missing field) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Created; body is the folder (`size` and `modified` are `null`) |
+| `403` | `permission_denied` | The provider does not allow creating a folder there |
+| `409` | `conflict` | Something already exists at `remote_path` |
+| `422` | `invalid_input` | Invalid body (relative path, missing field), or a path the provider rejects |
+| `502` | `provider_failure` | The provider failed (e.g. the account is out of space) |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ### `POST /files/copy`
 Copy a file, or a folder with its contents, to a new full path. The source is unchanged, the copy gets its own `id`, and existing entries are never overwritten.
@@ -89,12 +99,25 @@ Copy a file, or a folder with its contents, to a new full path. The source is un
 {"from_path": "/Docs/report.pdf", "to_path": "/Archive/report.pdf"}
 ```
 
-| Status | Meaning |
-|--------|---------|
-| `200` | Copied; body is the File at `to_path` |
-| `404` | Nothing exists at `from_path` |
-| `409` | Something already exists at `to_path`, or `to_path` is inside the folder being copied |
-| `422` | Invalid body (relative path, missing field) |
+Errors use the [shared error format](#shared-error-format).
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Copied; body is the File at `to_path` |
+| `403` | `permission_denied` | The provider does not allow the copy (e.g. no write permission, or shared-folder restrictions) |
+| `404` | `not_found` | Nothing exists at `from_path` |
+| `409` | `conflict` | Something already exists at `to_path`, including the source itself |
+| `422` | `invalid_input` | Invalid body (relative path, missing field), or `to_path` is inside `from_path` (a folder copied into itself) |
+| `502` | `provider_failure` | The provider failed (e.g. the account is out of space) |
+| `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
+
+```bash
+curl -X POST http://127.0.0.1:8000/files/copy \
+  -H 'Content-Type: application/json' \
+  -d '{"from_path": "/Docs", "to_path": "/Docs/Backup"}'
+# 422 response body:
+# {"error": {"code": "invalid_input", "message": "Cannot copy '/Docs' into itself: '/Docs/Backup' is inside the source"}}
+```
 
 ## Update endpoints
 
