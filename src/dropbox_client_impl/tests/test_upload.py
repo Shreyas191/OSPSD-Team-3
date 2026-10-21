@@ -7,8 +7,9 @@ from unittest.mock import Mock
 
 import dropbox
 import pytest
+import requests
 from cloud_storage_client_api.file import File
-from dropbox import files
+from dropbox import auth, exceptions, files, stone_validators
 from dropbox.exceptions import ApiError
 from dropbox.files import (
     CreateFolderResult,
@@ -240,27 +241,6 @@ def test_upload_file_conflict_raises_file_exists_error(
         client.upload_file(str(local_file), "/upload_fail.txt")
 
 
-def test_upload_file_other_api_errors_propagate(
-    client: DropboxClient,
-    mock_dbx: Mock,
-    tmp_path: Path,
-) -> None:
-    """Upload errors without a domain meaning (e.g. a full account) are re-raised unchanged."""
-    local_file = tmp_path / "big.txt"
-    local_file.write_bytes(b"data")
-    mock_dbx.files_upload.side_effect = _api_error(
-        files.UploadError.path(
-            files.UploadWriteFailed(
-                reason=files.WriteError.insufficient_space,
-                upload_session_id="session",
-            ),
-        ),
-    )
-
-    with pytest.raises(ApiError):
-        client.upload_file(str(local_file), "/big.txt")
-
-
 def test_upload_file_missing_local_path_raises_file_not_found(
     client: DropboxClient,
     mock_dbx: Mock,
@@ -328,16 +308,6 @@ def test_create_folder_conflict_raises_file_exists_error(
 
     with pytest.raises(FileExistsError, match="/already_existing_folder"):
         client.create_folder("/already_existing_folder")
-
-
-def test_create_folder_other_api_errors_propagate(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Folder-creation errors without a domain meaning are re-raised unchanged."""
-    mock_dbx.files_create_folder_v2.side_effect = _api_error(
-        files.CreateFolderError.path(files.WriteError.insufficient_space),
-    )
-
-    with pytest.raises(ApiError):
-        client.create_folder("/new_folder")
 
 
 # copy tests
@@ -426,22 +396,186 @@ def test_copy_folder_success(client: DropboxClient, mock_dbx: Mock) -> None:
     assert result.modified is None
 
 
-def test_copy_other_api_errors_propagate(client: DropboxClient, mock_dbx: Mock) -> None:
-    """Copy errors without a domain meaning (e.g. a full account) are re-raised unchanged."""
-    mock_dbx.files_copy_v2.side_effect = _api_error(files.RelocationError.insufficient_quota)
-
-    with pytest.raises(ApiError):
-        client.copy("/a.txt", "/b.txt")
+# failure translation tests
 
 
-def test_copy_folder_into_itself_raises_file_exists_error(
+def _upload_write_error(write: files.WriteError) -> ApiError:
+    return _api_error(
+        files.UploadError.path(files.UploadWriteFailed(reason=write, upload_session_id="s")),
+    )
+
+
+# Failures every SDK call can hit, with the exception each must become.
+_COMMON_FAILURES = [
+    (stone_validators.ValidationError("'relative' did not match pattern"), ValueError),
+    (exceptions.RateLimitError("req-1"), ConnectionError),
+    (requests.exceptions.ConnectionError("connection refused"), ConnectionError),
+    (requests.exceptions.ReadTimeout("read timed out"), ConnectionError),
+    (exceptions.InternalServerError("req-1", 500, "oops"), OSError),
+    (exceptions.AuthError("req-1", auth.AuthError.expired_access_token), OSError),
+    (_api_error("unexpected"), OSError),
+]
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        *_COMMON_FAILURES,
+        (_upload_write_error(_write_conflict()), FileExistsError),
+        (_upload_write_error(files.WriteError.malformed_path("bad")), ValueError),
+        (_upload_write_error(files.WriteError.disallowed_name), ValueError),
+        (_api_error(files.UploadError.payload_too_large), ValueError),
+        (_upload_write_error(files.WriteError.no_write_permission), PermissionError),
+        (_upload_write_error(files.WriteError.team_folder), PermissionError),
+        (_upload_write_error(files.WriteError.too_many_write_operations), ConnectionError),
+        (_upload_write_error(files.WriteError.insufficient_space), OSError),
+        (_api_error(files.UploadError.content_hash_mismatch), OSError),
+    ],
+)
+def test_upload_errors_become_the_documented_exceptions(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    tmp_path: Path,
+    error: Exception,
+    expected: type[Exception],
+) -> None:
+    """No Dropbox exception escapes an upload: each failure becomes one documented built-in."""
+    local_file = tmp_path / "report.txt"
+    local_file.write_bytes(b"data")
+    mock_dbx.files_upload.side_effect = error
+
+    with pytest.raises(expected) as raised:
+        client.upload_file(str(local_file), "/Docs/report.txt")
+
+    assert type(raised.value) is expected
+    assert raised.value.__cause__ is error
+    assert "'/Docs/report.txt'" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        *_COMMON_FAILURES,
+        (_api_error(files.CreateFolderError.path(_write_conflict())), FileExistsError),
+        (
+            _api_error(files.CreateFolderError.path(files.WriteError.malformed_path("x"))),
+            ValueError,
+        ),
+        (
+            _api_error(files.CreateFolderError.path(files.WriteError.no_write_permission)),
+            PermissionError,
+        ),
+        (
+            _api_error(files.CreateFolderError.path(files.WriteError.too_many_write_operations)),
+            ConnectionError,
+        ),
+        (_api_error(files.CreateFolderError.path(files.WriteError.insufficient_space)), OSError),
+    ],
+)
+def test_create_folder_errors_become_the_documented_exceptions(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    error: Exception,
+    expected: type[Exception],
+) -> None:
+    """No Dropbox exception escapes folder creation: each becomes one documented built-in."""
+    mock_dbx.files_create_folder_v2.side_effect = error
+
+    with pytest.raises(expected) as raised:
+        client.create_folder("/Docs/New")
+
+    assert type(raised.value) is expected
+    assert raised.value.__cause__ is error
+    assert "'/Docs/New'" in str(raised.value)
+
+
+_Relocation = files.RelocationError
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        *_COMMON_FAILURES,
+        (_api_error(_Relocation.from_lookup(files.LookupError.not_found)), FileNotFoundError),
+        (_api_error(_Relocation.to(_write_conflict())), FileExistsError),
+        (_api_error(_Relocation.duplicated_or_nested_paths), FileExistsError),
+        (_api_error(_Relocation.from_lookup(files.LookupError.malformed_path("x"))), ValueError),
+        (_api_error(_Relocation.to(files.WriteError.no_write_permission)), PermissionError),
+        (_api_error(_Relocation.cant_copy_shared_folder), PermissionError),
+        (_api_error(_Relocation.to(files.WriteError.too_many_write_operations)), ConnectionError),
+        (_api_error(_Relocation.insufficient_quota), OSError),
+        (_api_error(_Relocation.too_many_files), OSError),
+    ],
+)
+def test_copy_errors_become_the_documented_exceptions(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    error: Exception,
+    expected: type[Exception],
+) -> None:
+    """No Dropbox exception escapes a copy: each failure becomes one documented built-in."""
+    mock_dbx.files_copy_v2.side_effect = error
+
+    with pytest.raises(expected) as raised:
+        client.copy("/Docs/report.pdf", "/Archive/report.pdf")
+
+    assert type(raised.value) is expected
+    assert raised.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    ("from_path", "to_path"),
+    [("/work", "/work/nested"), ("/Work", "/work/nested/deeper")],
+)
+def test_copy_folder_into_itself_is_rejected_without_calling_dropbox(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    from_path: str,
+    to_path: str,
+) -> None:
+    """A destination inside the source (compared case-insensitively) is a ValueError.
+
+    Dropbox reports this with the same ``duplicated_or_nested_paths`` error as a copy onto
+    the source's own path, so it is caught before the call.
+    """
+    with pytest.raises(ValueError, match="into itself"):
+        client.copy(from_path, to_path)
+
+    mock_dbx.files_copy_v2.assert_not_called()
+
+
+def test_upload_too_large_message_explains_the_limit(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    tmp_path: Path,
+) -> None:
+    """A file over Dropbox's single-upload limit is reported as invalid input with the limit."""
+    local_file = tmp_path / "big.bin"
+    local_file.write_bytes(b"data")
+    mock_dbx.files_upload.side_effect = _api_error(files.UploadError.payload_too_large)
+
+    with pytest.raises(ValueError, match="150 MB"):
+        client.upload_file(str(local_file), "/big.bin")
+
+
+def test_caller_facing_messages_hide_dropbox_details(client: DropboxClient, mock_dbx: Mock) -> None:
+    """A permission error's message, which callers see, does not expose Dropbox's error tag."""
+    mock_dbx.files_create_folder_v2.side_effect = _api_error(
+        files.CreateFolderError.path(files.WriteError.no_write_permission),
+    )
+
+    with pytest.raises(PermissionError) as raised:
+        client.create_folder("/Team/New")
+
+    assert str(raised.value) == "Dropbox does not allow creating a folder at '/Team/New'"
+
+
+def test_provider_failure_message_names_the_dropbox_error(
     client: DropboxClient,
     mock_dbx: Mock,
 ) -> None:
-    """Raise FileExistsError when the destination overlaps the source folder."""
-    mock_dbx.files_copy_v2.side_effect = _api_error(
-        files.RelocationError.duplicated_or_nested_paths,
-    )
+    """A provider failure's message keeps the Dropbox error tag for the service's logs."""
+    mock_dbx.files_copy_v2.side_effect = _api_error(_Relocation.insufficient_quota)
 
-    with pytest.raises(FileExistsError):
-        client.copy("/work", "/work/nested")
+    with pytest.raises(OSError, match="insufficient_quota"):
+        client.copy("/Docs/big.zip", "/Archive/big.zip")

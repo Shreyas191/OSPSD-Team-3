@@ -21,12 +21,30 @@ class Client(ABC):
     def upload_file(self, local_path: str, remote_path: str, *, overwrite: bool = False) -> File:
         """Upload the file at ``local_path`` to ``remote_path`` and return its metadata.
 
-        An existing file at ``remote_path`` is replaced only when ``overwrite`` is true.
+        Inputs:
+            local_path: Path of the local file to upload.
+            remote_path: Absolute destination path including the file name
+                (e.g. ``/Docs/report.pdf``).
+            overwrite: Replace an existing file at ``remote_path``. Defaults to false.
+
+        Returns:
+            The uploaded file. A file that replaced an existing one keeps that file's ``id``.
+
+        Side effects:
+            Creates or replaces the file in the provider. Missing parent folders are
+            created too. A folder at ``remote_path`` is never replaced.
 
         Raises:
-            FileNotFoundError: If ``local_path`` does not exist.
+            FileNotFoundError: If ``local_path`` does not exist (checked before contacting
+                the provider).
             FileExistsError: If something already exists at ``remote_path`` and
-                ``overwrite`` is false.
+                ``overwrite`` is false, or a folder is there.
+            ValueError: If the provider rejects ``remote_path`` as malformed or the file is
+                too large for it to accept in one upload.
+            PermissionError: If the provider does not allow writing at ``remote_path``.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; retrying later may succeed.
+            OSError: For any other provider failure, such as a full account.
 
         """
         raise NotImplementedError
@@ -35,10 +53,22 @@ class Client(ABC):
     def create_folder(self, remote_path: str) -> File:
         """Create a folder at ``remote_path`` and return its metadata.
 
-        Missing parent folders are created too.
+        Inputs:
+            remote_path: Absolute path of the new folder (e.g. ``/Docs/New``).
+
+        Returns:
+            The new folder (its ``size`` and ``modified`` are ``None``).
+
+        Side effects:
+            Creates the folder in the provider. Missing parent folders are created too.
 
         Raises:
             FileExistsError: If something already exists at ``remote_path``.
+            ValueError: If the provider rejects ``remote_path`` as malformed.
+            PermissionError: If the provider does not allow creating a folder there.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; retrying later may succeed.
+            OSError: For any other provider failure, such as a full account.
 
         """
         raise NotImplementedError
@@ -47,13 +77,28 @@ class Client(ABC):
     def copy(self, from_path: str, to_path: str) -> File:
         """Copy the file or folder at ``from_path`` to ``to_path`` and return the copy's metadata.
 
-        ``to_path`` is the full destination path including the entry's name. A folder is
-        copied with its contents. The source is unchanged, the copy gets its own ID, and
-        existing entries are never overwritten.
+        Inputs:
+            from_path: Absolute path of the file or folder to copy.
+            to_path: Full destination path including the copy's name
+                (e.g. ``/Archive/report.pdf``).
+
+        Returns:
+            The copy at ``to_path``. It is a new entry with its own ``id``.
+
+        Side effects:
+            Creates the copy in the provider; a folder is copied with its contents. The
+            source is unchanged, and existing entries are never overwritten.
 
         Raises:
+            ValueError: If ``to_path`` is inside ``from_path`` (a folder copied into
+                itself), or the provider rejects a path as malformed.
             FileNotFoundError: If nothing exists at ``from_path``.
-            FileExistsError: If something already exists at ``to_path``.
+            FileExistsError: If something already exists at ``to_path``, including the
+                source itself.
+            PermissionError: If the provider does not allow the copy.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; retrying later may succeed.
+            OSError: For any other provider failure, such as a full account.
 
         """
         raise NotImplementedError

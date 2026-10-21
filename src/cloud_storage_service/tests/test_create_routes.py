@@ -1,16 +1,19 @@
 """HTTP contract tests for the create routes (upload, create folder, copy).
 
-The storage client is replaced through ``app.dependency_overrides`` with the in-memory
-``FakeStorageClient`` from ``tests/fakes.py``, so these tests need no Dropbox credentials
-and no network. They check status codes, response bodies, and what storage holds
-afterwards.
+The storage client is replaced through ``app.dependency_overrides``, either with the
+in-memory ``FakeStorageClient`` from ``tests/fakes.py`` or, to simulate provider failures,
+a ``Mock(spec=Client)``, so these tests need no Dropbox credentials and no network. They
+check status codes, the shared error body (``{"error": {"code", "message"}}``), what storage
+holds afterwards, and the warning logged for each failure.
 """
 
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import Mock
 
 import cloud_storage_client_api
 import pytest
@@ -122,7 +125,9 @@ def test_create_existing_folder_returns_409(storage: FakeStorageClient, http: Te
     response = http.post("/folders/create", json={"remote_path": "/Docs"})
 
     assert response.status_code == status.HTTP_409_CONFLICT
-    assert response.json() == {"detail": "Something already exists at '/Docs'"}
+    assert response.json() == {
+        "error": {"code": "conflict", "message": "Something already exists at '/Docs'"},
+    }
     assert storage.entries == {"/Docs": existing}
 
 
@@ -162,7 +167,9 @@ def test_copy_missing_source_returns_404(storage: FakeStorageClient, http: TestC
     response = http.post("/files/copy", json={"from_path": "/missing.pdf", "to_path": "/b.pdf"})
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert response.json() == {"detail": "No file or folder at '/missing.pdf'"}
+    assert response.json() == {
+        "error": {"code": "not_found", "message": "No file or folder at '/missing.pdf'"},
+    }
     assert storage.entries == {}
 
 
@@ -177,7 +184,22 @@ def test_copy_onto_existing_destination_returns_409(
     response = http.post("/files/copy", json={"from_path": "/a.pdf", "to_path": "/b.pdf"})
 
     assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["error"]["code"] == "conflict"
     assert storage.entries == {"/a.pdf": a, "/b.pdf": b}
+
+
+def test_copy_folder_into_itself_returns_422_and_changes_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Copying a folder into its own subfolder is invalid input, and nothing is copied."""
+    storage.add("/Docs", is_folder=True)
+
+    response = http.post("/files/copy", json={"from_path": "/Docs", "to_path": "/Docs/Inner"})
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.json()["error"]["code"] == "invalid_input"
+    assert set(storage.entries) == {"/Docs"}
 
 
 @pytest.mark.parametrize(
@@ -200,6 +222,7 @@ def test_invalid_request_is_rejected_and_changes_nothing(
     response = http.post(url, json=body)
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.json()["error"]["code"] == "invalid_input"
     assert set(storage.entries) == {"/a"}
 
 
@@ -277,3 +300,123 @@ def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClien
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert storage.uploaded_bytes is None
+
+
+# --- Provider failures and logging (shared error format) ---------------------------------
+
+
+@pytest.fixture
+def provider() -> Iterator[Mock]:
+    """Install a mock client whose create operations a test can make fail like a provider."""
+    client = Mock(spec=cloud_storage_client_api.Client)
+    app.dependency_overrides[get_storage_client] = lambda: client
+    yield client
+    app.dependency_overrides.clear()
+
+
+def _call_create_route(http: TestClient, route: str) -> Response:
+    """Send a valid request to one of the three create routes."""
+    if route == "upload":
+        return post_upload(http)
+    if route == "create_folder":
+        return cast("Response", http.post("/folders/create", json={"remote_path": "/Docs/New"}))
+    body = {"from_path": "/Docs/a.pdf", "to_path": "/Archive/a.pdf"}
+    return cast("Response", http.post("/files/copy", json=body))
+
+
+def _fail_with(provider: Mock, error: Exception) -> None:
+    provider.upload_file.side_effect = error
+    provider.create_folder.side_effect = error
+    provider.copy.side_effect = error
+
+
+CREATE_ROUTES = ["upload", "create_folder", "copy"]
+
+
+@pytest.mark.parametrize("route", CREATE_ROUTES)
+def test_value_error_from_client_returns_422(provider: Mock, http: TestClient, route: str) -> None:
+    """A path or file the provider rejects is invalid input, with the client's message."""
+    error = ValueError("The file for '/Docs/report.pdf' is too large to upload in one request")
+    _fail_with(provider, error)
+
+    response = _call_create_route(http, route)
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.json() == {"error": {"code": "invalid_input", "message": str(error)}}
+
+
+@pytest.mark.parametrize("route", CREATE_ROUTES)
+def test_permission_denied_returns_403(provider: Mock, http: TestClient, route: str) -> None:
+    """A ``PermissionError`` from the client is a 403 that keeps the client's message."""
+    error = PermissionError("Dropbox does not allow creating a folder at '/Docs/New'")
+    _fail_with(provider, error)
+
+    response = _call_create_route(http, route)
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.json() == {"error": {"code": "permission_denied", "message": str(error)}}
+
+
+@pytest.mark.parametrize("route", CREATE_ROUTES)
+@pytest.mark.parametrize(
+    ("error", "expected_status", "code"),
+    [
+        (
+            ConnectionError("RateLimitError"),
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "provider_unavailable",
+        ),
+        (
+            OSError("WriteError('insufficient_space', None)"),
+            status.HTTP_502_BAD_GATEWAY,
+            "provider_failure",
+        ),
+    ],
+)
+def test_provider_failure_returns_5xx_without_provider_details(  # noqa: PLR0913
+    provider: Mock,
+    http: TestClient,
+    route: str,
+    error: OSError,
+    expected_status: int,
+    code: str,
+) -> None:
+    """Provider failures map to 503 (retry later) or 502, with a fixed message for callers."""
+    _fail_with(provider, error)
+
+    response = _call_create_route(http, route)
+
+    assert response.status_code == expected_status
+    assert response.json()["error"]["code"] == code
+    assert str(error) not in response.json()["error"]["message"]
+
+
+def test_failure_is_logged_as_a_structured_warning(
+    provider: Mock,
+    http: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provider failure logs one warning with the operation, status, code and reason."""
+    _fail_with(provider, OSError("Dropbox failed uploading to '/Docs/report.pdf' (quota)"))
+
+    with caplog.at_level(logging.WARNING):
+        _call_create_route(http, "upload")
+
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
+    assert record.levelno == logging.WARNING
+    assert record.__dict__["operation"] == "upload_file"
+    assert record.__dict__["status"] == status.HTTP_502_BAD_GATEWAY
+    assert record.__dict__["code"] == "provider_failure"
+    assert record.__dict__["provider_failure"] is True
+    assert record.__dict__["reason"] == "Dropbox failed uploading to '/Docs/report.pdf' (quota)"
+
+
+def test_unexpected_errors_are_not_disguised_as_provider_failures(
+    provider: Mock,
+    http: TestClient,
+) -> None:
+    """An exception outside the contract is a bug: it is not turned into a 4xx or 502/503."""
+    _fail_with(provider, RuntimeError("bug"))
+
+    with pytest.raises(RuntimeError, match="bug"):
+        _call_create_route(http, "copy")

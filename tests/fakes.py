@@ -167,6 +167,9 @@ class FakeStorageClient(Client):
 
     def copy(self, from_path: str, to_path: str) -> File:
         """Copy a file, or a folder and its contents, to ``to_path``; the source is unchanged."""
+        if to_path.startswith(f"{from_path}/"):
+            msg = f"Cannot copy {from_path!r} into itself: {to_path!r} is inside the source"
+            raise ValueError(msg)
         if from_path not in self.entries:
             msg = f"No file or folder at {from_path!r}"
             raise FileNotFoundError(msg)
