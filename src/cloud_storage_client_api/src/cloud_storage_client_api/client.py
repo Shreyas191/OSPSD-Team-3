@@ -127,6 +127,10 @@ class Client(ABC):
         Raises:
             FileNotFoundError: If nothing exists at ``remote_path``.
             IsADirectoryError: If ``remote_path`` points to a folder rather than a file.
+            PermissionError: If the provider does not allow reading at ``remote_path``.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; retrying later may succeed.
+            OSError: For any other provider failure.
 
         """
         raise NotImplementedError
@@ -149,6 +153,10 @@ class Client(ABC):
 
         Raises:
             FileNotFoundError: If nothing exists at ``remote_path``.
+            PermissionError: If the provider does not allow reading metadata at ``remote_path``.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; retrying later may succeed.
+            OSError: For any other provider failure.
 
         """
         raise NotImplementedError
@@ -173,6 +181,10 @@ class Client(ABC):
         Raises:
             FileNotFoundError: If the folder does not exist.
             ValueError: If ``remote_path`` points to a file rather than a folder.
+            PermissionError: If the provider does not allow listing ``remote_path``.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; retrying later may succeed.
+            OSError: For any other provider failure.
 
         """
         raise NotImplementedError
@@ -197,6 +209,9 @@ class Client(ABC):
 
         Raises:
             ValueError: If ``query`` is empty or ``max_results`` is not between 1 and 1000.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; retrying later may succeed.
+            OSError: For any other provider failure.
 
         """
         raise NotImplementedError

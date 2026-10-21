@@ -5,6 +5,7 @@
 | Built-in exception | Meaning in the `Client` contract | HTTP response |
 |---|---|---|
 | `ValueError` | The request is invalid (bad path or name, folder moved into itself) | `422 invalid_input` |
+| `IsADirectoryError` | A folder was given where a file is needed (downloading a folder) | `422 invalid_input` |
 | `FileNotFoundError` | Nothing exists at the path | `404 not_found` |
 | `FileExistsError` | The destination is already taken | `409 conflict` |
 | `PermissionError` | The provider does not allow this operation on this entry | `403 permission_denied` |

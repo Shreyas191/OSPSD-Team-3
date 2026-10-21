@@ -9,6 +9,8 @@ left alone, so it still surfaces as ``500``.
 | Exception (or cause)                  | Status | ``code``                 |
 |---------------------------------------|--------|--------------------------|
 | request validation / ``ValueError``   | 422    | ``invalid_input``        |
+| ``IsADirectoryError`` (folder given   | 422    | ``invalid_input``        |
+| where a file is needed, e.g. download)|        |                          |
 | ``FileNotFoundError``                 | 404    | ``not_found``            |
 | ``FileExistsError``                   | 409    | ``conflict``             |
 | ``PermissionError``                   | 403    | ``permission_denied``    |
@@ -71,7 +73,7 @@ class SharedErrorRoute(APIRoute):
 
 def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
     """Return the status code, error code and caller-facing message for a contract exception."""
-    if isinstance(error, ValueError):
+    if isinstance(error, ValueError | IsADirectoryError):
         return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_input", str(error)
     if isinstance(error, FileNotFoundError):
         return status.HTTP_404_NOT_FOUND, "not_found", str(error)

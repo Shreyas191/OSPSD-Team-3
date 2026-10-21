@@ -24,6 +24,8 @@ from dropbox_client_impl.auth import get_dropbox_client
 from dropbox_client_impl.file_impl import DropboxFile
 
 _SEARCH_MAX_RESULTS_LIMIT = 1000
+# Dropbox's limit on the length of a search query (SearchV2Arg.query).
+_SEARCH_MAX_QUERY_LENGTH = 1000
 
 
 class DropboxClient(cloud_storage_client_api.Client):
@@ -162,11 +164,8 @@ class DropboxClient(cloud_storage_client_api.Client):
                 download_path=local_path,
                 path=remote_path,
             )
-        except dropbox.exceptions.ApiError as e:
-            translated = _translate_download_error(e.error, remote_path)
-            if translated is None:
-                raise
-            raise translated from e
+        except _DROPBOX_FAILURES as e:
+            raise _translate_download_error(e, remote_path) from e
         return DropboxFile(metadata)
 
     def get_metadata(self, remote_path: str) -> cloud_storage_client_api.File:
@@ -186,15 +185,15 @@ class DropboxClient(cloud_storage_client_api.Client):
 
         Raises:
             FileNotFoundError: If nothing exists at ``remote_path``.
+            PermissionError: If Dropbox does not allow reading metadata at ``remote_path``.
+            ConnectionError: If Dropbox is unreachable or rate limited the request.
+            OSError: For any other Dropbox failure.
 
         """
         try:
             metadata = self.dbx.files_get_metadata(remote_path)
-        except dropbox.exceptions.ApiError as e:
-            translated = _translate_get_metadata_error(e.error, remote_path)
-            if translated is None:
-                raise
-            raise translated from e
+        except _DROPBOX_FAILURES as e:
+            raise _translate_get_metadata_error(e, remote_path) from e
         return DropboxFile(metadata)
 
     def list_folder(self, remote_path: str = "") -> Iterator[cloud_storage_client_api.File]:
@@ -215,15 +214,15 @@ class DropboxClient(cloud_storage_client_api.Client):
         Raises:
             FileNotFoundError: If the folder does not exist.
             ValueError: If ``remote_path`` is a file rather than a folder.
+            PermissionError: If Dropbox does not allow listing ``remote_path``.
+            ConnectionError: If Dropbox is unreachable or rate limited the request.
+            OSError: For any other Dropbox failure.
 
         """
         try:
             result = self.dbx.files_list_folder(remote_path)
-        except dropbox.exceptions.ApiError as e:
-            translated = _translate_list_folder_error(e.error, remote_path)
-            if translated is None:
-                raise
-            raise translated from e
+        except _DROPBOX_FAILURES as e:
+            raise _translate_list_folder_error(e, remote_path) from e
 
         for entry in result.entries:
             yield DropboxFile(entry)
@@ -231,11 +230,8 @@ class DropboxClient(cloud_storage_client_api.Client):
         while result.has_more:
             try:
                 result = self.dbx.files_list_folder_continue(result.cursor)
-            except dropbox.exceptions.ApiError as e:
-                translated = _translate_list_folder_continue_error(e.error, remote_path)
-                if translated is None:
-                    raise
-                raise translated from e
+            except _DROPBOX_FAILURES as e:
+                raise _translate_list_folder_continue_error(e, remote_path) from e
             for entry in result.entries:
                 yield DropboxFile(entry)
 
@@ -254,37 +250,42 @@ class DropboxClient(cloud_storage_client_api.Client):
             None. Read-only query against Dropbox.
 
         Caller assumptions:
-            ``query`` is non-empty and ``max_results`` is an integer between 1 and 1000.
+            ``query`` is non-empty and at most 1000 characters, and ``max_results`` is an
+            integer between 1 and 1000.
 
         Raises:
-            ValueError: If ``query`` is empty or ``max_results`` is not between 1 and 1000.
+            ValueError: If ``query`` is empty or longer than 1000 characters, or
+                ``max_results`` is not between 1 and 1000 (Dropbox is not contacted), or
+                Dropbox rejects the query.
+            ConnectionError: If Dropbox is unreachable or rate limited the request.
+            OSError: For any other Dropbox failure.
 
         """
-        if not query:
-            msg = "Search query must be non-empty"
-            raise ValueError(msg)
-        if max_results <= 0 or max_results > _SEARCH_MAX_RESULTS_LIMIT:
-            msg = f"max_results must be greater than 0 and at most 1000, got {max_results}"
-            raise ValueError(msg)
+        _validate_search_arguments(query, max_results)
 
         options = SearchOptions(max_results=max_results, filename_only=True)
-        result = self.dbx.files_search_v2(query=query, options=options)
+        try:
+            result = self.dbx.files_search_v2(query=query, options=options)
+        except _DROPBOX_FAILURES as e:
+            raise _translate_search_error(e, query) from e
         yielded = 0
 
         while True:
             for match in result.matches:
-                if match.metadata.is_metadata():
-                    meta = match.metadata.get_metadata()
-                    if isinstance(meta, files.FileMetadata | files.FolderMetadata):
-                        yield DropboxFile(meta)
-                        yielded += 1
-                        if yielded >= max_results:
-                            return
+                entry = _extract_search_entry(match)
+                if entry is not None:
+                    yield DropboxFile(entry)
+                    yielded += 1
+                    if yielded >= max_results:
+                        return
 
             if not result.has_more:
                 break
 
-            result = self.dbx.files_search_continue_v2(result.cursor)
+            try:
+                result = self.dbx.files_search_continue_v2(result.cursor)
+            except _DROPBOX_FAILURES as e:
+                raise _translate_search_error(e, query) from e
 
     # ----- Update (Shreyas) -----
 
@@ -376,60 +377,121 @@ class DropboxClient(cloud_storage_client_api.Client):
         return True
 
 
-def _translate_download_error(reason: object, remote_path: str) -> Exception | None:
-    """Map a Dropbox ``DownloadError`` onto the built-in exceptions the contract documents.
+_READ_FAILURE_MESSAGES: dict[type[Exception], str] = {
+    FileNotFoundError: "No file or folder at {path!r}",
+    IsADirectoryError: "Path is a folder: {path!r}",
+    ValueError: "Dropbox rejected {path!r} as an invalid path",
+    PermissionError: "Dropbox does not allow reading {path!r}",
+    ConnectionError: "Dropbox is unreachable or busy, so {path!r} was not read ({detail})",
+    OSError: "Dropbox failed reading {path!r} ({detail})",
+}
 
-    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
-    """
-    if not isinstance(reason, files.DownloadError):
-        return None
-    if reason.is_path():
+
+def _read_sdk_or_generic(error: Exception, path: str) -> Exception:
+    """Return an exception for common SDK failures or generic OSError for read methods."""
+    sdk_kind = _sdk_failure_kind(error)
+    kind = sdk_kind if sdk_kind is not None else OSError
+    detail = _failure_detail(error)
+    return kind(_READ_FAILURE_MESSAGES[kind].format(path=path, detail=detail))
+
+
+def _translate_download_error(error: Exception, remote_path: str) -> Exception:
+    """Map a Dropbox download failure onto the built-in exceptions the contract documents."""
+    reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
+    if isinstance(reason, files.DownloadError) and reason.is_path():
         lookup = reason.get_path()
         if lookup.is_not_found():
             return FileNotFoundError(f"No file at {remote_path!r}")
         if lookup.is_not_file():
             return IsADirectoryError(f"Path is a folder: {remote_path!r}")
-    return None
+        kind = _lookup_failure_kind(lookup)
+        if kind is not None:
+            detail = _failure_detail(error)
+            return kind(_READ_FAILURE_MESSAGES[kind].format(path=remote_path, detail=detail))
+    return _read_sdk_or_generic(error, remote_path)
 
 
-def _translate_get_metadata_error(reason: object, remote_path: str) -> Exception | None:
-    """Map a Dropbox ``GetMetadataError`` onto the built-in exceptions the contract documents.
+def _translate_get_metadata_error(error: Exception, remote_path: str) -> Exception:
+    """Map a Dropbox get_metadata failure onto the built-in exceptions the contract documents."""
+    reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
+    if isinstance(reason, files.GetMetadataError) and reason.is_path():
+        lookup = reason.get_path()
+        if lookup.is_not_found():
+            return FileNotFoundError(f"No file or folder at {remote_path!r}")
+        kind = _lookup_failure_kind(lookup)
+        if kind is not None:
+            detail = _failure_detail(error)
+            return kind(_READ_FAILURE_MESSAGES[kind].format(path=remote_path, detail=detail))
+    return _read_sdk_or_generic(error, remote_path)
 
-    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
-    """
-    if not isinstance(reason, files.GetMetadataError):
-        return None
-    if reason.is_path() and reason.get_path().is_not_found():
-        return FileNotFoundError(f"No file or folder at {remote_path!r}")
-    return None
 
-
-def _translate_list_folder_error(reason: object, remote_path: str) -> Exception | None:
-    """Map a Dropbox ``ListFolderError`` onto the built-in exceptions the contract documents.
-
-    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
-    """
-    if not isinstance(reason, files.ListFolderError):
-        return None
-    if reason.is_path():
+def _translate_list_folder_error(error: Exception, remote_path: str) -> Exception:
+    """Map a Dropbox list_folder failure onto the built-in exceptions the contract documents."""
+    reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
+    if isinstance(reason, files.ListFolderError) and reason.is_path():
         lookup = reason.get_path()
         if lookup.is_not_found():
             return FileNotFoundError(f"No folder at {remote_path!r}")
         if lookup.is_not_folder():
             return ValueError(f"Path is a file: {remote_path!r}")
-    return None
+        kind = _lookup_failure_kind(lookup)
+        if kind is not None:
+            detail = _failure_detail(error)
+            return kind(_READ_FAILURE_MESSAGES[kind].format(path=remote_path, detail=detail))
+    return _read_sdk_or_generic(error, remote_path)
 
 
-def _translate_list_folder_continue_error(reason: object, remote_path: str) -> Exception | None:
-    """Map a ``ListFolderContinueError`` onto the built-in exceptions the contract documents.
+def _translate_list_folder_continue_error(error: Exception, remote_path: str) -> Exception:
+    """Map a ``files_list_folder_continue`` failure onto contract exceptions."""
+    reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
+    if isinstance(reason, files.ListFolderContinueError):
+        if reason.is_path() and reason.get_path().is_not_found():
+            return FileNotFoundError(f"No folder at {remote_path!r}")
+        if reason.is_reset():
+            return OSError(f"Dropbox cursor was invalidated while listing {remote_path!r}")
+    return _read_sdk_or_generic(error, remote_path)
 
-    Returns ``None`` for errors without a domain meaning, which callers should re-raise.
-    """
-    if not isinstance(reason, files.ListFolderContinueError):
-        return None
-    if reason.is_path() and reason.get_path().is_not_found():
-        return FileNotFoundError(f"No folder at {remote_path!r}")
-    return None
+
+def _validate_search_arguments(query: str, max_results: int) -> None:
+    """Raise ``ValueError`` for arguments Dropbox would reject, without contacting it."""
+    if not query:
+        msg = "Search query must be non-empty"
+        raise ValueError(msg)
+    if len(query) > _SEARCH_MAX_QUERY_LENGTH:
+        msg = f"Search query must be at most 1000 characters, got {len(query)}"
+        raise ValueError(msg)
+    if max_results <= 0 or max_results > _SEARCH_MAX_RESULTS_LIMIT:
+        msg = f"max_results must be greater than 0 and at most 1000, got {max_results}"
+        raise ValueError(msg)
+
+
+# Message for each exception a failed search can become. ``{query}`` is shortened by
+# ``_short_query`` so a long query is not echoed back in full.
+_SEARCH_FAILURE_MESSAGES: dict[type[Exception], str] = {
+    ValueError: "Dropbox rejected the search query {query} as invalid",
+    ConnectionError: (
+        "Dropbox is unreachable or busy, so the search for {query} was not run ({detail})"
+    ),
+    OSError: "Dropbox search failed for {query} ({detail})",
+}
+_QUERY_PREVIEW_LENGTH = 50
+
+
+def _short_query(query: str) -> str:
+    """Return ``query`` quoted, cut to the first 50 characters if it is longer."""
+    if len(query) <= _QUERY_PREVIEW_LENGTH:
+        return repr(query)
+    return f"{query[:_QUERY_PREVIEW_LENGTH]!r}... ({len(query)} characters)"
+
+
+def _translate_search_error(error: Exception, query: str) -> Exception:
+    """Map a Dropbox search failure onto the built-in exceptions the contract documents."""
+    kind = _sdk_failure_kind(error) or OSError
+    message = _SEARCH_FAILURE_MESSAGES[kind].format(
+        query=_short_query(query),
+        detail=_failure_detail(error),
+    )
+    return kind(message)
 
 
 # Every failure an SDK call can raise: Dropbox API and HTTP errors, the SDK's local
@@ -663,6 +725,17 @@ def _write_failure_kind(write: files.WriteError) -> type[Exception] | None:
         return PermissionError
     if write.is_too_many_write_operations():
         return ConnectionError
+    return None
+
+
+def _extract_search_entry(
+    match: files.SearchMatchV2,
+) -> files.FileMetadata | files.FolderMetadata | None:
+    """Return the FileMetadata or FolderMetadata from a search match, or None."""
+    if match.metadata.is_metadata():
+        meta = match.metadata.get_metadata()
+        if isinstance(meta, files.FileMetadata | files.FolderMetadata):
+            return meta
     return None
 
 
