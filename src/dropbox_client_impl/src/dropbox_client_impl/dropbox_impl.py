@@ -24,6 +24,8 @@ from dropbox_client_impl.auth import get_dropbox_client
 from dropbox_client_impl.file_impl import DropboxFile
 
 _SEARCH_MAX_RESULTS_LIMIT = 1000
+# Dropbox's limit on the length of a search query (SearchV2Arg.query).
+_SEARCH_MAX_QUERY_LENGTH = 1000
 
 
 class DropboxClient(cloud_storage_client_api.Client):
@@ -247,20 +249,18 @@ class DropboxClient(cloud_storage_client_api.Client):
             None. Read-only query against Dropbox.
 
         Caller assumptions:
-            ``query`` is non-empty and ``max_results`` is an integer between 1 and 1000.
+            ``query`` is non-empty and at most 1000 characters, and ``max_results`` is an
+            integer between 1 and 1000.
 
         Raises:
-            ValueError: If ``query`` is empty or ``max_results`` is not between 1 and 1000.
+            ValueError: If ``query`` is empty or longer than 1000 characters, or
+                ``max_results`` is not between 1 and 1000 (Dropbox is not contacted), or
+                Dropbox rejects the query.
             ConnectionError: If Dropbox is unreachable or rate limited the request.
             OSError: For any other Dropbox failure.
 
         """
-        if not query:
-            msg = "Search query must be non-empty"
-            raise ValueError(msg)
-        if max_results <= 0 or max_results > _SEARCH_MAX_RESULTS_LIMIT:
-            msg = f"max_results must be greater than 0 and at most 1000, got {max_results}"
-            raise ValueError(msg)
+        _validate_search_arguments(query, max_results)
 
         options = SearchOptions(max_results=max_results, filename_only=True)
         try:
@@ -451,15 +451,46 @@ def _translate_list_folder_continue_error(error: Exception, remote_path: str) ->
     return _read_sdk_or_generic(error, remote_path)
 
 
+def _validate_search_arguments(query: str, max_results: int) -> None:
+    """Raise ``ValueError`` for arguments Dropbox would reject, without contacting it."""
+    if not query:
+        msg = "Search query must be non-empty"
+        raise ValueError(msg)
+    if len(query) > _SEARCH_MAX_QUERY_LENGTH:
+        msg = f"Search query must be at most 1000 characters, got {len(query)}"
+        raise ValueError(msg)
+    if max_results <= 0 or max_results > _SEARCH_MAX_RESULTS_LIMIT:
+        msg = f"max_results must be greater than 0 and at most 1000, got {max_results}"
+        raise ValueError(msg)
+
+
+# Message for each exception a failed search can become. ``{query}`` is shortened by
+# ``_short_query`` so a long query is not echoed back in full.
+_SEARCH_FAILURE_MESSAGES: dict[type[Exception], str] = {
+    ValueError: "Dropbox rejected the search query {query} as invalid",
+    ConnectionError: (
+        "Dropbox is unreachable or busy, so the search for {query} was not run ({detail})"
+    ),
+    OSError: "Dropbox search failed for {query} ({detail})",
+}
+_QUERY_PREVIEW_LENGTH = 50
+
+
+def _short_query(query: str) -> str:
+    """Return ``query`` quoted, cut to the first 50 characters if it is longer."""
+    if len(query) <= _QUERY_PREVIEW_LENGTH:
+        return repr(query)
+    return f"{query[:_QUERY_PREVIEW_LENGTH]!r}... ({len(query)} characters)"
+
+
 def _translate_search_error(error: Exception, query: str) -> Exception:
     """Map a Dropbox search failure onto the built-in exceptions the contract documents."""
-    sdk_kind = _sdk_failure_kind(error)
-    if sdk_kind is not None:
-        detail = _failure_detail(error)
-        msg = f"Dropbox is unreachable or busy during search for {query!r} ({detail})"
-        return sdk_kind(msg)
-    detail = _failure_detail(error)
-    return OSError(f"Dropbox search failed for {query!r} ({detail})")
+    kind = _sdk_failure_kind(error) or OSError
+    message = _SEARCH_FAILURE_MESSAGES[kind].format(
+        query=_short_query(query),
+        detail=_failure_detail(error),
+    )
+    return kind(message)
 
 
 # Every failure an SDK call can raise: Dropbox API and HTTP errors, the SDK's local

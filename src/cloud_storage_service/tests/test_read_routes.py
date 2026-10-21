@@ -332,6 +332,18 @@ def test_search_files_invalid_parameters_return_422(
     assert response.json()["error"]["code"] == "invalid_input"
 
 
+def test_search_query_over_1000_characters_returns_422_without_reaching_the_client(
+    provider: Mock,
+    http: TestClient,
+) -> None:
+    """A query longer than Dropbox's limit is rejected by request validation."""
+    response = http.get("/files/search", params={"q": "x" * 1001})
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json()["error"]["code"] == "invalid_input"
+    provider.search.assert_not_called()
+
+
 def test_search_client_value_error_returns_422(http: TestClient) -> None:
     """A ValueError raised by the storage client during search returns 422 in shared error format."""
     mock_client = Mock(spec=Client)

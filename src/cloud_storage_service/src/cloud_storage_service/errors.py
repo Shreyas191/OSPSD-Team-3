@@ -9,6 +9,8 @@ left alone, so it still surfaces as ``500``.
 | Exception (or cause)                  | Status | ``code``                 |
 |---------------------------------------|--------|--------------------------|
 | request validation / ``ValueError``   | 422    | ``invalid_input``        |
+| ``IsADirectoryError`` (folder given   | 422    | ``invalid_input``        |
+| where a file is needed, e.g. download)|        |                          |
 | ``FileNotFoundError``                 | 404    | ``not_found``            |
 | ``FileExistsError``                   | 409    | ``conflict``             |
 | ``PermissionError``                   | 403    | ``permission_denied``    |

@@ -203,7 +203,7 @@ def list_folder(
 
 @shared_errors.get("/files/search", responses=_SEARCH_ERROR_RESPONSES)
 def search_files(
-    q: Annotated[str, Query(min_length=1)],
+    q: Annotated[str, Query(min_length=1, max_length=1000)],
     client: StorageClient,
     max_results: Annotated[int, Query(gt=0, le=1000)] = 10,
 ) -> list[FileResponse]:

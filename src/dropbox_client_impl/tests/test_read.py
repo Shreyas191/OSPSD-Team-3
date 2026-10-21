@@ -11,8 +11,9 @@ from unittest.mock import Mock, call
 
 import dropbox
 import pytest
+import requests
 from cloud_storage_client_api.file import File
-from dropbox import files
+from dropbox import exceptions, files, stone_validators
 from dropbox.exceptions import ApiError
 from dropbox.files import FileMetadata, FolderMetadata
 
@@ -585,6 +586,74 @@ def test_search_continuation_api_error_becomes_oserror(
 
     with pytest.raises(OSError, match="Dropbox search failed for 'res'"):
         list(client.search("res"))
+
+
+def test_search_query_over_dropbox_limit_is_rejected_without_calling_dropbox(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """A query longer than Dropbox's 1000-character limit is invalid input, checked locally."""
+    with pytest.raises(ValueError, match="at most 1000 characters, got 1001"):
+        list(client.search("x" * 1001))
+
+    mock_dbx.files_search_v2.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected", "message"),
+    [
+        (
+            stone_validators.ValidationError("query too long"),
+            ValueError,
+            "Dropbox rejected the search query 'report' as invalid",
+        ),
+        (
+            exceptions.RateLimitError("req-1"),
+            ConnectionError,
+            "Dropbox is unreachable or busy, so the search for 'report' was not run",
+        ),
+        (
+            requests.exceptions.ConnectionError("connection refused"),
+            ConnectionError,
+            "Dropbox is unreachable or busy, so the search for 'report' was not run",
+        ),
+        (
+            exceptions.InternalServerError("req-1", 500, "oops"),
+            OSError,
+            "Dropbox search failed for 'report'",
+        ),
+    ],
+)
+def test_search_failures_get_a_message_that_matches_their_kind(
+    client: DropboxClient,
+    mock_dbx: Mock,
+    error: Exception,
+    expected: type[Exception],
+    message: str,
+) -> None:
+    """Each kind of search failure says what went wrong; invalid input is not called an outage."""
+    mock_dbx.files_search_v2.side_effect = error
+
+    with pytest.raises(expected) as raised:
+        list(client.search("report"))
+
+    assert type(raised.value) is expected
+    assert str(raised.value).startswith(message)
+
+
+def test_search_failure_message_does_not_echo_a_long_query(
+    client: DropboxClient,
+    mock_dbx: Mock,
+) -> None:
+    """A long query is shortened in the message instead of repeated in full."""
+    mock_dbx.files_search_v2.side_effect = exceptions.InternalServerError("req-1", 500, "oops")
+    query = "q" * 400
+
+    with pytest.raises(OSError, match="Dropbox search failed for") as raised:
+        list(client.search(query))
+
+    assert query not in str(raised.value)
+    assert "(400 characters)" in str(raised.value)
 
 
 def test_read_operations_translate_permissions_and_connection_errors(

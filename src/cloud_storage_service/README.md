@@ -252,7 +252,7 @@ curl "http://127.0.0.1:8000/folders/list?path=/Docs"
 Search for files and folders matching a query string, up to `max_results` entries.
 
 Query parameters:
-- `q` (required): non-empty search query string (e.g. `?q=report`).
+- `q` (required): search query, 1 to 1000 characters (Dropbox's limit) (e.g. `?q=report`).
 - `max_results` (optional, defaults to 10): maximum number of results to return (must be between 1 and 1000).
 
 Errors use the [shared error format](#shared-error-format).
@@ -260,7 +260,7 @@ Errors use the [shared error format](#shared-error-format).
 | Status | `code` | Meaning |
 |--------|--------|---------|
 | `200` | | Success; body is a JSON array of matching File objects |
-| `422` | `invalid_input` | Invalid query (empty `q` or `max_results` not between 1 and 1000) |
+| `422` | `invalid_input` | Invalid query (`q` empty or over 1000 characters, or `max_results` not between 1 and 1000) |
 | `502` | `provider_failure` | The provider failed |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
