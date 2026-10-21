@@ -3,8 +3,9 @@
 Request flow: FastAPI validates the JSON body against a request model, the route calls the
 provider-independent ``cloud_storage_client_api.Client``, and the returned ``File`` is
 serialized as a :class:`FileResponse`. Routes never see Dropbox types: the client raises
-built-in exceptions (``FileNotFoundError``, ``FileExistsError``, ``ValueError``), which are
-mapped to HTTP status codes here.
+built-in exceptions (``FileNotFoundError``, ``FileExistsError``, ``ValueError``, ...), which
+are mapped to HTTP status codes here, or in ``errors.py`` for routes that use the team's
+shared error format.
 
 Paths are passed in the request body rather than the URL because they contain ``/``.
 
@@ -21,11 +22,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import cloud_storage_client_api
 from dropbox_client_impl import DropboxClient
 from fastapi import (
+    APIRouter,
     Depends,
     FastAPI,
     Form,
@@ -38,7 +40,12 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-AbsolutePath = Annotated[str, Field(pattern=r"^/.+", examples=["/Docs/report.pdf"])]
+from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute
+
+# One or more "/name" segments: no empty segments ("/a//b") and no trailing slash
+# ("/a/"). Dropbox rejects those as malformed paths, so they are refused here with 422
+# instead of reaching the provider. The root ("/") is not an entry path either.
+AbsolutePath = Annotated[str, Field(pattern=r"^(/[^/]+)+$", examples=["/Docs/report.pdf"])]
 
 
 def build_storage_client() -> cloud_storage_client_api.Client:
@@ -158,26 +165,6 @@ _READ_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
 }
 
 
-@app.post("/files/rename", responses=_ERROR_RESPONSES)
-def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
-    """Rename a file or folder in place and return its updated metadata."""
-    try:
-        renamed = client.rename(request.path, request.new_name)
-    except (FileNotFoundError, FileExistsError, ValueError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(renamed)
-
-
-@app.post("/files/move", responses=_ERROR_RESPONSES)
-def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
-    """Move a file or folder to a new path and return its updated metadata."""
-    try:
-        moved = client.move(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(moved)
-
-
 # ----- Create Endpoints -----
 
 
@@ -275,3 +262,62 @@ def search_files(
     except ValueError as e:
         raise _to_http_error(e) from e
     return [FileResponse.from_file(result) for result in results]
+
+
+# ----- Routes using the shared error format -----
+
+# Routes on this router report failures as ``{"error": {"code", "message"}}`` (see
+# ``errors.py``); the routes above still return ``{"detail": ...}`` until they move here.
+shared_errors = APIRouter(route_class=SharedErrorRoute)
+
+_DELETE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow deleting the entry"},
+    404: {
+        "model": ErrorResponse,
+        "description": "Nothing at the path (including one already deleted)",
+    },
+    422: {"model": ErrorResponse, "description": "Missing, relative or root path"},
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+
+_UPDATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow the change"},
+    404: {"model": ErrorResponse, "description": "Nothing exists at the source path"},
+    409: {
+        "model": ErrorResponse,
+        "description": "The destination is taken (including by the source itself)",
+    },
+    422: {
+        "model": ErrorResponse,
+        "description": "Invalid path or name, or a folder moved into itself",
+    },
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
+
+@shared_errors.post("/files/rename", responses=_UPDATE_ERROR_RESPONSES)
+def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
+    """Rename a file or folder in place and return its updated metadata."""
+    return FileResponse.from_file(client.rename(request.path, request.new_name))
+
+
+@shared_errors.post("/files/move", responses=_UPDATE_ERROR_RESPONSES)
+def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
+    """Move a file or folder to a new path and return its updated metadata."""
+    return FileResponse.from_file(client.move(request.from_path, request.to_path))
+
+
+@shared_errors.delete(
+    "/files",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=_DELETE_ERROR_RESPONSES,
+)
+def delete_entry(path: AbsolutePath, client: StorageClient) -> None:
+    """Delete a file, or a folder with its contents, at the absolute ``path``."""
+    client.delete(path)
+
+
+app.include_router(shared_errors)

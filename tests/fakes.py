@@ -123,6 +123,9 @@ class FakeStorageClient(Client):
         if from_path not in self.entries:
             msg = f"No file or folder at {from_path!r}"
             raise FileNotFoundError(msg)
+        if to_path.startswith(f"{from_path}/"):
+            msg = f"Cannot move {from_path!r} to {to_path!r}: the destination is inside the source"
+            raise ValueError(msg)
         if to_path in self.entries:
             msg = f"Something already exists at {to_path!r}"
             raise FileExistsError(msg)
@@ -262,8 +265,16 @@ class FakeStorageClient(Client):
                 if yielded >= max_results:
                     return
 
-    # ----- Not implemented until a test needs them -----
+    # ----- Delete -----
 
     def delete(self, remote_path: str) -> bool:
-        """Not implemented yet."""
-        raise NotImplementedError
+        """Delete an entry and a folder's contents; the root is rejected."""
+        if not remote_path.strip("/"):
+            msg = f"Refusing to delete the root folder (path {remote_path!r})"
+            raise ValueError(msg)
+        if remote_path not in self.entries:
+            msg = f"No file or folder at {remote_path!r}"
+            raise FileNotFoundError(msg)
+        for path in [p for p in self.entries if p == remote_path or p.startswith(f"{remote_path}/")]:
+            del self.entries[path]
+        return True
