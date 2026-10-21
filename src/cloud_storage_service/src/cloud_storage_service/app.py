@@ -280,12 +280,10 @@ def upload_file(
         Form(description="Replace an existing file at remote_path"),
     ] = False,
 ) -> FileResponse:
-    """Upload a file to cloud storage and return its metadata.
-
-    The fields are declared one by one rather than as a single form model: FastAPI declares
-    a form model that contains an ``UploadFile`` as ``application/x-www-form-urlencoded`` in
-    the OpenAPI schema, so Swagger UI's "Try it out" could not send the file.
-    """
+    """Upload a file to cloud storage and return its metadata."""
+    # The fields are declared one by one rather than as a single form model: FastAPI declares
+    # a form model that contains an ``UploadFile`` as ``application/x-www-form-urlencoded`` in
+    # the OpenAPI schema, so Swagger UI's "Try it out" could not send the file.
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / "upload"
         with tmp_path.open("wb") as out:
