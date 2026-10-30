@@ -35,6 +35,7 @@ class RecordingStorageClient(FakeStorageClient):
         super().__init__()
         self.uploaded_bytes: bytes | None = None
         self.uploaded_from: str | None = None
+        self.content_by_path: dict[str, bytes] = {}
 
     def upload_file(
         self,
@@ -46,8 +47,9 @@ class RecordingStorageClient(FakeStorageClient):
         """Record the local file, which only exists while the route is handling the request."""
         self.uploaded_from = local_path
         self.uploaded_bytes = Path(local_path).read_bytes()
-        return super().upload_file(local_path, remote_path, overwrite=overwrite)
-
+        uploaded = super().upload_file(local_path, remote_path, overwrite=overwrite)
+        self.content_by_path[remote_path] = self.uploaded_bytes
+        return uploaded
 
 @pytest.fixture
 def storage() -> Iterator[RecordingStorageClient]:
@@ -225,33 +227,47 @@ def test_invalid_request_is_rejected_and_changes_nothing(
     assert response.json()["error"]["code"] == "invalid_input"
     assert set(storage.entries) == {"/a"}
 
+# --- POST /files and PUT /files (multipart) -----------------------------------------------
 
-# --- POST /files/upload (multipart) --------------------------------------------------------
 
-
-def test_upload_is_documented_as_multipart(http: TestClient) -> None:
-    """The OpenAPI schema declares multipart/form-data, so Swagger UI and generated clients send a file.
+def test_create_and_replace_are_documented_as_multipart(http: TestClient) -> None:
+    """Both upload operations declare multipart/form-data for file uploads.
 
     A single form model containing an ``UploadFile`` makes FastAPI declare
     ``application/x-www-form-urlencoded`` instead, and Swagger's "Try it out" then sends an
     empty body.
     """
     spec = http.get("/openapi.json").json()
-    content = spec["paths"]["/files/upload"]["post"]["requestBody"]["content"]
+    paths = spec["paths"]["/files"]
 
-    assert list(content) == ["multipart/form-data"]
+    assert list(paths["post"]["requestBody"]["content"]) == ["multipart/form-data"]
+    assert list(paths["put"]["requestBody"]["content"]) == ["multipart/form-data"]
 
-
-def post_upload(http: TestClient, content: bytes = b"%PDF-data", **form_fields: str) -> Response:
-    """Post a multipart upload request with the supplied form fields."""
-    data = {"remote_path": "/Docs/report.pdf", **form_fields}
+def post_upload(
+    http: TestClient,
+    content: bytes = b"%PDF-data",
+    remote_path: str = "/Docs/report.pdf",
+) -> Response:
+    """Create a file using the POST /files multipart request."""
     response: Response = http.post(
-        "/files/upload",
+        "/files",
         files={"file": ("report.pdf", content)},
-        data=data,
+        data={"remote_path": remote_path},
     )
     return response
 
+def put_replace(
+    http: TestClient,
+    content: bytes = b"%PDF-data",
+    remote_path: str = "/Docs/report.pdf",
+) -> Response:
+    """Replace a file using the PUT /files multipart request."""
+    response: Response = http.put(
+        "/files",
+        files={"file": ("report.pdf", content)},
+        data={"remote_path": remote_path},
+    )
+    return response
 
 def test_upload_stores_sent_bytes_and_cleans_up(
     storage: RecordingStorageClient,
@@ -280,20 +296,35 @@ def test_upload_existing_file_without_overwrite_returns_409(
     assert response.status_code == status.HTTP_409_CONFLICT
     assert storage.entries["/Docs/report.pdf"] is existing
 
-
-def test_upload_with_overwrite_replaces_existing_file(
-    storage: FakeStorageClient,
+def test_replace_updates_existing_file_content_and_keeps_id(
+    storage: RecordingStorageClient,
     http: TestClient,
 ) -> None:
-    """With ``overwrite=true`` the file is replaced and keeps its ID."""
+    """PUT replaces existing content and preserves the file's identity."""
     existing = storage.add("/Docs/report.pdf", size=1)
 
-    response = post_upload(http, b"new content", overwrite="true")
+    response = put_replace(http, b"new content")
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["id"] == existing.id
     assert response.json()["size"] == len(b"new content")
+    assert storage.entries["/Docs/report.pdf"].id == existing.id
+    assert storage.entries["/Docs/report.pdf"].size == len(b"new content")
+    assert storage.uploaded_bytes == b"new content"
+    assert storage.content_by_path["/Docs/report.pdf"] == b"new content"
 
+def test_replace_creates_file_when_destination_does_not_exist(
+    storage: RecordingStorageClient,
+    http: TestClient,
+) -> None:
+    """PUT can upload content when the destination file does not exist yet."""
+    response = put_replace(http, b"replacement content")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["path"] == "/Docs/report.pdf"
+    assert response.json()["size"] == len(b"replacement content")
+    assert storage.uploaded_bytes == b"replacement content"
+    assert storage.content_by_path["/Docs/report.pdf"] == b"replacement content"
 
 def test_upload_rejects_invalid_remote_path(
     storage: RecordingStorageClient,
@@ -306,6 +337,18 @@ def test_upload_rejects_invalid_remote_path(
     assert storage.uploaded_bytes is None
     assert storage.entries == {}
 
+def test_replace_rejects_invalid_remote_path(
+    storage: RecordingStorageClient,
+    http: TestClient,
+) -> None:
+    """Reject a relative destination before the replace operation reaches storage."""
+    response = put_replace(http, remote_path="relative.pdf")
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.json()["error"]["code"] == "invalid_input"
+    assert storage.uploaded_bytes is None
+    assert storage.entries == {}
+
 
 def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClient) -> None:
     """Reject an upload request that omits the file field."""
@@ -314,6 +357,12 @@ def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClien
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert storage.uploaded_bytes is None
 
+def test_replace_requires_a_file(storage: RecordingStorageClient, http: TestClient) -> None:
+    """Reject a PUT request that omits the file field."""
+    response = http.put("/files", data={"remote_path": "/Docs/report.pdf"})
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert storage.uploaded_bytes is None
 
 # --- Provider failures and logging (shared error format) ---------------------------------
 
@@ -331,6 +380,8 @@ def _call_create_route(http: TestClient, route: str) -> Response:
     """Send a valid request to one of the three create routes."""
     if route == "upload":
         return post_upload(http)
+    if route == "replace":
+        return put_replace(http)
     if route == "create_folder":
         return cast("Response", http.post("/folders/create", json={"remote_path": "/Docs/New"}))
     body = {"from_path": "/Docs/a.pdf", "to_path": "/Archive/a.pdf"}
@@ -343,7 +394,7 @@ def _fail_with(provider: Mock, error: Exception) -> None:
     provider.copy.side_effect = error
 
 
-CREATE_ROUTES = ["upload", "create_folder", "copy"]
+CREATE_ROUTES = ["upload", "replace", "create_folder", "copy"]
 
 
 @pytest.mark.parametrize("route", CREATE_ROUTES)
