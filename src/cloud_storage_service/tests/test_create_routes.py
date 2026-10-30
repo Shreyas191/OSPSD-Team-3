@@ -51,6 +51,7 @@ class RecordingStorageClient(FakeStorageClient):
         self.content_by_path[remote_path] = self.uploaded_bytes
         return uploaded
 
+
 @pytest.fixture
 def storage() -> Iterator[RecordingStorageClient]:
     """Install an empty fake storage client for the duration of a test."""
@@ -227,6 +228,7 @@ def test_invalid_request_is_rejected_and_changes_nothing(
     assert response.json()["error"]["code"] == "invalid_input"
     assert set(storage.entries) == {"/a"}
 
+
 # --- POST /files and PUT /files (multipart) -----------------------------------------------
 
 
@@ -243,6 +245,7 @@ def test_create_and_replace_are_documented_as_multipart(http: TestClient) -> Non
     assert list(paths["post"]["requestBody"]["content"]) == ["multipart/form-data"]
     assert list(paths["put"]["requestBody"]["content"]) == ["multipart/form-data"]
 
+
 def post_upload(
     http: TestClient,
     content: bytes = b"%PDF-data",
@@ -256,6 +259,7 @@ def post_upload(
     )
     return response
 
+
 def put_replace(
     http: TestClient,
     content: bytes = b"%PDF-data",
@@ -268,6 +272,7 @@ def put_replace(
         data={"remote_path": remote_path},
     )
     return response
+
 
 def test_upload_stores_sent_bytes_and_cleans_up(
     storage: RecordingStorageClient,
@@ -296,6 +301,7 @@ def test_upload_existing_file_without_overwrite_returns_409(
     assert response.status_code == status.HTTP_409_CONFLICT
     assert storage.entries["/Docs/report.pdf"] is existing
 
+
 def test_replace_updates_existing_file_content_and_keeps_id(
     storage: RecordingStorageClient,
     http: TestClient,
@@ -313,6 +319,7 @@ def test_replace_updates_existing_file_content_and_keeps_id(
     assert storage.uploaded_bytes == b"new content"
     assert storage.content_by_path["/Docs/report.pdf"] == b"new content"
 
+
 def test_replace_creates_file_when_destination_does_not_exist(
     storage: RecordingStorageClient,
     http: TestClient,
@@ -326,6 +333,7 @@ def test_replace_creates_file_when_destination_does_not_exist(
     assert storage.uploaded_bytes == b"replacement content"
     assert storage.content_by_path["/Docs/report.pdf"] == b"replacement content"
 
+
 def test_upload_rejects_invalid_remote_path(
     storage: RecordingStorageClient,
     http: TestClient,
@@ -336,6 +344,7 @@ def test_upload_rejects_invalid_remote_path(
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert storage.uploaded_bytes is None
     assert storage.entries == {}
+
 
 def test_replace_rejects_invalid_remote_path(
     storage: RecordingStorageClient,
@@ -357,12 +366,14 @@ def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClien
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert storage.uploaded_bytes is None
 
+
 def test_replace_requires_a_file(storage: RecordingStorageClient, http: TestClient) -> None:
     """Reject a PUT request that omits the file field."""
     response = http.put("/files", data={"remote_path": "/Docs/report.pdf"})
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert storage.uploaded_bytes is None
+
 
 # --- Provider failures and logging (shared error format) ---------------------------------
 

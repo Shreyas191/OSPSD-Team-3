@@ -301,6 +301,7 @@ def upload_file(
         uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=False)
     return FileResponse.from_file(uploaded)
 
+
 @shared_errors.put("/files", responses=_REPLACE_FILE_ERROR_RESPONSES)
 def replace_file(
     file: Annotated[UploadFile, File(description="Replacement file contents")],
@@ -321,6 +322,7 @@ def replace_file(
             shutil.copyfileobj(file.file, out)
         uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=True)
     return FileResponse.from_file(uploaded)
+
 
 @shared_errors.post("/folders/create", responses=_CREATE_FOLDER_ERROR_RESPONSES)
 def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
