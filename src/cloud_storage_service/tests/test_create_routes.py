@@ -352,7 +352,7 @@ def test_replace_rejects_invalid_remote_path(
 
 def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClient) -> None:
     """Reject an upload request that omits the file field."""
-    response = http.post("/files/upload", data={"remote_path": "/Docs/report.pdf"})
+    response = http.post("/files", data={"remote_path": "/Docs/report.pdf"})
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert storage.uploaded_bytes is None
