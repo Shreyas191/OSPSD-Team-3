@@ -67,8 +67,13 @@ def _send(http: TestClient, route: str, path: str) -> Response:
             json={"from_path": valid, "to_path": path},
         ),
         "POST /folders/create": lambda: http.post("/folders/create", json={"remote_path": path}),
-        "POST /files/upload": lambda: http.post(
-            "/files/upload",
+        "POST /files": lambda: http.post(
+            "/files",
+            files={"file": ("a.txt", b"data")},
+            data={"remote_path": path},
+        ),
+        "PUT /files": lambda: http.put(
+            "/files",
             files={"file": ("a.txt", b"data")},
             data={"remote_path": path},
         ),
@@ -87,7 +92,8 @@ ROUTES = [
     "POST /files/copy (from)",
     "POST /files/copy (to)",
     "POST /folders/create",
-    "POST /files/upload",
+    "POST /files",
+    "PUT /files",
 ]
 
 
