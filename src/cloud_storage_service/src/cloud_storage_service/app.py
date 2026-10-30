@@ -242,6 +242,17 @@ _UPLOAD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
 }
 
+_REPLACE_FILE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": ErrorResponse, "description": "The provider does not allow writing there"},
+    409: {"model": ErrorResponse, "description": "The destination is a folder"},
+    422: {
+        "model": ErrorResponse,
+        "description": "Missing file, invalid path, or a file over the provider's upload limit",
+    },
+    502: {"model": ErrorResponse, "description": "The storage provider failed"},
+    503: {"model": ErrorResponse, "description": "The storage provider is unreachable or busy"},
+}
+
 _CREATE_FOLDER_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     403: {"model": ErrorResponse, "description": "The provider does not allow creating it there"},
     409: {"model": ErrorResponse, "description": "Something is already at the path"},
@@ -266,7 +277,7 @@ _COPY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-@shared_errors.post("/files/upload", responses=_UPLOAD_ERROR_RESPONSES)
+@shared_errors.post("/files", responses=_UPLOAD_ERROR_RESPONSES)
 def upload_file(
     file: Annotated[UploadFile, File(description="The file contents")],
     remote_path: Annotated[
@@ -278,11 +289,6 @@ def upload_file(
         ),
     ],
     client: StorageClient,
-    *,
-    overwrite: Annotated[
-        bool,
-        Form(description="Replace an existing file at remote_path"),
-    ] = False,
 ) -> FileResponse:
     """Upload a file to cloud storage and return its metadata."""
     # The fields are declared one by one rather than as a single form model: FastAPI declares
@@ -292,9 +298,29 @@ def upload_file(
         tmp_path = Path(tmp_dir) / "upload"
         with tmp_path.open("wb") as out:
             shutil.copyfileobj(file.file, out)
-        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=overwrite)
+        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=False)
     return FileResponse.from_file(uploaded)
 
+@shared_errors.put("/files", responses=_REPLACE_FILE_ERROR_RESPONSES)
+def replace_file(
+    file: Annotated[UploadFile, File(description="Replacement file contents")],
+    remote_path: Annotated[
+        str,
+        Form(
+            pattern=_ABSOLUTE_PATH_PATTERN,
+            description="Path of the file to replace, including the file name",
+            examples=["/Docs/report.pdf"],
+        ),
+    ],
+    client: StorageClient,
+) -> FileResponse:
+    """Replace a file at the destination, or create it if it does not exist."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "upload"
+        with tmp_path.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=True)
+    return FileResponse.from_file(uploaded)
 
 @shared_errors.post("/folders/create", responses=_CREATE_FOLDER_ERROR_RESPONSES)
 def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileResponse:
