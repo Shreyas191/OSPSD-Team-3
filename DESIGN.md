@@ -4,7 +4,7 @@
 **Vertical:** Document Storage (provider: Dropbox)
 **Reviewers:** Victor Wang (Team 3, whole design), Darsh (Team 6, contract-facing parts)
 **Last updated:** 11/4/2026
-**Status:** Draft
+**Status:** In review
 
 **Links:**
 - Shared contract: tag [`0.1.0`](https://github.com/Dayana20/ospsd26-cloud-storage/tree/0.1.0)
