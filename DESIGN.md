@@ -40,6 +40,8 @@ Non-goals, or goals that you the reader may expect us to reach but we are not pr
 
 ## Proposed architecture
 
+**Figure 1. How a consumer's request reaches Dropbox, and which package owns each step.** Solid arrows are calls at request time. The `◄──` arrow means "implements": `dropbox_client_impl` implements the shared `Client` contract. The service never imports `dropbox`.
+
 ```text
                     ┌──────────────────────────┐
                     │   HTTP Client / Caller   │
@@ -66,19 +68,31 @@ Non-goals, or goals that you the reader may expect us to reach but we are not pr
                                        └──────────────────────┘
 ```
 
+**Responsibilities and dependency direction.**
+
+| Component | Owns | Depends on |
+|---|---|---|
+| `cloud_storage_service` | HTTP routes, request validation, overload protection, the shared error body and failure logs | The shared `Client` contract only |
+| Shared contract (`ospsd26-cloud-storage`; today our local `cloud_storage_client_api`) | The abstract `Client` and `File` classes and `get_client()` | Nothing |
+| `dropbox_client_impl` | `DropboxClient`, `DropboxFile`, OAuth in `auth.py`, and the translation of Dropbox errors to built-in exceptions | The contract and the Dropbox SDK |
+
+**Who creates and closes the provider client.** The app's `lifespan` calls `build_storage_client()` once at startup and stores one `DropboxClient` in `app.state.storage_client`. Routes get it through the `get_storage_client` dependency, so tests can swap in `FakeStorageClient`. The client lives as long as the process. We do not close it explicitly; the Dropbox SDK's HTTP session ends when the process exits.
+
 ### Workflow guarantees and processing layers
 
-- **Path ingestion and normalization (`clean_up_path`):** the service accepts paths both with or without a leading `/`. Incoming paths are sanitized to a canonical format (`/path/to/resource`), stripping trailing slashes, empty segments, and `.` / `..` traversal tokens. Invalid paths are rejected with HTTP 400 (`invalid_request`). Attempting to delete the root (`?path=/`) is rejected with HTTP 422 (`invalid_operation`).
+Items marked **(planned)** are part of the migration and are not in the code at `f2127d7`.
+
+- **Path normalization (`clean_up_path`, planned):** the service accepts paths with or without a leading `/`. It turns each path into the form `/path/to/resource` and removes trailing slashes and empty segments. It rejects `.` and `..` segments with 400 `invalid_request`. A delete of the root (`?path=/`) returns 422 `invalid_operation`.
 - **Syntactic vs. semantic error boundary:**
-  - **HTTP 400 (`invalid_request`):** malformed paths, missing required arguments, or payload limit violations (>150 MiB). FastAPI's `RequestValidationError` is intercepted to return 400.
+  - **HTTP 400 (`invalid_request`):** malformed paths, missing required arguments, or uploads over 150 MiB. A handler turns FastAPI's `RequestValidationError` into 400 (planned; today it is 422).
   - **HTTP 422 (`invalid_operation`):** semantically invalid domain operations (e.g. moving a folder into itself, or deleting root).
   - **HTTP 404 (`not_found`):** the target file or directory does not exist.
   - **HTTP 409 (`conflict`):** the target destination already exists on a strict create (`POST /files`), move, or rename conflict.
   - **HTTP 502 (`provider_error`):** upstream provider error or partial folder deletion.
   - **HTTP 503 (`provider_unavailable` / `service_busy`):** service concurrency shed, or the remote provider is unreachable.
-- **Domain data model (`File`):** standardized across all operations. Returns `id` (opaque string), `name`, `path` (canonical absolute path), `size` (bytes; null for folders), `modified_at` (ISO 8601 UTC ending in `Z`; null for folders), and an optional `etag`. The legacy `is_folder` boolean is dropped from the metadata model in favor of a context-specific `type` field (`"file"` or `"folder"`) in folder listing responses.
-- **Split health probes:** decouples process liveness (`GET /health` returns 200 `{"status": "ok"}`) from provider connectivity (`GET /health/provider` executes a lightweight `users_get_current_account()` ping to verify credentials and remote storage reachability, returning 503 if unreachable).
-- **Structured logging:** application logs record failures with structured key-value pairs (`operation`, `status`, `code`, `provider_failure`, `reason`). Raw provider details are stripped from 502/503 HTTP responses to prevent information leakage while remaining fully observable in logs.
+- **Domain data model (`File`):** standardized across all operations. Returns `id` (opaque string), `name`, `path` (canonical absolute path), `size` (bytes; null for folders), `modified_at` (ISO 8601 UTC ending in `Z`; null for folders), and an optional `etag` (planned). The HW1 `is_folder` boolean is dropped from the metadata model in favor of a context-specific `type` field (`"file"` or `"folder"`) in folder listing responses.
+- **Split health probes (planned):** `GET /health` answers 200 `{"status": "ok"}` without calling Dropbox, so a Dropbox outage never restarts the container. `GET /health/provider` makes one `users_get_current_account()` call. It returns 200 when the credentials work and 503 when Dropbox is unreachable.
+- **Structured logging:** application logs record failures with structured key-value pairs (`operation`, `status`, `code`, `provider_failure`, `reason`). 502 and 503 responses carry a fixed message; the provider's own error text goes only to the logs.
 
 ### Request flow
 
@@ -177,7 +191,7 @@ All errors use `{"error": {"code", "message"}}`. Consumers should branch on the 
 
 After a `502` or `503` on a write, the outcome is uncertain: check metadata before retrying.
 
-### Example (illustrative)
+### Example (expected, from the memo; not yet observed, because `PATCH /files` is not built)
 
 ```http
 PATCH /files?path=/Docs/report.pdf
@@ -295,11 +309,9 @@ The app does not implement authentication for API callers. Provider credentials 
 
 ### Redesign effects
 
-Before the redesign, `POST /files/upload` accepted a multipart file and `remote_path`, then called `client.upload_file()` with an overwrite flag. The updated app separates the operations: `POST /files` passes `overwrite=False`, while `PUT /files` passes `overwrite=True`. Both routes copy the incoming file to a temporary file before calling the client once; the temporary file is removed when the request finishes.
+On `dev` (release `v0.1.0`), `POST /files/upload` takes a file, `remote_path` and an `overwrite` flag, and makes one `files_upload` call. Open PR #37 splits it: `POST /files` uploads in add mode and `PUT /files` in overwrite mode, each with one Dropbox call. Both routes copy the upload to a temporary file and delete it when the request ends.
 
-The previously shared Dropbox implementation reads the local file and makes one `files_upload` call, using add mode for `POST` and overwrite mode for `PUT`. This is the provider-call count shown by the code; it does not imply any further Dropbox internal work or performance characteristics.
-
-The decision memo proposes a two-call, revision-checked replace: read the current revision, then upload using that revision. That cost explanation applies only if the implementation adopts that flow. The current `PUT` uses overwrite mode without a revision check and can create the file if it does not exist, so it does not match the memo's proposed replace-only behavior. The design and implementation should be reconciled before claiming the two-call behavior.
+PR #37's `PUT` still creates a missing file and overwrites concurrent changes. Before it merges, Zesan changes it to Decision 1, option C: 2 Dropbox calls, 404 for a missing file and a revision check. Until then, the 2-call cost in this document describes the plan, not the code.
 
 ### Deployment tools
 
@@ -349,16 +361,16 @@ Proposed teardown date: Dec 18, 2026, after HW2 grades are returned. The CircleC
 - **Runtime environment:** upgrade from Python 3.11 to **Python 3.12** across all `pyproject.toml` workspace files, `.python-version`, and CI Docker base images (memo Q10).
 - **Workspace and configuration:**
   - Replace the local workspace source `cloud_storage_client_api` in `pyproject.toml` with the external dependency pointing to the tagged release.
-  - Remove the local `src/cloud_storage_client_api/` directory once the external package is vendored into `uv.lock`.
+  - Remove the local `src/cloud_storage_client_api/` directory once `uv.lock` pins the external package.
 - **Provider adapter (`dropbox_client_impl`):**
-  - *Decision 1, option C (PR #37):* replace the single-call overwrite with a two-call, revision-checked replace: call `files_get_metadata()` to read the existing revision, followed by `files_upload(..., mode=WriteMode.update(rev), autorename=False)`. Fails with `404 not_found` if missing and refuses concurrent overwrites.
+  - *Decision 1, option C (PR #37):* replace the single-call overwrite with a two-call, revision-checked replace: call `files_get_metadata()` to read the existing revision, followed by `files_upload(..., mode=WriteMode.update(rev), autorename=False)`. A missing file returns `404 not_found`, and a concurrent change is refused.
   - *Path ingestion:* implement `clean_up_path` to accept paths with or without a leading `/`, stripping trailing slashes, empty segments, and `.` / `..` traversal tokens.
   - *Metadata serialization:* drop `is_folder`; rename `modified` to `modified_at`, serialized in ISO 8601 UTC with a `Z` suffix. Include optional `etag` and `type` (`"file"` or `"folder"` for list entries).
-  - *Health probing:* implement `check_health()` via a lightweight remote call (`dbx.users_get_current_account()`).
+  - *Health probing:* implement `check_health()` with one `dbx.users_get_current_account()` call.
 - **HTTP service (`cloud_storage_service`):**
   - *Replace HW1 routes:* retire `POST /files/upload`, `POST /files/move`, and `GET /folders/list`. Introduce the shared REST routes: `POST /files` (create-only, 201), `PUT /files` (replace-only, 200), `PATCH /files?path=<from>` with body `{"new_path": "<to>"}`, `GET /files?path=<folder_path>`, `DELETE /files?path=<path>`, `GET /health`, and `GET /health/provider`.
-  - *Error production:* retain `SharedErrorRoute` in `errors.py` for route-level exception translation, and register FastAPI app-level exception handlers for `404` (`route_not_found`), `405` (`method_not_allowed`), and `500` (`internal_error`) so that all HTTP responses strictly conform to `{"error": {"code", "message"}}`.
-  - *Validation status code:* map syntactic validation failures (`RequestValidationError`) to `400 invalid_request` instead of FastAPI's default 422. Keep `422 invalid_operation` strictly for semantic domain errors (e.g. moving a folder into itself, or deleting root `?path=/`).
+  - *Error production:* retain `SharedErrorRoute` in `errors.py` for route-level exception translation, and register FastAPI app-level exception handlers for `404` (`route_not_found`), `405` (`method_not_allowed`), and `500` (`internal_error`) so every error response uses `{"error": {"code", "message"}}`.
+  - *Validation status code:* map syntactic validation failures (`RequestValidationError`) to `400 invalid_request` instead of FastAPI's default 422. Use `422 invalid_operation` only for semantic domain errors (e.g. moving a folder into itself, or deleting root `?path=/`).
 - **Tests, documentation, and examples:**
   - Update all 33 route test occurrences and 5 references in `TUTORIAL.md`.
   - Update all 22 tutorial screenshots and `README.md` to show the unified routes and error bodies.
@@ -373,12 +385,12 @@ Proposed teardown date: Dec 18, 2026, after HW2 grades are returned. The CircleC
 |---|---|---|---|
 | **Workspace and Python 3.12 setup** | Shreyas | • Bump `.python-version` and `pyproject.toml` to Python 3.12.<br>• Pin the first unified-repo tag that contains the storage contract in `pyproject.toml` and `uv.lock` (not `0.1.0`, which holds the mail-client template).<br>• Remove internal `src/cloud_storage_client_api/`. | `uv sync --all-packages --extra dev`<br>`uv run ruff check .`<br>`uv run mypy src tests` |
 | **Dropbox adapter realignment (PR #37)** | Zesan (Replace/Create), Jing (Metadata/List/Health) | • Implement Decision 1, option C (two-call revision-checked replace in `dropbox_impl.py`).<br>• Implement `clean_up_path` and `check_health()`.<br>• Update the metadata model (`modified_at` with `Z`, `type`, drop `is_folder`).<br>• Enforce the strict upload limit (150 MiB) and conflict checks. | Fast unit tests: `uv run pytest src/dropbox_client_impl/tests/`<br>Live integration tests in a uniquely named scratch folder: `test_upload_onto_existing_file_without_overwrite_is_409`, live stale-rev replace test. |
-| **Unified HTTP service and error realignment** | John and Victor | • Implement unified routes: `POST /files`, `PUT /files`, `PATCH /files`, `GET /files`, `DELETE /files`, `GET /health`, `GET /health/provider`.<br>• Implement Decision 3, option C: app-level exception handlers for 404, 405, 500.<br>• Re-map `RequestValidationError` to `400 invalid_request` and root deletion to `422 invalid_operation`. | 82 route unit tests passing with in-memory `FakeStorageClient`: `uv run pytest src/cloud_storage_service/tests/` |
-| **Conformance suite and doc updates** | Shreyas / All | • Vendor Team 6's conformance test suite into `tests/conformance/`.<br>• Update `README.md`, `TUTORIAL.md`, and regenerate all 22 tutorial screenshots for `v0.2.0`. | Full test pass against both `FakeStorageClient` and the live Dropbox service in CI. Green CircleCI build. |
+| **Unified HTTP service and error realignment** | John (routes), Victor (error handlers) | • Implement unified routes: `POST /files`, `PUT /files`, `PATCH /files`, `GET /files`, `DELETE /files`, `GET /health`, `GET /health/provider`.<br>• Implement Decision 3, option C: app-level exception handlers for 404, 405, 500.<br>• Re-map `RequestValidationError` to `400 invalid_request` and root deletion to `422 invalid_operation`. | 82 route unit tests passing with in-memory `FakeStorageClient`: `uv run pytest src/cloud_storage_service/tests/` |
+| **Conformance suite and doc updates** | Shreyas | • Vendor Team 6's conformance test suite into `tests/conformance/`.<br>• Update `README.md`, `TUTORIAL.md`, and regenerate all 22 tutorial screenshots for `v0.2.0`. | Full test pass against both `FakeStorageClient` and the live Dropbox service in CI. Green CircleCI build. |
 
 ### Early end-to-end testing
 
-To catch broken assumptions before the final merge of HW1 into `dev`, deploy the service in an isolated staging environment (Google Cloud Run test instance) and run the shared vertical workflow:
+To catch broken assumptions before the final merge of `dev` into `main`, deploy the service in an isolated staging environment (Google Cloud Run test instance) and run the shared vertical workflow:
 
 1. **Upload file (POST):** upload the file using `POST /files`.
 2. **Get metadata:** retrieve file metadata to confirm initialization.
@@ -397,14 +409,14 @@ If a defect or missing requirement is uncovered after implementation has begun:
    - Peer storage service implementations: **Team 1 (Dropbox)** and **Team 6 (S3/OCI)**.
 2. **Notification and review protocol:**
    - The discovering individual must not patch the contract unilaterally. An issue must be opened on `Dayana20/ospsd26-cloud-storage` outlining the technical defect and impact.
-   - An async review should be initiated in the `#document-storage` Slack channel.
+   - The discoverer starts an async review in the `#document-storage` Slack channel.
    - Approval is required from the designated vertical leads before a change is accepted:
      - **Coordinator:** Dayana (Team 1)
      - **Implementation leads:** Yashwanth (Team 1), Jing Qian (Team 3), Debasmith Mandal (Team 6)
 3. **Release and migration window:**
    - The coordinator cuts an incremental semantic tag on the unified repository.
    - A release advisory and migration diff are posted to `#document-storage`.
-   - All teams should then update their pinned dependency in `pyproject.toml` and adapt their services.
+   - Each team then updates its pinned dependency in `pyproject.toml` and adapts its service.
 
 ## Testing
 
@@ -424,14 +436,14 @@ We keep HW1's three layers of tests and add the shared conformance suite. Fast t
 | Guarantee | Check |
 |---|---|
 | Create never overwrites, even identical bytes | Live: `test_upload_onto_existing_file_without_overwrite_is_409`, `test_repeating_an_identical_upload_is_409` |
-| Replace returns `404` for a missing file and refuses a concurrent change | **New** live test: change the file between the two Dropbox calls |
+| Replace returns `404` for a missing file and refuses a concurrent change | **New** live: `test_replace_missing_file_is_404`, `test_replace_refuses_stale_revision` (changes the file between the two Dropbox calls) |
 | `id` stays the same across move and replace | Live: `test_rename_then_move_round_trip`, `test_upload_then_overwrite_round_trip` |
 | Move never overwrites; a folder can't be moved into itself | Live: `test_missing_source_and_conflict`, `test_folder_moved_into_itself_is_invalid_input` |
-| List returns every entry, sorted, with `type` | Fast: pagination tests (0, fewer than, exactly and more than one page); **new** live test for sorting and `type` |
-| `modified_at` is UTC with `Z` | **New** fast model test and live check |
+| List returns every entry, sorted, with `type` | Fast: pagination tests in `src/dropbox_client_impl/tests/` (0, fewer than, exactly and more than one page); **new** live: `test_list_is_sorted_and_typed` |
+| `modified_at` is UTC with `Z` | **New** fast: `test_modified_at_is_utc_with_z`; **new** live assertion in `test_upload_then_overwrite_round_trip` |
 | Delete removes folder contents; deleting again is `404` | Live: `test_delete_folder_removes_contents`, `test_delete_file_then_repeat_returns_404` |
-| Every failure uses the shared error body and agreed status | Fast: route failure tests for each status, using a mock client |
-| Provider health reports Dropbox being down | **New** fast test (mocked failure) and one live call |
+| Every failure uses the shared error body and agreed status | Fast: failure tests in `test_create_routes.py`, `test_read_routes.py`, `test_update_routes.py`, `test_delete_routes.py` and `test_path_validation.py`; **new** `test_unknown_route_uses_shared_error_body` for the app-level handlers |
+| Provider health reports Dropbox being down | **New** fast: `test_provider_health_is_503_when_dropbox_fails`; **new** live: `test_provider_health_is_ok` |
 
 ### Conformance suite
 
@@ -470,7 +482,7 @@ Questions that affect the shared contract must close before we treat the contrac
 
 ### Review
 
-| Review | Reviewer | Scope | Status on Nov 3 |
+| Review | Reviewer | Scope | Status on Nov 4 |
 |---|---|---|---|
 | Whole design | A Team 3 member who did not write the section under review (to be named) | Every section | Not started |
 | Contract-facing parts | A Team 1 or Team 6 member (to be named) | API and data model, failure behavior, migration, and the open questions above | Not started |
