@@ -1,13 +1,13 @@
 # Team 3 Design Document
 
 **By:** John Ashik, Shreyas Kaldate, Zesan Rahman, Jing Qian, Victor Wang
-**Vertical:** Dropbox
+**Vertical:** Document Storage (provider: Dropbox)
 **Reviewers:** TBD
-**Last updated:** 11/2/2026
+**Last updated:** 11/4/2026
 **Status:** Draft
 
 **Links:**
-- Shared contract revision:
+- Shared contract revision: tag [`0.1.0`](https://github.com/Dayana20/ospsd26-cloud-storage/tree/0.1.0) exists (Nov 4), but it contains the course's mail-client template rather than the storage contract. We pin the first tag that contains the storage contract (open question 1).
 - Decision memo: <https://docs.google.com/document/d/1K9U8uO-FVbeu0PGlWpr_frJ6YQmoHXdz/edit?usp=sharing&ouid=104071874439967208816&rtpof=true&sd=true>
 - Implementation work:
   - Team 3 GitHub: <https://github.com/Shreyas191/OSPSD-Team-3>
@@ -72,10 +72,10 @@ Non-goals, or goals that you the reader may expect us to reach but we are not pr
 - **Path ingestion and normalization (`clean_up_path`):** the service accepts paths both with or without a leading `/`. Incoming paths are sanitized to a canonical format (`/path/to/resource`), stripping trailing slashes, empty segments, and `.` / `..` traversal tokens. Invalid paths are rejected with HTTP 400 (`invalid_request`). Attempting to delete the root (`?path=/`) is rejected with HTTP 422 (`invalid_operation`).
 - **Syntactic vs. semantic error boundary:**
   - **HTTP 400 (`invalid_request`):** malformed paths, missing required arguments, or payload limit violations (>150 MiB). FastAPI's `RequestValidationError` is intercepted to return 400.
-  - **HTTP 422 (`invalid_operation` / `invalid_input`):** semantically invalid domain operations (e.g. moving a folder into itself, or deleting root).
+  - **HTTP 422 (`invalid_operation`):** semantically invalid domain operations (e.g. moving a folder into itself, or deleting root).
   - **HTTP 404 (`not_found`):** the target file or directory does not exist.
   - **HTTP 409 (`conflict`):** the target destination already exists on a strict create (`POST /files`), move, or rename conflict.
-  - **HTTP 502 (`provider_failure`):** upstream provider error or partial folder deletion.
+  - **HTTP 502 (`provider_error`):** upstream provider error or partial folder deletion.
   - **HTTP 503 (`provider_unavailable` / `service_busy`):** service concurrency shed, or the remote provider is unreachable.
 - **Domain data model (`File`):** standardized across all operations. Returns `id` (opaque string), `name`, `path` (canonical absolute path), `size` (bytes; null for folders), `modified_at` (ISO 8601 UTC ending in `Z`; null for folders), and an optional `etag`. The legacy `is_folder` boolean is dropped from the metadata model in favor of a context-specific `type` field (`"file"` or `"folder"`) in folder listing responses.
 - **Split health probes:** decouples process liveness (`GET /health` returns 200 `{"status": "ok"}`) from provider connectivity (`GET /health/provider` executes a lightweight `users_get_current_account()` ping to verify credentials and remote storage reachability, returning 503 if unreachable).
@@ -100,7 +100,7 @@ Non-goals, or goals that you the reader may expect us to reach but we are not pr
      "name": "spec.pdf",
      "path": "/Docs/spec.pdf",
      "size": 1048576,
-     "modified": "2026-10-24T12:00:00Z"
+     "modified_at": "2026-10-24T12:00:00Z"
    }
    ```
 
@@ -126,7 +126,7 @@ Non-goals, or goals that you the reader may expect us to reach but we are not pr
 
 ## API and data model
 
-**Contract source.** The shared HTTP contract and Python package (Python 3.12) will live in [Dayana20/ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage). It has no code or tag yet (as of Nov 3), so this section follows the Oct 28 decision memo. Unresolved points are marked **(open)**.
+**Contract source.** The shared HTTP contract and Python package (Python 3.12) will live in [Dayana20/ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage). Its first tag, `0.1.0` (Nov 4), contains the course's mail-client template, not the storage models, errors or routes, so this section follows the Oct 28 decision memo. Unresolved points are marked **(open)**.
 
 ### Operations
 
@@ -268,16 +268,17 @@ A consumer that branches on 404 would read a mistyped route as a missing file. T
 
 ## Failure behavior
 
-Requests are validated by FastAPI before the route calls the provider-independent `Client`. The client translates provider errors into built-in exceptions; `SharedErrorRoute` maps those exceptions to the shared response shape, `{"error": {"code": "...", "message": "..."}}`.
+Requests are validated by FastAPI before the route calls the provider-independent `Client`. The client translates provider errors into built-in exceptions; `SharedErrorRoute` maps those exceptions to the shared response shape, `{"error": {"code": "...", "message": "..."}}`. Status codes and code names follow the table proposed in shared-repo issue #4 (open questions 2 and 3); today's service still returns `422 invalid_input` for validation errors and `502 provider_failure`, and changes to these as part of the migration.
 
 | Outcome | HTTP error response |
 |---|---|
-| Invalid request, invalid path, `ValueError`, or `IsADirectoryError` | 422 `invalid_input` |
+| Invalid request or invalid path (request validation, `RequestValidationError`) | 400 `invalid_request` |
+| Invalid operation, e.g. a folder moved into itself or a folder given to download (`ValueError`, `IsADirectoryError`) | 422 `invalid_operation` |
 | Source path not found (`FileNotFoundError`) | 404 `not_found` |
 | Destination already exists (`FileExistsError`) | 409 `conflict` |
 | Permission denied (`PermissionError`) | 403 `permission_denied` |
 | Provider connection failure (`ConnectionError`) | 503 `provider_unavailable` |
-| Internal error (`OSError`) | 502 `provider_failure` |
+| Internal error (`OSError`) | 502 `provider_error` |
 | Too many requests in flight | 503 `service_busy` |
 | Unexpected exception | 500 |
 
@@ -371,7 +372,7 @@ Proposed teardown date: Dec 18, 2026, after HW2 grades are returned. The CircleC
 
 | Task | Owner(s) | Scope of changes | Verification and exit criteria |
 |---|---|---|---|
-| **Workspace and Python 3.12 setup** | Shreyas | • Bump `.python-version` and `pyproject.toml` to Python 3.12.<br>• Add `ospsd26-cloud-storage==0.1.0` to `uv.lock`.<br>• Remove internal `src/cloud_storage_client_api/`. | `uv sync --all-packages --extra dev`<br>`uv run ruff check .`<br>`uv run mypy src tests` |
+| **Workspace and Python 3.12 setup** | Shreyas | • Bump `.python-version` and `pyproject.toml` to Python 3.12.<br>• Pin the first unified-repo tag that contains the storage contract in `pyproject.toml` and `uv.lock` (not `0.1.0`, which holds the mail-client template).<br>• Remove internal `src/cloud_storage_client_api/`. | `uv sync --all-packages --extra dev`<br>`uv run ruff check .`<br>`uv run mypy src tests` |
 | **Dropbox adapter realignment (PR #37)** | Zesan (Replace/Create), Jing (Metadata/List/Health) | • Implement Decision 1, option C (two-call revision-checked replace in `dropbox_impl.py`).<br>• Implement `clean_up_path` and `check_health()`.<br>• Update the metadata model (`modified_at` with `Z`, `type`, drop `is_folder`).<br>• Enforce the strict upload limit (150 MiB) and conflict checks. | Fast unit tests: `uv run pytest src/dropbox_client_impl/tests/`<br>Live integration tests in a uniquely named scratch folder: `test_upload_onto_existing_file_without_overwrite_is_409`, live stale-rev replace test. |
 | **Unified HTTP service and error realignment** | John and Victor | • Implement unified routes: `POST /files`, `PUT /files`, `PATCH /files`, `GET /files`, `DELETE /files`, `GET /health`, `GET /health/provider`.<br>• Implement Decision 3, option C: app-level exception handlers for 404, 405, 500.<br>• Re-map `RequestValidationError` to `400 invalid_request` and root deletion to `422 invalid_operation`. | 82 route unit tests passing with in-memory `FakeStorageClient`: `uv run pytest src/cloud_storage_service/tests/` |
 | **Conformance suite and doc updates** | Shreyas / All | • Vendor Team 6's conformance test suite into `tests/conformance/`.<br>• Update `README.md`, `TUTORIAL.md`, and regenerate all 22 tutorial screenshots for `v0.2.0`. | Full test pass against both `FakeStorageClient` and the live Dropbox service in CI. Green CircleCI build. |
@@ -442,7 +443,7 @@ We keep HW1's three layers of tests and add the shared conformance suite. Fast t
 
 ### Concerns and gaps
 
-- **Deferred: no conformance suite yet.** The unified repo is still empty. Owner: Team 6 (Prateek), needed by Milestone 3. Until then, "matches the other services" is checked only by reading the memo.
+- **Deferred: no conformance suite yet.** The unified repo's only tag, `0.1.0`, holds the mail-client template and no storage tests. Owner: Team 6 (Prateek), needed by Milestone 3. Until then, "matches the other services" is checked only by reading the memo.
 - **Accepted: the 150 MB upload limit** isn't tested against real Dropbox; uploading such a file in every run is too slow and costly. We test our size check with a mock.
 - **Accepted: a folder delete that fails partway** can only be simulated with a mock; we can't make Dropbox fail on demand.
 - **Unverified:** what Dropbox returns for a stale revision on replace. The new live test above will confirm it before the replace PR merges.
@@ -455,7 +456,7 @@ Questions that affect the shared contract must close before we treat the contrac
 
 | # | Question | Consequence for Team 3 | Owner | Next step | Needed by |
 |---|---|---|---|---|---|
-| 1 | No tagged contract exists yet (memo Q11) | We cannot pin the shared package for Milestone 2. The package targets Python 3.12 (memo Q10), and we run 3.11 | Dayana (coordinator) | Shreyas asks for the first tag in the Document Storage channel | Nov 4; until then we report the dependency as incomplete |
+| 1 | The only tag, `0.1.0` (Nov 4), contains the mail-client template, not the storage contract (memo Q11) | We can pin a tag, but not one with the storage models and errors, so our Milestone 2 dependency is incomplete. The package targets Python 3.12 (memo Q10), and we run 3.11 | Dayana (coordinator) | Shreyas asks in the Document Storage channel for the storage contract to be committed and tagged | Nov 4; until then we report the dependency as incomplete |
 | 2 | 409 or 422 for an occupied destination or a stale replace (memo Q3) | Changes create, replace and move responses and their tests | Darsh (Team 6), shared-repo issue #4 | Team 3 supports keeping 409, which all three services return today, on issue #4 | First contract tag |
 | 3 | One code name per status (memo, Errors) | Renames codes in `errors.py`; the codes we rename appear on 43 lines in 5 route test files | Darsh (Team 6), issue #4; John and Victor implement | Adopt the issue #4 table once it is confirmed | First contract tag |
 | 4 | Team 6's two rules: 404 means only a missing file, and a 502 or 503 after a write means the outcome is unknown (memo Q8) | Decision 3 relies on the first rule; delete's "check before retrying" relies on the second | Darsh (Team 6) | Team 3 supports both rules on issue #4 | First contract tag |
