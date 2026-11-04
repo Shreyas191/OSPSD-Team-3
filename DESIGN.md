@@ -485,7 +485,7 @@ Questions that affect the shared contract must close before we treat the contrac
 
 | Review | Reviewer | Scope | Status on Nov 4 |
 |---|---|---|---|
-| Whole design | Victor Wang (Team 3) | Every section | Reviewed (Nov 4) |
+| Whole design | Victor Wang (Team 3) | Every section | Not started |
 | Contract-facing parts | Darsh (Team 6) | API and data model, failure behavior, migration, and the open questions above | Not started |
 
 Each review states what the reviewer checked, for example "compared every route and status in this document with the memo and issue #4". Reviewers comment in this document or on the pull request that adds `DESIGN.md`.
