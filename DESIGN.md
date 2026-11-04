@@ -2,7 +2,7 @@
 
 **By:** John Ashik, Shreyas Kaldate, Zesan Rahman, Jing Qian, Victor Wang
 **Vertical:** Document Storage (provider: Dropbox)
-
+**Reviewers:** Victor Wang (Team 3, whole design), Darsh (Team 6, contract-facing parts)
 **Last updated:** 11/4/2026
 
 **Links:**
@@ -484,8 +484,8 @@ Questions that affect the shared contract must close before we treat the contrac
 
 | Review | Reviewer | Scope | Status on Nov 4 |
 |---|---|---|---|
-| Whole design | A Team 3 member who did not write the section under review (to be named) | Every section | Not started |
-| Contract-facing parts | A Team 1 or Team 6 member (to be named) | API and data model, failure behavior, migration, and the open questions above | Not started |
+| Whole design | Victor Wang (Team 3) | Every section | Not started |
+| Contract-facing parts | Darsh (Team 6) | API and data model, failure behavior, migration, and the open questions above | Not started |
 
 Each review states what the reviewer checked, for example "compared every route and status in this document with the memo and issue #4". Reviewers comment in this document or on the pull request that adds `DESIGN.md`.
 
