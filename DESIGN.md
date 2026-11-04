@@ -2,12 +2,11 @@
 
 **By:** John Ashik, Shreyas Kaldate, Zesan Rahman, Jing Qian, Victor Wang
 **Vertical:** Document Storage (provider: Dropbox)
-**Reviewers:** TBD
+
 **Last updated:** 11/4/2026
-**Status:** Draft
 
 **Links:**
-- Shared contract revision: tag [`0.1.0`](https://github.com/Dayana20/ospsd26-cloud-storage/tree/0.1.0) exists (Nov 4), but it contains the course's mail-client template rather than the storage contract. We pin the first tag that contains the storage contract (open question 1).
+- Shared contract: tag [`0.1.0`](https://github.com/Dayana20/ospsd26-cloud-storage/tree/0.1.0)
 - Decision memo: <https://docs.google.com/document/d/1K9U8uO-FVbeu0PGlWpr_frJ6YQmoHXdz/edit?usp=sharing&ouid=104071874439967208816&rtpof=true&sd=true>
 - Implementation work:
   - Team 3 GitHub: <https://github.com/Shreyas191/OSPSD-Team-3>
