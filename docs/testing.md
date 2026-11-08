@@ -83,6 +83,10 @@ export DROPBOX_REFRESH_TOKEN="your-refresh-token"
 
 To get a refresh token for CI, run `uv run python -m dropbox_client_impl login` locally. Then copy the `refresh_token` value out of `.dropbox_token.json` straight into the CI secret store. Don't paste it anywhere else.
 
+## How the Dropbox unit tests are organised
+
+`src/dropbox_client_impl/tests/` has one file per `Client` method (`test_upload.py`, `test_copy.py`, `test_list_folder.py`, ...) plus the `test_auth_*.py` files. The `dbx` fixture in `conftest.py` is `create_autospec(dropbox.Dropbox, instance=True)`: a call with arguments the real SDK would reject fails the test, and every success test asserts the exact SDK call. Tests return and raise real SDK objects built with the helpers in `tests/dropbox_sdk.py`, not `Mock()` stand-ins.
+
 ## Authentication
 
 Authentication uses Dropbox OAuth 2.0 (see `src/dropbox_client_impl/README.md`):
@@ -92,7 +96,7 @@ Authentication uses Dropbox OAuth 2.0 (see `src/dropbox_client_impl/README.md`):
 - Tests can bypass authentication with `DropboxClient(dbx=mock)`.
 
 ### What the unit tests cover
-`src/dropbox_client_impl/tests/test_authentication.py` never contacts Dropbox. Its only network use is a throwaway callback server on `127.0.0.1`. It covers:
+The auth tests (`src/dropbox_client_impl/tests/test_auth_*.py`: credentials, requests, OAuth and login) never contact Dropbox. Their only network use is a throwaway callback server on `127.0.0.1`. They cover:
 - the authorization URL (app key, redirect URI, `token_access_type=offline`, CSRF state)
 - missing or blank `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET` / `DROPBOX_REDIRECT_URI`
 - exchanging the authorization code and saving the refresh token, with file mode `600`
