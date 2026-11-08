@@ -5,11 +5,23 @@
 
 ## Running locally
 ```bash
-uv run uvicorn cloud_storage_service.app:app --reload
+uv run python main.py                                      # from the repository root
+uv run uvicorn cloud_storage_service.app:app --reload      # while developing
 ```
 Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dropbox credentials are missing, the service stops at startup with a `DropboxAuthError` telling you to run `uv run python -m dropbox_client_impl login`.
 
 The service handles at most `MAX_IN_FLIGHT_REQUESTS` requests at once (default `10`, set in `.env` or the environment); any more get `503 service_busy` immediately. See [overload protection](../../docs/overload-protection.md).
+
+## Modules
+
+| Module | Owns |
+|--------|------|
+| `app.py` | Builds the storage client at startup and puts the app together |
+| `routes.py` | One function per route, each calling one `Client` method |
+| `models.py` | Request and response bodies, and the path pattern |
+| `dependencies.py` | `get_storage_client`, which hands routes the client |
+| `errors.py` | The shared error format and the exception-to-status mapping |
+| `overload.py` | The limit on requests in flight |
 
 ## Choosing the provider
 `build_storage_client()` in `app.py` is the only place the service names a concrete provider (it returns a `DropboxClient`). The app calls it once at startup, stores the client on `app.state`, and routes receive it through the `get_storage_client` dependency as an abstract `Client`. Switching providers means changing `build_storage_client()` only; routes and response models stay the same.
@@ -30,7 +42,7 @@ The service handles at most `MAX_IN_FLIGHT_REQUESTS` requests at once (default `
 - Errors return one of the status codes listed per endpoint in the team's shared error format: `{"error": {"code": "<code>", "message": "<message>"}}`.
 
 ### Shared error format
-The format is defined in `errors.py`: a route opts in by being registered on the `shared_errors` router in `app.py`, without its own `try`/`except`. Request validation errors and the built-in exceptions the `Client` contract documents are mapped as follows; any other exception is a bug and still surfaces as `500`.
+The format is defined in `errors.py`: every route is registered on the `router` in `routes.py`, which uses `SharedErrorRoute`, so no route has its own `try`/`except`. Request validation errors and the built-in exceptions the `Client` contract documents are mapped as follows; any other exception is a bug and still surfaces as `500`.
 
 | Status | `code` | Cause |
 |--------|--------|-------|

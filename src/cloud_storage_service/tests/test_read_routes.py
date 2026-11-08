@@ -19,8 +19,6 @@ from tests.fakes import FakeStorageClient
 
 from cloud_storage_service.app import app, get_storage_client
 
-EXPECTED_COUNT_TWO = 2
-
 
 @pytest.fixture
 def storage() -> Iterator[FakeStorageClient]:
@@ -188,7 +186,7 @@ def test_list_folder_returns_direct_children(storage: FakeStorageClient, http: T
 
     assert response.status_code == HTTPStatus.OK
     items = response.json()
-    assert len(items) == EXPECTED_COUNT_TWO
+    assert len(items) == 2
     paths = {item["path"] for item in items}
     assert paths == {"/Docs/report.pdf", "/Docs/Archive"}
 
@@ -202,7 +200,7 @@ def test_list_folder_root(storage: FakeStorageClient, http: TestClient) -> None:
 
     assert response.status_code == HTTPStatus.OK
     items = response.json()
-    assert len(items) == EXPECTED_COUNT_TWO
+    assert len(items) == 2
     assert {item["path"] for item in items} == {"/a.txt", "/b.txt"}
 
 
@@ -293,7 +291,7 @@ def test_search_files_returns_matching_entries(
 
     assert response.status_code == HTTPStatus.OK
     items = response.json()
-    assert len(items) == EXPECTED_COUNT_TWO
+    assert len(items) == 2
     names = {item["name"] for item in items}
     assert names == {"report_2026.pdf", "report_draft.txt"}
 
@@ -307,7 +305,7 @@ def test_search_files_respects_max_results(storage: FakeStorageClient, http: Tes
     response = http.get("/files/search", params={"q": "report", "max_results": 2})
 
     assert response.status_code == HTTPStatus.OK
-    assert len(response.json()) == EXPECTED_COUNT_TWO
+    assert len(response.json()) == 2
 
 
 @pytest.mark.parametrize(
