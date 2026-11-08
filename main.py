@@ -1,28 +1,24 @@
-"""Main module for demonstrating the cloud storage client."""
+"""Entry point: start the Cloud Storage Service.
 
-import logging
+    uv run python main.py    # http://127.0.0.1:8000, Swagger UI at /docs
 
-import cloud_storage_client_api
-import dropbox_client_impl  # noqa: F401  (import registers the Dropbox implementation)
+``HOST`` and ``PORT`` change the address. The service needs Dropbox credentials (see the
+README); without them it stops at startup with an error that says how to log in.
+"""
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import os
+
+import uvicorn
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8000
 
 
 def main() -> None:
-    """Initialize the client and list the root folder of the Dropbox account."""
-    # get_client() returns a DropboxClient because dropbox_client_impl registered itself.
-    client = cloud_storage_client_api.get_client()
-    logger.info("Using %s", type(client).__name__)
-
-    try:
-        for entry in client.list_folder(""):
-            kind = "folder" if entry.is_folder else f"{entry.size} bytes"
-            logger.info("%s (%s)", entry.path, kind)
-    except NotImplementedError:
-        logger.info("list_folder is not implemented yet.")
-
-    print("Demo complete.")  # noqa: T201
+    """Serve the FastAPI app in ``cloud_storage_service.app``."""
+    host = os.environ.get("HOST", DEFAULT_HOST)
+    port = int(os.environ.get("PORT", DEFAULT_PORT))
+    uvicorn.run("cloud_storage_service.app:app", host=host, port=port)
 
 
 if __name__ == "__main__":
