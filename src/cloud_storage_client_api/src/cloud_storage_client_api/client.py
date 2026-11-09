@@ -50,6 +50,38 @@ class Client(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def replace_file(self, local_path: str, remote_path: str) -> File:
+        """Replace the existing file at ``remote_path`` with ``local_path``'s contents.
+
+        Inputs:
+            local_path: Path of the local file with the new contents.
+            remote_path: Absolute path of the file to replace (e.g. ``/Docs/report.pdf``).
+
+        Returns:
+            The replaced file. It keeps its ``id``.
+
+        Side effects:
+            Overwrites the file in the provider. Never creates a file: a missing file is
+            an error. The write is refused if the file changes between the moment the
+            client reads it and the moment it writes, so a concurrent change is never
+            silently overwritten.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``remote_path``.
+            IsADirectoryError: If ``remote_path`` is a folder.
+            FileExistsError: If the file changed while it was being replaced; reading it
+                again and retrying may succeed.
+            ValueError: If the provider rejects the path or the file is too large for it
+                to accept in one upload.
+            PermissionError: If the provider does not allow writing at ``remote_path``.
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy; the file may or may not have been replaced.
+            OSError: For any other provider failure, such as a full account.
+
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def create_folder(self, remote_path: str) -> File:
         """Create a folder at ``remote_path`` and return its metadata.
 
@@ -275,6 +307,24 @@ class Client(ABC):
                 or may not have happened; retrying is safe, because a repeat after success
                 raises ``FileNotFoundError`` rather than moving anything twice.
             OSError: For any other provider failure, such as a full account.
+
+        """
+        raise NotImplementedError
+
+    # ----- Health -----
+
+    @abstractmethod
+    def check_health(self) -> None:
+        """Check that the provider can be reached with the configured credentials.
+
+        Side effects:
+            Makes one cheap read-only call to the provider.
+
+        Raises:
+            ConnectionError: If the provider could not be reached or is temporarily too
+                busy.
+            OSError: If the provider answered with an error, for example because the
+                credentials were revoked.
 
         """
         raise NotImplementedError
