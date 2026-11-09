@@ -1,0 +1,10 @@
+# Allowlist: send only what the image needs to the Docker build. Everything else stays out,
+# including .env, .dropbox_token.json, .git and .venv.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!main.py
+!src/
+src/*/tests/
+**/__pycache__/
