@@ -149,6 +149,11 @@ While developing, reload on every code change:
 uv run uvicorn cloud_storage_service.app:app --reload
 ```
 
+To build and run the container image (tagged with the commit SHA), see [`docs/deployment.md`](docs/deployment.md):
+```bash
+scripts/build_image.sh
+```
+
 ### Running the Toolchain
 
 -   **Linting & Formatting (Ruff):**
