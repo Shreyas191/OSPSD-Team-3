@@ -79,7 +79,8 @@ def test_upload_then_overwrite_round_trip(client: DropboxClient, scratch: str, h
     path = f"{scratch}/Docs/report.pdf"
 
     first = _upload(http, path, CONTENT)
-    assert (first["path"], first["size"], first["is_folder"]) == (path, len(CONTENT), False)
+    assert (first["path"], first["size"]) == (path, len(CONTENT))
+    assert first["modified_at"] is not None
     assert _download(client, path) == CONTENT
 
     second = _upload(http, path, b"replaced", overwrite=True)
@@ -135,7 +136,7 @@ def test_create_folder_then_conflict(scratch: str, http: TestClient) -> None:
 
     created = http.post("/folders/create", json={"remote_path": path})
     assert created.status_code == HTTPStatus.OK, created.text
-    assert (created.json()["path"], created.json()["is_folder"]) == (path, True)
+    assert (created.json()["path"], created.json()["size"], created.json()["modified_at"]) == (path, None, None)
 
     again = http.post("/folders/create", json={"remote_path": path})
     assert again.status_code == HTTPStatus.CONFLICT, again.text
@@ -163,6 +164,6 @@ def test_copy_round_trip_and_failures(client: DropboxClient, scratch: str, http:
 
     nested = http.post("/files/copy", json={"from_path": f"{scratch}/Docs", "to_path": f"{scratch}/Docs/Inner"})
     assert nested.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, nested.text
-    assert nested.json()["error"]["code"] == "invalid_input"
+    assert nested.json()["error"]["code"] == "invalid_operation"
     with pytest.raises(dropbox.exceptions.ApiError):
         client.dbx.files_get_metadata(f"{scratch}/Docs/Inner")

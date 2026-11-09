@@ -10,22 +10,26 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
+from pydantic import AfterValidator
 
 from cloud_storage_service.dependencies import StorageClient
 from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute
 from cloud_storage_service.models import (
-    ABSOLUTE_PATH_PATTERN,
-    AbsolutePath,
     CopyRequest,
     CreateFolderRequest,
+    EntryPath,
     FileResponse,
+    FolderPath,
+    ListEntry,
     MoveRequest,
     RenameRequest,
+    clean_path,
 )
 
 router = APIRouter(route_class=SharedErrorRoute)
 
 
+_INVALID_REQUEST = {400: "Missing field, invalid path, or a body that is not valid JSON"}
 _PROVIDER_ERRORS = {
     502: "The storage provider failed",
     503: "The storage provider is unreachable or busy",
@@ -35,10 +39,11 @@ _PROVIDER_ERRORS = {
 def error_responses(descriptions: dict[int, str]) -> dict[int | str, dict[str, Any]]:
     """Document a route's error responses for OpenAPI.
 
-    ``descriptions`` maps each status the route can return to what it means there. The
-    502 and 503 provider failures apply to every route, so they are always added.
+    ``descriptions`` maps each status the route can return to what it means there. A 400
+    for an invalid request and the 502 and 503 provider failures apply to every route, so
+    they are always added (a route may describe its own 400 instead).
     """
-    documented = {**descriptions, **_PROVIDER_ERRORS}
+    documented = {**_INVALID_REQUEST, **descriptions, **_PROVIDER_ERRORS}
     return {
         code: {"model": ErrorResponse, "description": text} for code, text in documented.items()
     }
@@ -53,7 +58,7 @@ def error_responses(descriptions: dict[int, str]) -> dict[int | str, dict[str, A
         {
             403: "The provider does not allow writing there",
             409: "Something is at the path: `overwrite` is false, or it's a folder",
-            422: "Missing file, invalid path, or a file over the provider's upload limit",
+            422: "A file over the provider's upload limit",
         },
     ),
 )
@@ -61,8 +66,8 @@ def upload_file(
     file: Annotated[UploadFile, File(description="The file contents")],
     remote_path: Annotated[
         str,
+        AfterValidator(clean_path),
         Form(
-            pattern=ABSOLUTE_PATH_PATTERN,
             description="Destination path in cloud storage, including the file name",
             examples=["/Docs/report.pdf"],
         ),
@@ -92,7 +97,6 @@ def upload_file(
         {
             403: "The provider does not allow creating it there",
             409: "Something is already at the path",
-            422: "Missing, relative or root path",
         },
     ),
 )
@@ -108,7 +112,7 @@ def create_folder(request: CreateFolderRequest, client: StorageClient) -> FileRe
             403: "The provider does not allow the copy",
             404: "Nothing exists at the source path",
             409: "The destination is taken (including by the source itself)",
-            422: "Invalid path, or a folder copied into itself",
+            422: "A folder copied into itself",
         },
     ),
 )
@@ -126,12 +130,11 @@ def copy_entry(request: CopyRequest, client: StorageClient) -> FileResponse:
         {
             403: "The provider does not allow reading metadata",
             404: "Nothing exists at the path",
-            422: "Missing, relative or root path",
         },
     ),
 )
-def get_file_metadata(path: AbsolutePath, client: StorageClient) -> FileResponse:
-    """Get metadata for a single file or folder by absolute path."""
+def get_file_metadata(path: EntryPath, client: StorageClient) -> FileResponse:
+    """Get metadata for a single file or folder."""
     return FileResponse.from_file(client.get_metadata(path))
 
 
@@ -142,11 +145,11 @@ def get_file_metadata(path: AbsolutePath, client: StorageClient) -> FileResponse
         {
             403: "The provider does not allow reading the file",
             404: "Nothing exists at the path",
-            422: "Path points to a folder, or invalid path",
+            422: "The path is a folder",
         },
     ),
 )
-def download_file(path: AbsolutePath, client: StorageClient) -> Response:
+def download_file(path: EntryPath, client: StorageClient) -> Response:
     """Download the raw bytes of the file located at ``path``."""
     with tempfile.TemporaryDirectory() as temp_dir:
         local_path = Path(temp_dir) / "downloaded_file"
@@ -156,24 +159,26 @@ def download_file(path: AbsolutePath, client: StorageClient) -> Response:
 
 
 @router.get(
-    "/folders/list",
+    "/files",
     responses=error_responses(
         {
+            400: "Missing or invalid path",
             403: "The provider does not allow listing the folder",
             404: "Folder does not exist",
-            422: "Path points to a file, or invalid relative path",
+            422: "The path is a file, not a folder",
         },
     ),
 )
-def list_folder(
-    client: StorageClient,
-    path: Annotated[str, Query(pattern=r"^(/.*)?$")] = "",
-) -> list[FileResponse]:
-    """List all direct children in the folder at ``path``."""
-    return [FileResponse.from_file(entry) for entry in client.list_folder(path)]
+def list_folder(path: FolderPath, client: StorageClient) -> list[ListEntry]:
+    """List the direct children of the folder at ``path`` (``/`` is the root), sorted by path.
+
+    Every provider page is fetched, so the whole folder comes back as one array.
+    """
+    entries = client.list_folder("" if path == "/" else path)
+    return sorted((ListEntry.from_file(entry) for entry in entries), key=lambda entry: entry.path)
 
 
-@router.get("/files/search", responses=error_responses({422: "Invalid query parameters"}))
+@router.get("/files/search", responses=error_responses({422: "The provider rejects the query"}))
 def search_files(
     q: Annotated[str, Query(min_length=1, max_length=1000)],
     client: StorageClient,
@@ -190,7 +195,7 @@ _UPDATE_ERRORS = error_responses(
         403: "The provider does not allow the change",
         404: "Nothing exists at the source path",
         409: "The destination is taken (including by the source itself)",
-        422: "Invalid path or name, or a folder moved into itself",
+        422: "A folder moved into itself",
     },
 )
 
@@ -216,11 +221,16 @@ def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
     responses=error_responses(
         {
             403: "The provider does not allow deleting the entry",
+            400: "Missing or invalid path",
             404: "Nothing at the path (including one already deleted)",
-            422: "Missing, relative or root path",
+            422: "The path is the root folder, which is never deleted",
         },
     ),
 )
-def delete_entry(path: AbsolutePath, client: StorageClient) -> None:
-    """Delete a file, or a folder with its contents, at the absolute ``path``."""
+def delete_entry(path: FolderPath, client: StorageClient) -> None:
+    """Delete a file, or a folder with its contents, at ``path``.
+
+    The root is accepted as a path here so the client can refuse it with
+    ``422 invalid_operation``: it is a valid path, but deleting it is never allowed.
+    """
     client.delete(path)

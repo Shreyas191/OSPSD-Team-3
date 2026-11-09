@@ -14,6 +14,7 @@ from dropbox_client_impl import DropboxClient
 from fastapi import FastAPI
 
 from cloud_storage_service.dependencies import get_storage_client
+from cloud_storage_service.errors import add_error_handlers
 from cloud_storage_service.models import FileResponse
 from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
 from cloud_storage_service.routes import router
@@ -44,3 +45,4 @@ app = FastAPI(title="Cloud Storage Service", lifespan=lifespan)
 # instead of queueing (see overload.py).
 app.add_middleware(ConcurrencyLimitMiddleware, max_in_flight=max_in_flight_from_env())
 app.include_router(router)
+add_error_handlers(app)

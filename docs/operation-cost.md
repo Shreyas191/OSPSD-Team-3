@@ -1,14 +1,14 @@
-# Operation Cost: Listing a Folder (`GET /folders/list`)
+# Operation Cost: Listing a Folder (`GET /files`)
 
-`GET /folders/list?path=/Docs` returns every direct child of a folder (files and subfolders, not their contents) as a JSON array of `File` objects. Its work grows with the number of entries in the folder, which makes it the most input-dependent operation in the service.
+`GET /files?path=/Docs` returns every direct child of a folder (files and subfolders, not their contents) as a JSON array of `File` objects. Its work grows with the number of entries in the folder, which makes it the most input-dependent operation in the service.
 
 ## The path of one request
 
 ```
-GET /folders/list?path=/Docs
-  │  FastAPI checks the query against the path pattern                  local, O(1)
+GET /files?path=/Docs
+  │  FastAPI checks the path (clean_path)                               local, O(1)
   ▼
-list_folder route ── entries = list(client.list_folder(path)) ──────────► collects all n entries
+list_folder route ── iterates client.list_folder(path) ─────────────────► collects all n entries
   │
   ▼
 DropboxClient.list_folder (a generator)
@@ -18,7 +18,7 @@ DropboxClient.list_folder (a generator)
   │      files_list_folder_continue(cursor)       ──► Dropbox, page 2 … k
   │      for each entry: yield DropboxFile(entry)
   ▼
-route builds [FileResponse.from_file(e) for e in entries], FastAPI serializes to JSON
+route builds a ListEntry per entry, sorts them by path, FastAPI serializes to JSON
 ```
 
 ## Definitions and assumptions
@@ -40,12 +40,12 @@ For this operation the two are the same: **every entry Dropbox returns is passed
 | Resource | Cost | Where it comes from |
 |---|---|---|
 | **Dropbox calls** | k = max(1, ⌈n / P⌉) in the typical case; at least 1 even for an empty folder | One `files_list_folder`, then one `files_list_folder_continue` per further page. The calls are **sequential**: each needs the cursor from the previous response, so they can't run in parallel. |
-| **Local time** | O(n) | SDK parsing of each page's JSON (O(P) per page), one `DropboxFile` wrapper per entry (O(1)), one `FileResponse` per entry (O(1)), and JSON serialization of the response (O(n)). |
-| **Local memory** | O(n) | The generator only holds one page (O(P)) at a time, but the route calls `list(...)` and then builds a second list of `FileResponse` objects, so all n entries are held at once, plus the O(n) response body. |
+| **Local time** | O(n log n) | SDK parsing of each page's JSON (O(P) per page), one `DropboxFile` wrapper and one `ListEntry` per entry (O(1) each), sorting by path (O(n log n), added in HW2 because the shared contract returns entries sorted), and JSON serialization of the response (O(n)). |
+| **Local memory** | O(n) | The generator only holds one page (O(P)) at a time, but the route must hold every `ListEntry` to sort them, so all n entries are held at once, plus the O(n) response body. |
 | **Response size** | O(n) | One JSON object per entry; nothing is paginated toward the caller. |
 | **Wall-clock latency** | about k × (Dropbox round trip + Dropbox's server-side time) + O(n) local work | Dominated by the k sequential round trips for any real folder. |
 
-Example, under the assumption P ≈ 2000: a folder with 10 entries takes 1 Dropbox call. A folder with 10,000 entries takes about 5 sequential calls and holds about 10,000 `FileResponse` objects in memory before responding.
+Example, under the assumption P ≈ 2000: a folder with 10 entries takes 1 Dropbox call. A folder with 10,000 entries takes about 5 sequential calls and holds about 10,000 `ListEntry` objects in memory before responding.
 
 ## Work done by Dropbox, and what we can't know
 
@@ -56,5 +56,5 @@ A slow listing therefore doesn't by itself show where the time went. Local work 
 ## What would change the cost
 
 - **Paginating the HTTP response** (passing Dropbox's cursor through to the caller) would bound memory per request at O(P) and let callers stop early. That would change the API contract, and it has no Dropbox-independent design yet.
-- **Streaming the JSON response** from the generator would bound memory without changing the contract, but the response could no longer report a Dropbox failure on page 2 with an error status, because the status line would already have been sent.
+- **Streaming the JSON response** from the generator is no longer possible without changing the contract, because the contract returns entries sorted and sorting needs all of them. Before HW2 it would have bounded memory, but the response could no longer report a Dropbox failure on page 2 with an error status, because the status line would already have been sent.
 - **Passing a larger `limit`** might reduce k for big folders. Since Dropbox calls the limit approximate, we'd need to measure it before relying on it.

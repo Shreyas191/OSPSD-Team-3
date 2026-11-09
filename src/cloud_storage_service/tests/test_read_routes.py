@@ -65,14 +65,13 @@ def test_get_metadata_file_returns_200(storage: FakeStorageClient, http: TestCli
         "id": "id:1",
         "name": "report.pdf",
         "path": "/Docs/report.pdf",
-        "is_folder": False,
         "size": 2048,
-        "modified": "2026-10-01T12:30:00",
+        "modified_at": "2026-10-01T12:30:00Z",
     }
 
 
 def test_get_metadata_folder_returns_200(storage: FakeStorageClient, http: TestClient) -> None:
-    """Metadata for an existing folder returns 200 with null size and modified."""
+    """Metadata for an existing folder returns 200 with null size and modified_at."""
     storage.add("/Docs", is_folder=True)
 
     response = http.get("/files/metadata", params={"path": "/Docs"})
@@ -82,9 +81,8 @@ def test_get_metadata_folder_returns_200(storage: FakeStorageClient, http: TestC
         "id": "id:1",
         "name": "Docs",
         "path": "/Docs",
-        "is_folder": True,
         "size": None,
-        "modified": None,
+        "modified_at": None,
     }
 
 
@@ -106,17 +104,30 @@ def test_get_metadata_missing_path_returns_404(
 
 @pytest.mark.parametrize(
     "bad_path",
-    ["", "relative/path.txt", "/"],
+    ["", "/", "/Docs/", "/Docs/../report.pdf"],
 )
-def test_get_metadata_invalid_path_returns_422(
+def test_get_metadata_invalid_path_returns_400(
     storage: FakeStorageClient,
     http: TestClient,
     bad_path: str,
 ) -> None:
-    """Invalid or non-absolute path returns 422 Unprocessable Entity in shared error format."""
+    """An empty, root, trailing-slash or ``..`` path returns 400 in the shared error format."""
     response = http.get("/files/metadata", params={"path": bad_path})
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_get_metadata_relative_path_returns_the_entry(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """A path without the leading ``/`` (``Docs/a.txt``) returns the entry at ``/Docs/a.txt``."""
+    storage.add("/Docs/a.txt", size=3)
+
+    response = http.get("/files/metadata", params={"path": "Docs/a.txt"})
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["path"] == "/Docs/a.txt"
 
 
 # ----- GET /files/download -----
@@ -147,7 +158,7 @@ def test_download_file_missing_returns_404(storage: FakeStorageClient, http: Tes
 
 
 def test_download_folder_returns_422(storage: FakeStorageClient, http: TestClient) -> None:
-    """Attempting to download a folder returns 422 Unprocessable Entity in shared error format."""
+    """Downloading a folder is an invalid operation: 422 in the shared error format."""
     storage.add("/Docs", is_folder=True)
 
     response = http.get("/files/download", params={"path": "/Docs"})
@@ -155,24 +166,23 @@ def test_download_folder_returns_422(storage: FakeStorageClient, http: TestClien
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert response.json() == {
         "error": {
-            "code": "invalid_input",
+            "code": "invalid_operation",
             "message": "Path is a folder: '/Docs'",
         },
     }
 
 
-def test_download_file_invalid_path_returns_422(
+def test_download_file_invalid_path_returns_400(
     storage: FakeStorageClient,
     http: TestClient,
 ) -> None:
-    """Downloading with a relative path returns 422 in shared error format."""
-    response = http.get("/files/download", params={"path": "not_absolute.pdf"})
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
-    assert response.json()["error"]["code"] == "invalid_input"
+    """Downloading with a ``..`` segment in the path returns 400 in shared error format."""
+    response = http.get("/files/download", params={"path": "/Docs/../report.pdf"})
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
-# ----- GET /folders/list -----
+# ----- GET /files?path= (list a folder) -----
 
 
 def test_list_folder_returns_direct_children(storage: FakeStorageClient, http: TestClient) -> None:
@@ -182,41 +192,109 @@ def test_list_folder_returns_direct_children(storage: FakeStorageClient, http: T
     storage.add("/Docs/Archive", is_folder=True)
     storage.add("/Docs/Archive/old.pdf", size=512)
 
-    response = http.get("/folders/list", params={"path": "/Docs"})
+    response = http.get("/files", params={"path": "/Docs"})
 
     assert response.status_code == HTTPStatus.OK
-    items = response.json()
-    assert len(items) == 2
-    paths = {item["path"] for item in items}
-    assert paths == {"/Docs/report.pdf", "/Docs/Archive"}
+    assert [item["path"] for item in response.json()] == ["/Docs/Archive", "/Docs/report.pdf"]
 
 
-def test_list_folder_root(storage: FakeStorageClient, http: TestClient) -> None:
-    """Listing with empty path or omitted parameter lists the root items."""
+@pytest.mark.parametrize("root", ["", "/"])
+def test_list_folder_root(storage: FakeStorageClient, http: TestClient, root: str) -> None:
+    """Both ``path=`` and ``path=/`` list the root folder."""
     storage.add("/a.txt", size=10)
-    storage.add("/b.txt", size=20)
+    storage.add("/Docs/b.txt", size=20)
 
-    response = http.get("/folders/list")
+    response = http.get("/files", params={"path": root})
 
     assert response.status_code == HTTPStatus.OK
-    items = response.json()
-    assert len(items) == 2
-    assert {item["path"] for item in items} == {"/a.txt", "/b.txt"}
+    assert [item["path"] for item in response.json()] == ["/Docs", "/a.txt"]
+
+
+def test_list_folder_without_path_returns_400(storage: FakeStorageClient, http: TestClient) -> None:
+    """The ``path`` query parameter is required; omitting it is a 400."""
+    response = http.get("/files")
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_list_folder_is_sorted_by_path(storage: FakeStorageClient, http: TestClient) -> None:
+    """Entries come back sorted by path, whatever order the client yields them in."""
+    storage.add("/Docs", is_folder=True)
+    for name in ["c.txt", "a.txt", "B", "b.txt"]:
+        storage.add(f"/Docs/{name}", is_folder=name == "B")
+
+    response = http.get("/files", params={"path": "/Docs"})
+
+    assert response.status_code == HTTPStatus.OK
+    assert [item["path"] for item in response.json()] == [
+        "/Docs/B",
+        "/Docs/a.txt",
+        "/Docs/b.txt",
+        "/Docs/c.txt",
+    ]
+
+
+def test_list_folder_entries_have_type_and_file_info(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Each entry is the file info plus ``type``; folders have null size and modified_at."""
+    storage.add("/Docs", is_folder=True)
+    report = storage.add("/Docs/report.pdf", size=1024)
+    archive = storage.add("/Docs/Archive", is_folder=True)
+
+    response = http.get("/files", params={"path": "/Docs"})
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == [
+        {
+            "id": archive.id,
+            "name": "Archive",
+            "path": "/Docs/Archive",
+            "size": None,
+            "modified_at": None,
+            "type": "folder",
+        },
+        {
+            "id": report.id,
+            "name": "report.pdf",
+            "path": "/Docs/report.pdf",
+            "size": 1024,
+            "modified_at": "2026-10-01T12:30:00Z",
+            "type": "file",
+        },
+    ]
+    assert response.json()[1]["modified_at"].endswith("Z")
 
 
 def test_list_folder_empty_folder(storage: FakeStorageClient, http: TestClient) -> None:
     """Listing an empty folder returns an empty list."""
     storage.add("/Empty", is_folder=True)
 
-    response = http.get("/folders/list", params={"path": "/Empty"})
+    response = http.get("/files", params={"path": "/Empty"})
 
     assert response.status_code == HTTPStatus.OK
     assert response.json() == []
 
 
+def test_list_folder_relative_path_is_accepted(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """A folder path without the leading ``/`` lists the folder at the absolute path."""
+    storage.add("/Docs", is_folder=True)
+    storage.add("/Docs/report.pdf")
+
+    response = http.get("/files", params={"path": "Docs"})
+
+    assert response.status_code == HTTPStatus.OK
+    assert [item["path"] for item in response.json()] == ["/Docs/report.pdf"]
+
+
 def test_list_folder_missing_returns_404(storage: FakeStorageClient, http: TestClient) -> None:
     """Listing a folder that does not exist returns 404 in shared error format."""
-    response = http.get("/folders/list", params={"path": "/Nonexistent"})
+    response = http.get("/files", params={"path": "/Nonexistent"})
 
     assert response.status_code == HTTPStatus.NOT_FOUND
     assert response.json() == {
@@ -231,30 +309,33 @@ def test_list_folder_target_is_file_returns_422(
     storage: FakeStorageClient,
     http: TestClient,
 ) -> None:
-    """Listing a path that points to a file returns 422 in shared error format."""
+    """Listing a path that points to a file is an invalid operation: 422."""
     storage.add("/file.txt", size=10)
 
-    response = http.get("/folders/list", params={"path": "/file.txt"})
+    response = http.get("/files", params={"path": "/file.txt"})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert response.json() == {
         "error": {
-            "code": "invalid_input",
+            "code": "invalid_operation",
             "message": "Path is a file: '/file.txt'",
         },
     }
 
 
-@pytest.mark.parametrize("path", ["Docs", "Docs/sub", "relative"])
-def test_list_folder_relative_path_returns_422(
+@pytest.mark.parametrize("path", ["/a/../b", "/Docs/", "/Docs//sub", "//"])
+def test_list_folder_invalid_path_returns_400(
     storage: FakeStorageClient,
     http: TestClient,
     path: str,
 ) -> None:
-    """Listing a folder with a relative path returns 422 in shared error format."""
-    response = http.get("/folders/list", params={"path": path})
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
+    """A ``..`` segment, trailing slash or empty segment returns 400 invalid_request."""
+    storage.add("/Docs", is_folder=True)
+
+    response = http.get("/files", params={"path": path})
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
 def test_list_folder_synthetic_ids_are_stable(
@@ -264,15 +345,23 @@ def test_list_folder_synthetic_ids_are_stable(
     """Listing synthetic parent folders repeatedly preserves entry IDs."""
     storage.add("/Docs/report.pdf", size=100)
 
-    first_resp = http.get("/folders/list", params={"path": ""})
+    first_resp = http.get("/files", params={"path": ""})
     assert first_resp.status_code == HTTPStatus.OK
     first_id = first_resp.json()[0]["id"]
 
-    second_resp = http.get("/folders/list", params={"path": ""})
+    second_resp = http.get("/files", params={"path": ""})
     assert second_resp.status_code == HTTPStatus.OK
     second_id = second_resp.json()[0]["id"]
 
     assert first_id == second_id
+
+
+def test_old_list_route_is_gone(storage: FakeStorageClient, http: TestClient) -> None:
+    """``GET /folders/list`` was replaced by ``GET /files?path=`` and now returns 404."""
+    response = http.get("/folders/list", params={"path": "/Docs"})
+
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert response.json()["error"]["code"] == "route_not_found"
 
 
 # ----- GET /files/search -----
@@ -318,27 +407,27 @@ def test_search_files_respects_max_results(storage: FakeStorageClient, http: Tes
         ("report", 5000),
     ],
 )
-def test_search_files_invalid_parameters_return_422(
+def test_search_files_invalid_parameters_return_400(
     storage: FakeStorageClient,
     http: TestClient,
     q: str,
     max_results: int,
 ) -> None:
-    """Search returns 422 if q is empty or max_results is not in [1, 1000]."""
+    """Search returns 400 if q is empty or max_results is not in [1, 1000]."""
     response = http.get("/files/search", params={"q": q, "max_results": max_results})
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
-def test_search_query_over_1000_characters_returns_422_without_reaching_the_client(
+def test_search_query_over_1000_characters_returns_400_without_reaching_the_client(
     provider: Mock,
     http: TestClient,
 ) -> None:
     """A query longer than Dropbox's limit is rejected by request validation."""
     response = http.get("/files/search", params={"q": "x" * 1001})
 
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
     provider.search.assert_not_called()
 
 
@@ -355,7 +444,7 @@ def test_search_client_value_error_returns_422(http: TestClient) -> None:
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert response.json() == {
         "error": {
-            "code": "invalid_input",
+            "code": "invalid_operation",
             "message": "Search query invalid",
         },
     }
@@ -369,7 +458,7 @@ def test_search_client_value_error_returns_422(http: TestClient) -> None:
     [
         ("/files/metadata", {"path": "/Docs/report.pdf"}),
         ("/files/download", {"path": "/Docs/report.pdf"}),
-        ("/folders/list", {"path": "/Docs"}),
+        ("/files", {"path": "/Docs"}),
     ],
 )
 def test_permission_denied_returns_403(
@@ -394,7 +483,7 @@ def test_permission_denied_returns_403(
     [
         ("/files/metadata", {"path": "/Docs/report.pdf"}, "get_metadata"),
         ("/files/download", {"path": "/Docs/report.pdf"}, "download_file"),
-        ("/folders/list", {"path": "/Docs"}, "list_folder"),
+        ("/files", {"path": "/Docs"}, "list_folder"),
         ("/files/search", {"q": "test"}, "search"),
     ],
 )
@@ -402,7 +491,7 @@ def test_permission_denied_returns_403(
     ("error", "expected_status", "code"),
     [
         (ConnectionError("rate_limit"), HTTPStatus.SERVICE_UNAVAILABLE, "provider_unavailable"),
-        (OSError("internal_error"), HTTPStatus.BAD_GATEWAY, "provider_failure"),
+        (OSError("internal_error"), HTTPStatus.BAD_GATEWAY, "provider_error"),
     ],
 )
 def test_provider_failures_map_to_5xx_without_leaking_details(  # noqa: PLR0913
@@ -440,6 +529,6 @@ def test_read_failure_is_logged_as_structured_warning(
     record = _failure_log(caplog)
     assert record.__dict__["operation"] == "get_file_metadata"
     assert record.__dict__["status"] == HTTPStatus.BAD_GATEWAY
-    assert record.__dict__["code"] == "provider_failure"
+    assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
     assert record.__dict__["reason"] == "Dropbox internal error"

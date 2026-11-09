@@ -120,7 +120,7 @@ OSPSD-Team-3/
     ```
 
 6.  **Check the Setup:**
-    Start the service, then open <http://127.0.0.1:8000/docs> and try `GET /folders/list`:
+    Start the service, then open <http://127.0.0.1:8000/docs> and try `GET /files` with `path=/`:
     ```bash
     uv run python main.py
     ```
