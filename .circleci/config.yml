@@ -7,7 +7,7 @@ jobs:
   # Job 1: Setup Environment and Install All Dependencies
   build:
     docker:
-      - image: cimg/python:3.11 # Use a consistent Python version
+      - image: cimg/python:3.12 # Use a consistent Python version
     steps:
       - checkout
       - run:
@@ -21,7 +21,7 @@ jobs:
           name: "Create Virtual Env & Install All Dependencies via UV Sync"
           command: |
             # Create venv in the default .venv location
-            uv venv --python 3.11
+            uv venv --python 3.12
             source .venv/bin/activate
             # Install all dependencies including dev/test extras
             uv sync --all-packages --extra dev --verbose
@@ -43,7 +43,7 @@ jobs:
   # Job 2: Linting and Formatting Checks
   lint:
     docker:
-      - image: cimg/python:3.11
+      - image: cimg/python:3.12
     steps:
       - attach_workspace:
           at: . # Attach the workspace persisted from 'build'
@@ -57,7 +57,7 @@ jobs:
   # Job 3: Unit Tests and Coverage (Fast, No External Dependencies)
   unit_test:
     docker:
-      - image: cimg/python:3.11
+      - image: cimg/python:3.12
     steps:
       - attach_workspace:
           at: . # Attach the workspace persisted from 'build'
@@ -90,7 +90,7 @@ jobs:
   # Job 4: CircleCI Integration Tests (All Tests Except Local Credentials)
   circleci_test:
     docker:
-      - image: cimg/python:3.11
+      - image: cimg/python:3.12
     # Environment variables from the 'dropbox-client' context will be available here
     steps:
       - attach_workspace:
@@ -118,7 +118,7 @@ jobs:
   # Job 5: Integration Tests with Real Credentials (Optional - Branch Restricted)
   integration_test:
     docker:
-      - image: cimg/python:3.11
+      - image: cimg/python:3.12
     # Environment variables from the 'dropbox-client' context will be available here
     steps:
       - attach_workspace:
