@@ -9,7 +9,7 @@ holds afterwards, and the warning logged for each failure.
 
 import logging
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -88,34 +88,63 @@ def test_from_file_maps_every_field() -> None:
         "id": "id:abc123",
         "name": "report.pdf",
         "path": "/Docs/report.pdf",
-        "is_folder": False,
         "size": 2048,
-        "modified": MODIFIED,
+        "modified_at": "2026-10-13T12:00:00Z",
     }
 
 
-def test_from_file_folder_has_null_size_and_modified() -> None:
+def test_from_file_folder_has_null_size_and_modified_at() -> None:
     """Keep folder size and modification time null in the response."""
     response = make_file("/Docs", is_folder=True)
-    assert (response.is_folder, response.size, response.modified) == (True, None, None)
+    assert (response.size, response.modified_at) == (None, None)
+
+
+def test_from_file_converts_modified_time_to_utc() -> None:
+    """A time in another zone, or a naive time (taken as UTC), is shown in UTC ending in Z."""
+    plus_two = datetime(2026, 10, 13, 14, 0, tzinfo=timezone(timedelta(hours=2)))
+    naive = datetime(2026, 10, 13, 12, 0)  # noqa: DTZ001
+
+    for moment in (plus_two, naive):
+        file = SimpleNamespace(
+            id="id:1",
+            name="a",
+            path="/a",
+            is_folder=False,
+            size=1,
+            modified=moment,
+        )
+        response = FileResponse.from_file(cast("cloud_storage_client_api.File", file))
+        assert response.modified_at == "2026-10-13T12:00:00Z"
 
 
 # --- POST /folders/create ----------------------------------------------------------------
 
 
 def test_create_folder_returns_new_folder(storage: FakeStorageClient, http: TestClient) -> None:
-    """Creating a folder returns it with null size and modified, and stores it."""
+    """Creating a folder returns it with null size and modified_at, and stores it."""
     response = http.post("/folders/create", json={"remote_path": "/Docs/New"})
 
     assert response.status_code == status.HTTP_200_OK
     body = response.json()
-    assert (body["path"], body["is_folder"], body["size"], body["modified"]) == (
+    assert (body["path"], body["name"], body["size"], body["modified_at"]) == (
         "/Docs/New",
-        True,
+        "New",
         None,
         None,
     )
     assert storage.entries["/Docs/New"].is_folder
+
+
+def test_create_folder_accepts_a_relative_path(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """A path without the leading ``/`` creates the folder at the absolute path."""
+    response = http.post("/folders/create", json={"remote_path": "Docs/New"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["path"] == "/Docs/New"
+    assert set(storage.entries) == {"/Docs/New"}
 
 
 def test_create_existing_folder_returns_409(storage: FakeStorageClient, http: TestClient) -> None:
@@ -145,7 +174,11 @@ def test_copy_file_returns_copy_and_keeps_source(
 
     assert response.status_code == status.HTTP_200_OK
     body = response.json()
-    assert (body["path"], body["size"], body["is_folder"]) == ("/Copy/a.pdf", 2048, False)
+    assert (body["path"], body["size"], body["modified_at"]) == (
+        "/Copy/a.pdf",
+        2048,
+        "2026-10-01T12:30:00Z",
+    )
     assert body["id"] != source.id
     assert storage.entries["/Docs/a.pdf"] is source
 
@@ -158,7 +191,7 @@ def test_copy_folder_copies_contents(storage: FakeStorageClient, http: TestClien
     response = http.post("/files/copy", json={"from_path": "/Docs", "to_path": "/Backup"})
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["is_folder"] is True
+    assert (response.json()["path"], response.json()["size"]) == ("/Backup", None)
     assert set(storage.entries) == {"/Docs", "/Docs/a.pdf", "/Backup", "/Backup/a.pdf"}
 
 
@@ -192,13 +225,13 @@ def test_copy_folder_into_itself_returns_422_and_changes_nothing(
     storage: FakeStorageClient,
     http: TestClient,
 ) -> None:
-    """Copying a folder into its own subfolder is invalid input, and nothing is copied."""
+    """Copying a folder into its own subfolder is an invalid operation, and nothing is copied."""
     storage.add("/Docs", is_folder=True)
 
     response = http.post("/files/copy", json={"from_path": "/Docs", "to_path": "/Docs/Inner"})
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.json()["error"]["code"] == "invalid_operation"
     assert set(storage.entries) == {"/Docs"}
 
 
@@ -206,8 +239,9 @@ def test_copy_folder_into_itself_returns_422_and_changes_nothing(
     ("url", "body"),
     [
         ("/files/copy", {"from_path": "/a"}),
-        ("/files/copy", {"from_path": "a.pdf", "to_path": "/b.pdf"}),
-        ("/folders/create", {"remote_path": "NoSlash"}),
+        ("/files/copy", {"from_path": "/a/../b.pdf", "to_path": "/b.pdf"}),
+        ("/folders/create", {"remote_path": "/"}),
+        ("/folders/create", {"remote_path": "NoTrailing/"}),
     ],
 )
 def test_invalid_request_is_rejected_and_changes_nothing(
@@ -216,13 +250,13 @@ def test_invalid_request_is_rejected_and_changes_nothing(
     url: str,
     body: dict[str, str],
 ) -> None:
-    """Missing fields and relative paths return 422 before reaching storage."""
+    """Missing fields and invalid paths return 400 before reaching storage."""
     storage.add("/a", is_folder=True)
 
     response = http.post(url, json=body)
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
     assert set(storage.entries) == {"/a"}
 
 
@@ -299,19 +333,21 @@ def test_upload_rejects_invalid_remote_path(
     storage: RecordingStorageClient,
     http: TestClient,
 ) -> None:
-    """Reject a relative remote path before calling the storage client."""
-    response = post_upload(http, remote_path="relative.pdf")
+    """A malformed destination (a ``..`` segment) is a 400, and nothing is uploaded."""
+    response = post_upload(http, remote_path="/Docs/../report.pdf")
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
     assert storage.uploaded_bytes is None
     assert storage.entries == {}
 
 
 def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClient) -> None:
-    """Reject an upload request that omits the file field."""
+    """Reject an upload request that omits the file field with 400."""
     response = http.post("/files/upload", data={"remote_path": "/Docs/report.pdf"})
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
     assert storage.uploaded_bytes is None
 
 
@@ -348,14 +384,14 @@ CREATE_ROUTES = ["upload", "create_folder", "copy"]
 
 @pytest.mark.parametrize("route", CREATE_ROUTES)
 def test_value_error_from_client_returns_422(provider: Mock, http: TestClient, route: str) -> None:
-    """A path or file the provider rejects is invalid input, with the client's message."""
+    """A path or file the provider rejects is an invalid operation, with the client's message."""
     error = ValueError("The file for '/Docs/report.pdf' is too large to upload in one request")
     _fail_with(provider, error)
 
     response = _call_create_route(http, route)
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-    assert response.json() == {"error": {"code": "invalid_input", "message": str(error)}}
+    assert response.json() == {"error": {"code": "invalid_operation", "message": str(error)}}
 
 
 @pytest.mark.parametrize("route", CREATE_ROUTES)
@@ -382,7 +418,7 @@ def test_permission_denied_returns_403(provider: Mock, http: TestClient, route: 
         (
             OSError("WriteError('insufficient_space', None)"),
             status.HTTP_502_BAD_GATEWAY,
-            "provider_failure",
+            "provider_error",
         ),
     ],
 )
@@ -419,7 +455,7 @@ def test_failure_is_logged_as_a_structured_warning(
     assert record.levelno == logging.WARNING
     assert record.__dict__["operation"] == "upload_file"
     assert record.__dict__["status"] == status.HTTP_502_BAD_GATEWAY
-    assert record.__dict__["code"] == "provider_failure"
+    assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
     assert record.__dict__["reason"] == "Dropbox failed uploading to '/Docs/report.pdf' (quota)"
 

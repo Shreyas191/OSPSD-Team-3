@@ -4,13 +4,15 @@
 
 | Built-in exception | Meaning in the `Client` contract | HTTP response |
 |---|---|---|
-| `ValueError` | The request is invalid (bad path or name, folder moved into itself) | `422 invalid_input` |
-| `IsADirectoryError` | A folder was given where a file is needed (downloading a folder) | `422 invalid_input` |
+| `ValueError` | The operation is refused (folder moved into itself, deleting the root) | `422 invalid_operation` |
+| `IsADirectoryError` | A folder was given where a file is needed (downloading a folder) | `422 invalid_operation` |
 | `FileNotFoundError` | Nothing exists at the path | `404 not_found` |
 | `FileExistsError` | The destination is already taken | `409 conflict` |
 | `PermissionError` | The provider does not allow this operation on this entry | `403 permission_denied` |
 | `ConnectionError` | The provider is unreachable or busy; retry later | `503 provider_unavailable` |
-| any other `OSError` | The provider failed | `502 provider_failure` |
+| any other `OSError` | The provider failed | `502 provider_error` |
+
+In HW2 the status codes and code names follow the vertical's shared table: a request that fails validation (bad path, missing field) is `400 invalid_request` before the client is called, so `ValueError` now means only an operation the provider refuses.
 
 ## The problem and the constraints that mattered
 

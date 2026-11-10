@@ -92,7 +92,7 @@ def test_service_without_credentials_stops_with_a_login_hint(port: int, tmp_path
 @pytest.mark.local_credentials
 def test_service_lists_the_root_folder(running_service: str) -> None:
     """The started service answers a real request against Dropbox."""
-    response = httpx.get(f"{running_service}/folders/list", params={"path": ""}, timeout=30)
+    response = httpx.get(f"{running_service}/files", params={"path": "/"}, timeout=30)
 
     assert response.status_code == httpx.codes.OK
     assert isinstance(response.json(), list)
