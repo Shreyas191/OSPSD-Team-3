@@ -16,7 +16,7 @@ from pathlib import Path
 import cloud_storage_client_api
 import dropbox
 from dropbox import files
-from dropbox.files import SearchOptions, WriteMode, FileMetadata
+from dropbox.files import FileMetadata, SearchOptions, WriteMode
 
 from dropbox_client_impl import errors
 from dropbox_client_impl.auth import get_dropbox_client
