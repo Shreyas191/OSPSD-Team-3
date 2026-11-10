@@ -73,15 +73,20 @@ def running_service(port: int) -> Iterator[str]:
 
 @pytest.mark.circleci
 def test_service_without_credentials_stops_with_a_login_hint(port: int, tmp_path: Path) -> None:
-    """With no Dropbox credentials the service exits at startup and says how to log in."""
+    """With no Dropbox credentials the service exits at startup, names them and says how to log in.
+
+    The failure is one line rather than a traceback, so it reads cleanly in a container log.
+    """
     missing_token_file = str(tmp_path / "no_token.json")
     process = _start_service(port, {**NO_CREDENTIALS, "DROPBOX_TOKEN_FILE": missing_token_file})
 
     output, _ = process.communicate(timeout=STARTUP_TIMEOUT_SECONDS)
 
-    assert process.returncode != 0
-    assert "Dropbox is not authorized" in output
+    assert process.returncode == 1
+    assert output.startswith("Startup failed: Dropbox is not authorized")
+    assert "DROPBOX_REFRESH_TOKEN" in output
     assert "dropbox_client_impl login" in output
+    assert "Traceback" not in output
 
 
 @pytest.mark.local_credentials

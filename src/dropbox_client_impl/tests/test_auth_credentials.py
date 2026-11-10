@@ -147,9 +147,28 @@ def test_get_dropbox_client_prefers_refresh_token(mock_dropbox: MagicMock) -> No
 @PATCH_SDK
 @patch.dict(os.environ, OAUTH_ENV)
 def test_get_dropbox_client_not_authorized_raises(mock_dropbox: MagicMock) -> None:
-    """Without any credentials the error tells the user to run the login command."""
-    with pytest.raises(auth.DropboxAuthError, match="login"):
+    """Without a refresh token the error names it and tells the user to run the login command."""
+    with pytest.raises(auth.DropboxAuthError, match="login") as exc_info:
         auth.get_dropbox_client()
+
+    message = str(exc_info.value)
+    assert "missing DROPBOX_REFRESH_TOKEN." in message
+    assert_no_secrets(message)
+    assert APP_KEY not in message
+    mock_dropbox.assert_not_called()
+
+
+@PATCH_SDK
+def test_get_dropbox_client_with_nothing_configured_names_every_variable(
+    mock_dropbox: MagicMock,
+) -> None:
+    """With no credentials at all, the error names all three variables a deployment must set."""
+    with pytest.raises(auth.DropboxAuthError) as exc_info:
+        auth.get_dropbox_client()
+
+    assert "missing DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN." in str(
+        exc_info.value,
+    )
     mock_dropbox.assert_not_called()
 
 
