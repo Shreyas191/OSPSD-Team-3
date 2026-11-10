@@ -250,3 +250,19 @@ def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
 def delete_entry(path: AbsolutePath, client: StorageClient) -> None:
     """Delete a file, or a folder with its contents, at the absolute ``path``."""
     client.delete(path)
+
+
+# ----- Health -----
+
+
+@router.get(
+    "/health/provider",
+    status_code=status.HTTP_200_OK,
+    responses=error_responses(
+        {503: "The storage provider is unreachable or busy"},
+    ),
+)
+def get_provider_health(client: StorageClient) -> dict[str, str]:
+    """Check the live storage provider and report whether it is available."""
+    client.check_provider_health()
+    return {"status": "ok"}
