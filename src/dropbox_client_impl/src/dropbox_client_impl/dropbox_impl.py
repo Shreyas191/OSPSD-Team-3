@@ -85,6 +85,45 @@ class DropboxClient(cloud_storage_client_api.Client):
 
         return DropboxFile(metadata)
 
+    def replace_file(self, local_path: str, remote_path: str) -> cloud_storage_client_api.File:
+        """Replace an existing file, refusing the write if it changed since we read it.
+
+        Two Dropbox calls: ``files_get_metadata`` reads the file's current revision (and
+        proves it exists), then ``files_upload`` with ``WriteMode.update(rev)`` writes only
+        if the file still has that revision. A missing file is never created.
+
+        Raises:
+            FileNotFoundError: If nothing exists at ``remote_path``.
+            IsADirectoryError: If ``remote_path`` is a folder.
+            FileExistsError: If the file changed between the two calls.
+            ValueError, PermissionError, ConnectionError, OSError: As for
+                :meth:`upload_file`.
+
+        """
+        current = self._file_metadata(remote_path)
+        with Path(local_path).open("rb") as source:
+            try:
+                metadata = self.dbx.files_upload(
+                    source.read(),
+                    remote_path,
+                    mode=WriteMode.update(current.rev),
+                    autorename=False,
+                )
+            except DROPBOX_FAILURES as e:
+                raise errors.translate(e, errors.REPLACE, remote_path) from e
+        return DropboxFile(metadata)
+
+    def _file_metadata(self, remote_path: str) -> files.FileMetadata:
+        """Return the metadata of the file at ``remote_path``; a folder is an error."""
+        try:
+            metadata = self.dbx.files_get_metadata(remote_path)
+        except DROPBOX_FAILURES as e:
+            raise errors.translate(e, errors.METADATA, remote_path) from e
+        if not isinstance(metadata, files.FileMetadata):
+            msg = f"Path is a folder: {remote_path!r}"
+            raise IsADirectoryError(msg)
+        return metadata
+
     def create_folder(self, remote_path: str) -> cloud_storage_client_api.File:
         """Create a folder (and any missing parents) with ``files_create_folder_v2``.
 
@@ -330,6 +369,21 @@ class DropboxClient(cloud_storage_client_api.Client):
             raise errors.translate(e, errors.MOVE, from_path, to_path) from e
         self.logger.info("Moved %s -> %s", from_path, to_path)
         return DropboxFile(result.metadata)
+
+    # ----- Health -----
+
+    def check_health(self) -> None:
+        """Check Dropbox is reachable with our credentials (one ``users_get_current_account``).
+
+        Raises:
+            ConnectionError: If Dropbox could not be reached or rate limited the request.
+            OSError: If Dropbox answered with an error, such as revoked credentials.
+
+        """
+        try:
+            self.dbx.users_get_current_account()
+        except DROPBOX_FAILURES as e:
+            raise errors.translate(e, errors.HEALTH, "") from e
 
     # ----- Delete -----
 

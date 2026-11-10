@@ -4,7 +4,7 @@ This module adapts the metadata objects returned by the Dropbox SDK
 (``FileMetadata`` and ``FolderMetadata``) to the ``cloud_storage_client_api.File`` contract.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import cloud_storage_client_api
 from dropbox import files
@@ -56,10 +56,14 @@ class DropboxFile(cloud_storage_client_api.File):
 
     @property
     def modified(self) -> datetime | None:
-        """Return the server-side last-modified time, or ``None`` for folders."""
+        """Return the server-side last-modified time in UTC, or ``None`` for folders.
+
+        The SDK returns Dropbox's UTC timestamp without a time zone; it is marked as UTC
+        here so callers never have to guess.
+        """
         if isinstance(self._metadata, files.FileMetadata):
             modified: datetime = self._metadata.server_modified
-            return modified
+            return modified.replace(tzinfo=UTC) if modified.tzinfo is None else modified
         return None
 
     def __repr__(self) -> str:
