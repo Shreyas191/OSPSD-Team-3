@@ -315,6 +315,30 @@ class Client(ABC):
         """
         raise NotImplementedError
 
+    # ----- Health -----
+    @abstractmethod
+    def check_provider_health(self) -> None:
+        """Verify that the storage provider responds to a live authenticated request.
+
+        Inputs:
+            None.
+
+        Returns:
+            ``None`` if the provider responds successfully. Failures raise an exception.
+
+        Side effects:
+            Sends a read-only request to the provider using the client's credentials.
+
+        Caller assumptions:
+            The client is configured with credentials that allow the health check.
+
+        Raises:
+            ConnectionError: If the provider cannot be reached or the health check
+                request fails, including authentication failures, rate limits, and
+                upstream service errors.
+
+        """
+        raise NotImplementedError
 
 def get_client() -> Client:
     """Return an instance of a cloud storage Client."""

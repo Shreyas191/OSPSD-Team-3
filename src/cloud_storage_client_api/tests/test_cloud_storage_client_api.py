@@ -40,6 +40,7 @@ def test_client_declares_all_crud_methods() -> None:
         "rename",
         "move",
         "delete",
+        "check_provider_health",
     }
     assert expected == Client.__abstractmethods__
 
@@ -168,6 +169,18 @@ def test_client_delete() -> None:
     assert mock_client.delete("/Docs/report.pdf") is True
     mock_client.delete.assert_called_once_with("/Docs/report.pdf")
 
+
+# ----- Health -----
+
+def test_client_check_provider_health() -> None:
+    """``check_provider_health`` returns None on success."""
+    mock_client = Mock(spec=Client)
+    mock_client.check_provider_health.return_value = None
+
+    result = mock_client.check_provider_health()
+
+    mock_client.check_provider_health.assert_called_once_with()
+    assert result is None
 
 def test_package_exports() -> None:
     """The package exposes the public names consumers depend on."""
