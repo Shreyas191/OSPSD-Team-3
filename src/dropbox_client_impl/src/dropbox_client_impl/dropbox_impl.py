@@ -16,7 +16,7 @@ from pathlib import Path
 import cloud_storage_client_api
 import dropbox
 from dropbox import files
-from dropbox.files import SearchOptions, WriteMode
+from dropbox.files import SearchOptions, WriteMode, FileMetadata
 
 from dropbox_client_impl import errors
 from dropbox_client_impl.auth import get_dropbox_client
@@ -69,22 +69,31 @@ class DropboxClient(cloud_storage_client_api.Client):
             OSError: For any other Dropbox failure, such as a full account.
 
         """
-        mode = WriteMode.overwrite if overwrite else WriteMode.add
-
         with Path(local_path).open("rb") as source:
+            mode = WriteMode.add
+            if overwrite:
+                try:
+                    current = self.dbx.files_get_metadata(remote_path)
+                except DROPBOX_FAILURES as exc:
+                    raise errors.translate(exc, errors.METADATA, remote_path) from exc
+
+                if not isinstance(current, FileMetadata):
+                    raise FileNotFoundError(remote_path)
+
+                mode = WriteMode.update(current.rev)
+
             try:
                 metadata = self.dbx.files_upload(
                     source.read(),
                     remote_path,
                     mode=mode,
                     autorename=False,
-                    strict_conflict=not overwrite,
+                    strict_conflict=True,
                 )
-            except DROPBOX_FAILURES as e:
-                raise errors.translate(e, errors.UPLOAD, remote_path) from e
+            except DROPBOX_FAILURES as exc:
+                raise errors.translate(exc, errors.UPLOAD, remote_path) from exc
 
         return DropboxFile(metadata)
-
     def create_folder(self, remote_path: str) -> cloud_storage_client_api.File:
         """Create a folder (and any missing parents) with ``files_create_folder_v2``.
 
