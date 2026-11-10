@@ -286,4 +286,3 @@ class FakeStorageClient(Client):
 
     def check_provider_health(self) -> None:
         """Simulate a successful provider health check."""
-        return None
