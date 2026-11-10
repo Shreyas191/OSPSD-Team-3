@@ -281,3 +281,9 @@ class FakeStorageClient(Client):
         for path in [p for p in self.entries if p == remote_path or p.startswith(f"{remote_path}/")]:
             del self.entries[path]
         return True
+
+    # ----- Health -----
+
+    def check_provider_health(self) -> None:
+        """Simulate a successful provider health check."""
+        return None
