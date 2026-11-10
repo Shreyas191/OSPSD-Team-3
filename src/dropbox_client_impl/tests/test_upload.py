@@ -35,39 +35,43 @@ def local_file(tmp_path: Path) -> Path:
     path.write_bytes(b"data")
     return path
 
-
-@pytest.mark.parametrize(
-    ("overwrite", "mode"),
-    [(False, WriteMode.add), (True, WriteMode.overwrite)],
-)
+@pytest.mark.parametrize("overwrite", [False, True])
 def test_upload_sends_file_bytes_and_returns_the_file(
     client: DropboxClient,
     dbx: MagicMock,
     local_file: Path,
     *,
     overwrite: bool,
-    mode: WriteMode,
 ) -> None:
-    """Upload sends the bytes with the write mode for ``overwrite`` and returns the new file."""
-    metadata = file_metadata("/Docs/a.txt", size=4)
+    """Use strict create or revision-checked replace and return the uploaded file."""
+    remote_path = "/Docs/a.txt"
+    current = file_metadata(remote_path, size=8, rev="015f1a2b3c4d")
+    metadata = file_metadata(remote_path, size=4, rev="015f1a2b3c4e")
+    dbx.files_get_metadata.return_value = current
     dbx.files_upload.return_value = metadata
 
-    uploaded = client.upload_file(str(local_file), "/Docs/a.txt", overwrite=overwrite)
+    uploaded = client.upload_file(str(local_file), remote_path, overwrite=overwrite)
+
+    if overwrite:
+        dbx.files_get_metadata.assert_called_once_with(remote_path)
+        mode = WriteMode.update(current.rev)
+    else:
+        dbx.files_get_metadata.assert_not_called()
+        mode = WriteMode.add
 
     dbx.files_upload.assert_called_once_with(
         b"data",
-        "/Docs/a.txt",
+        remote_path,
         mode=mode,
         autorename=False,
-        strict_conflict=not overwrite,
+        strict_conflict=True,
     )
-    assert uploaded.path == "/Docs/a.txt"
+    assert uploaded.path == remote_path
     assert uploaded.name == "a.txt"
     assert uploaded.id == "id:file123"
     assert uploaded.is_folder is False
     assert uploaded.size == 4
     assert uploaded.modified == metadata.server_modified
-
 
 def test_upload_empty_file(client: DropboxClient, dbx: MagicMock, tmp_path: Path) -> None:
     """An empty local file is uploaded as zero bytes."""
