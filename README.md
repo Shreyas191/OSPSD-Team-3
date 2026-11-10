@@ -21,6 +21,18 @@ The project emphasizes a strict separation of concerns, dependency injection, an
 | sk12898 | Shreyas Kaldate|
 | vhw2009 | Victor Wang    |
 
+## Start here
+
+The repository delivers one thing: an HTTP service for storing files in Dropbox.
+
+- **Run it:** `uv run python main.py`, then open <http://127.0.0.1:8000/docs> (after the setup below).
+- **Follow a request through the code:**
+  1. [`routes.py`](src/cloud_storage_service/src/cloud_storage_service/routes.py): one function per HTTP route, each calling one `Client` method.
+  2. [`client.py`](src/cloud_storage_client_api/src/cloud_storage_client_api/client.py): the provider-independent `Client` contract and the exceptions each method raises.
+  3. [`dropbox_impl.py`](src/dropbox_client_impl/src/dropbox_client_impl/dropbox_impl.py): `DropboxClient`, which makes the Dropbox SDK call.
+  4. [`dropbox_client_impl/errors.py`](src/dropbox_client_impl/src/dropbox_client_impl/errors.py) turns Dropbox failures into those exceptions, and [`cloud_storage_service/errors.py`](src/cloud_storage_service/src/cloud_storage_service/errors.py) turns the exceptions into HTTP error responses.
+- **Contribute:** read [`AGENTS.md`](AGENTS.md) for the code map, constraints and checks.
+
 ## Architectural Philosophy
 
 This project is built on the principle of "programming integrated over time." The architecture is designed to combat complexity and ensure the system is maintainable and evolvable.
@@ -38,7 +50,7 @@ The project is a `uv` workspace containing three packages:
 
 3.  **`cloud_storage_service`**: A FastAPI app that exposes the `Client` operations over HTTP. Routes depend only on the abstract `Client`. See [`src/cloud_storage_service/README.md`](src/cloud_storage_service/README.md) for the endpoint contracts.
 
-See [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md) for which team member owns each method and the Dropbox endpoint it maps to.
+See [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md) for the Dropbox endpoint each method maps to.
 
 ## Project Structure
 
@@ -53,7 +65,7 @@ OSPSD-Team-3/
 │   └── e2e/                      # End-to-end application tests
 ├── docs/                         # Documentation source files
 ├── .circleci/                    # CircleCI configuration
-├── main.py                       # Main application entry point
+├── main.py                       # Entry point: starts the HTTP service
 ├── pyproject.toml               # Project configuration (dependencies, tools)
 ├── uv.lock                      # Locked dependency versions
 ├── .env                         # Dropbox app config (local only, see .env.example)
@@ -108,7 +120,7 @@ OSPSD-Team-3/
     ```
 
 6.  **Check the Setup:**
-    Run the main application, which connects to Dropbox and lists the root folder:
+    Start the service, then open <http://127.0.0.1:8000/docs> and try `GET /files` with `path=/`:
     ```bash
     uv run python main.py
     ```
@@ -127,14 +139,19 @@ All commands should be run from the project root with the virtual environment ac
 
 ### Running the Application
 
-To run the main demonstration script:
+To run the HTTP service (Swagger UI at `http://127.0.0.1:8000/docs`; `HOST` and `PORT` change the address):
 ```bash
 uv run python main.py
 ```
 
-To run the HTTP service (Swagger UI at `http://127.0.0.1:8000/docs`):
+While developing, reload on every code change:
 ```bash
 uv run uvicorn cloud_storage_service.app:app --reload
+```
+
+To build and run the container image (tagged with the commit SHA), see [`docs/deployment.md`](docs/deployment.md):
+```bash
+scripts/build_image.sh
 ```
 
 ### Running the Toolchain

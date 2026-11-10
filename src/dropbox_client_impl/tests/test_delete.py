@@ -1,61 +1,57 @@
-"""Unit tests for DropboxClient.delete.
+"""Unit tests for ``DropboxClient.delete``.
 
-The Dropbox SDK is mocked, so these tests need no network or credentials.
+The Dropbox SDK is an autospec mock (see ``conftest.py``) that returns and raises real SDK
+objects, so each test checks the exact ``files_delete_v2`` call, that Dropbox is not
+contacted for the root, and the documented exception each Dropbox failure becomes.
 """
 
 import re
-from unittest.mock import Mock
+from unittest.mock import MagicMock
 
 import pytest
 import requests
 from dropbox import auth, exceptions, files, stone_validators
+from tests.dropbox_sdk import api_error, file_metadata, rate_limited, server_error
 
 from dropbox_client_impl import DropboxClient
 
 
-def _api_error(error: object) -> exceptions.ApiError:
-    return exceptions.ApiError("req-1", error, None, None)
-
-
 def _lookup_error(reason: files.LookupError) -> exceptions.ApiError:
-    return _api_error(files.DeleteError.path_lookup(reason))
+    return api_error(files.DeleteError.path_lookup(reason))
 
 
 def _write_error(reason: files.WriteError) -> exceptions.ApiError:
-    return _api_error(files.DeleteError.path_write(reason))
+    return api_error(files.DeleteError.path_write(reason))
 
 
-@pytest.fixture
-def dbx() -> Mock:
-    """Return a mocked Dropbox SDK whose delete succeeds."""
-    sdk = Mock()
-    deleted = files.FileMetadata(name="report.pdf", id="id:abc", path_display="/Docs/report.pdf")
-    sdk.files_delete_v2.return_value = files.DeleteResult(metadata=deleted)
-    return sdk
-
-
-def test_delete_calls_dropbox_and_returns_true(dbx: Mock) -> None:
+def test_delete_calls_dropbox_and_returns_true(client: DropboxClient, dbx: MagicMock) -> None:
     """Delete passes the path to ``files_delete_v2`` and reports success."""
-    assert DropboxClient(dbx=dbx).delete("/Docs/report.pdf") is True
+    dbx.files_delete_v2.return_value = files.DeleteResult(metadata=file_metadata())
+
+    assert client.delete("/Docs/report.pdf") is True
 
     dbx.files_delete_v2.assert_called_once_with("/Docs/report.pdf")
 
 
 @pytest.mark.parametrize("path", ["", "/", "//"])
-def test_delete_root_is_rejected_without_calling_dropbox(dbx: Mock, path: str) -> None:
+def test_delete_root_is_rejected_without_calling_dropbox(
+    client: DropboxClient,
+    dbx: MagicMock,
+    path: str,
+) -> None:
     """Empty and root paths raise ValueError and never reach Dropbox."""
     with pytest.raises(ValueError, match="root"):
-        DropboxClient(dbx=dbx).delete(path)
+        client.delete(path)
 
     dbx.files_delete_v2.assert_not_called()
 
 
-def test_delete_missing_path_raises_file_not_found(dbx: Mock) -> None:
+def test_delete_missing_path_raises_file_not_found(client: DropboxClient, dbx: MagicMock) -> None:
     """A Dropbox ``path_lookup.not_found`` error becomes FileNotFoundError."""
     dbx.files_delete_v2.side_effect = _lookup_error(files.LookupError.not_found)
 
     with pytest.raises(FileNotFoundError, match=re.escape("/Docs/missing.pdf")):
-        DropboxClient(dbx=dbx).delete("/Docs/missing.pdf")
+        client.delete("/Docs/missing.pdf")
 
 
 @pytest.mark.parametrize(
@@ -74,24 +70,25 @@ def test_delete_missing_path_raises_file_not_found(dbx: Mock) -> None:
         (_write_error(files.WriteError.access_restricted), PermissionError),
         (_write_error(files.WriteError.operation_suppressed), PermissionError),
         # Dropbox is unreachable or busy; retrying later may succeed.
-        (_api_error(files.DeleteError.too_many_write_operations), ConnectionError),
+        (api_error(files.DeleteError.too_many_write_operations), ConnectionError),
         (_write_error(files.WriteError.too_many_write_operations), ConnectionError),
-        (exceptions.RateLimitError("req-1"), ConnectionError),
+        (rate_limited(), ConnectionError),
         (requests.exceptions.ConnectionError("connection refused"), ConnectionError),
         (requests.exceptions.ReadTimeout("read timed out"), ConnectionError),
         # Anything else is a provider failure.
-        (_api_error(files.DeleteError.too_many_files), OSError),
-        (_api_error(files.DeleteError.other), OSError),
-        (_api_error("unexpected"), OSError),
+        (api_error(files.DeleteError.too_many_files), OSError),
+        (api_error(files.DeleteError.other), OSError),
+        (api_error("unexpected"), OSError),
         (_lookup_error(files.LookupError.unsupported_content_type), OSError),
         (_write_error(files.WriteError.insufficient_space), OSError),
-        (exceptions.InternalServerError("req-1", 500, "oops"), OSError),
-        (exceptions.AuthError("req-1", auth.AuthError.expired_access_token), OSError),
-        (exceptions.BadInputError("req-1", "bad request"), OSError),
+        (server_error(), OSError),
+        (exceptions.AuthError("request-id", auth.AuthError.expired_access_token), OSError),
+        (exceptions.BadInputError("request-id", "bad request"), OSError),
     ],
 )
 def test_dropbox_errors_become_the_documented_exceptions(
-    dbx: Mock,
+    client: DropboxClient,
+    dbx: MagicMock,
     error: Exception,
     expected: type[Exception],
 ) -> None:
@@ -99,26 +96,29 @@ def test_dropbox_errors_become_the_documented_exceptions(
     dbx.files_delete_v2.side_effect = error
 
     with pytest.raises(expected) as raised:
-        DropboxClient(dbx=dbx).delete("/Docs/report.pdf")
+        client.delete("/Docs/report.pdf")
 
     assert type(raised.value) is expected
     assert raised.value.__cause__ is error
     assert "'/Docs/report.pdf'" in str(raised.value)
 
 
-def test_caller_facing_messages_hide_dropbox_details(dbx: Mock) -> None:
+def test_caller_facing_messages_hide_dropbox_details(client: DropboxClient, dbx: MagicMock) -> None:
     """A permission error's message, which callers see, does not expose Dropbox's error tag."""
     dbx.files_delete_v2.side_effect = _write_error(files.WriteError.no_write_permission)
 
     with pytest.raises(PermissionError) as raised:
-        DropboxClient(dbx=dbx).delete("/Team")
+        client.delete("/Team")
 
     assert str(raised.value) == "Dropbox does not allow deleting '/Team'"
 
 
-def test_provider_failure_message_names_the_dropbox_error(dbx: Mock) -> None:
+def test_provider_failure_message_names_the_dropbox_error(
+    client: DropboxClient,
+    dbx: MagicMock,
+) -> None:
     """A provider failure's message keeps the Dropbox error tag for the service's logs."""
-    dbx.files_delete_v2.side_effect = _api_error(files.DeleteError.too_many_files)
+    dbx.files_delete_v2.side_effect = api_error(files.DeleteError.too_many_files)
 
     with pytest.raises(OSError, match="too_many_files"):
-        DropboxClient(dbx=dbx).delete("/Huge")
+        client.delete("/Huge")

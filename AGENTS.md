@@ -9,10 +9,11 @@ Guide for contributors (people and coding agents) working in this repository. Re
 | Path | Owns | Knows about Dropbox? |
 |------|------|----------------------|
 | `src/cloud_storage_client_api/` | The contract: abstract `Client` and `File` classes and the `get_client()` factory | No |
-| `src/dropbox_client_impl/` | `DropboxClient` (implements `Client`), `DropboxFile` (implements `File`), OAuth in `auth.py`, `register()` that binds `get_client()` to Dropbox | **Yes, the only package that does** |
-| `src/cloud_storage_service/` | FastAPI app exposing `Client` operations over HTTP | No |
+| `src/dropbox_client_impl/` | `DropboxClient` (implements `Client`), `DropboxFile` (implements `File`), Dropbox error translation in `errors.py`, OAuth in `auth.py`, `register()` that binds `get_client()` to Dropbox | **Yes, the only package that does** |
+| `src/cloud_storage_service/` | FastAPI app exposing `Client` operations over HTTP: wiring in `app.py`, routes in `routes.py`, bodies in `models.py`, error format in `errors.py` | No |
 | `tests/integration/` | Tests against the real Dropbox API (skip without credentials) | Yes |
-| `tests/e2e/` | Runs `main.py` as a whole | Yes |
+| `main.py` | Entry point: starts the HTTP service | No |
+| `tests/e2e/` | Starts `main.py` as a separate process | Yes |
 | `src/*/tests/` | Fast unit tests for each package (Dropbox SDK mocked) | Mocked only |
 | `docs/` | MkDocs site: [testing](docs/testing.md), [component layout](docs/component.md), [CI setup](docs/circleci-setup.md), [workflow](docs/workflow.md) | — |
 

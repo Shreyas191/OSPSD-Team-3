@@ -40,5 +40,5 @@ class File(ABC):
     @property
     @abstractmethod
     def modified(self) -> datetime | None:
-        """Return when the file was last modified, or ``None`` for folders."""
+        """Return when the file was last modified (time zone aware), or ``None`` for folders."""
         raise NotImplementedError

@@ -71,9 +71,8 @@ def test_rename_returns_updated_file(storage: FakeStorageClient, http: TestClien
         "id": "id:1",
         "name": "summary.pdf",
         "path": "/Docs/summary.pdf",
-        "is_folder": False,
         "size": 2048,
-        "modified": "2026-10-01T12:30:00",
+        "modified_at": "2026-10-01T12:30:00Z",
     }
     assert set(storage.entries) == {"/Docs/summary.pdf"}
 
@@ -106,35 +105,49 @@ def test_move_folder_returns_folder_and_moves_contents(
 
     assert response.status_code == HTTPStatus.OK
     body = response.json()
-    assert (body["is_folder"], body["size"], body["modified"]) == (True, None, None)
+    assert (body["path"], body["size"], body["modified_at"]) == ("/Archive", None, None)
     assert set(storage.entries) == {"/Archive", "/Archive/report.pdf"}
 
 
 @pytest.mark.parametrize(
     ("route", "body"),
     [
-        ("/files/rename", {"path": "Docs/report.pdf", "new_name": "a.pdf"}),
+        ("/files/rename", {"path": "/Docs/../report.pdf", "new_name": "a.pdf"}),
         ("/files/rename", {"path": "/Docs/report.pdf", "new_name": ""}),
         ("/files/rename", {"path": "/Docs/report.pdf", "new_name": "a/b.pdf"}),
         ("/files/rename", {"path": "/Docs/report.pdf"}),
-        ("/files/move", {"from_path": "/Docs/report.pdf", "to_path": "Archive"}),
+        ("/files/move", {"from_path": "/Docs/report.pdf", "to_path": "/Archive/"}),
         ("/files/move", {"from_path": "/", "to_path": "/Archive"}),
     ],
 )
-def test_invalid_input_is_rejected_and_changes_nothing(
+def test_invalid_request_is_rejected_and_changes_nothing(
     storage: FakeStorageClient,
     http: TestClient,
     route: str,
     body: dict[str, str],
 ) -> None:
-    """Relative paths, empty or nested names and missing fields return 422 and change nothing."""
+    """Invalid paths, empty or nested names and missing fields return 400 and change nothing."""
     storage.add("/Docs/report.pdf")
 
     response = http.post(route, json=body)
 
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
     assert set(storage.entries) == {"/Docs/report.pdf"}
+
+
+def test_relative_paths_are_accepted(storage: FakeStorageClient, http: TestClient) -> None:
+    """A path without the leading ``/`` is treated as absolute, for both move paths."""
+    storage.add("/Docs/report.pdf")
+
+    response = http.post(
+        "/files/move",
+        json={"from_path": "Docs/report.pdf", "to_path": "Archive/report.pdf"},
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["path"] == "/Archive/report.pdf"
+    assert set(storage.entries) == {"/Archive/report.pdf"}
 
 
 @pytest.mark.parametrize(
@@ -189,13 +202,13 @@ def test_folder_moved_into_itself_returns_422_and_changes_nothing(
     storage: FakeStorageClient,
     http: TestClient,
 ) -> None:
-    """Moving a folder into its own subfolder is invalid input, and nothing moves."""
+    """Moving a folder into its own subfolder is an invalid operation, and nothing moves."""
     storage.add("/Docs", is_folder=True)
 
     response = http.post("/files/move", json={"from_path": "/Docs", "to_path": "/Docs/Inner"})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.json()["error"]["code"] == "invalid_operation"
     assert set(storage.entries) == {"/Docs"}
 
 
@@ -217,7 +230,7 @@ def test_value_error_from_client_returns_422(
     response = http.post(route, json=body)
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json() == {"error": {"code": "invalid_input", "message": str(error)}}
+    assert response.json() == {"error": {"code": "invalid_operation", "message": str(error)}}
 
 
 @pytest.mark.parametrize(("route", "body"), [RENAME, MOVE])
@@ -245,7 +258,7 @@ def test_permission_denied_returns_403(
         (
             OSError("RelocationError('insufficient_quota', None)"),
             HTTPStatus.BAD_GATEWAY,
-            "provider_failure",
+            "provider_error",
         ),
     ],
 )
@@ -282,7 +295,7 @@ def test_failure_is_logged_as_a_structured_warning(
     record = _failure_log(caplog)
     assert record.__dict__["operation"] == "move_file"
     assert record.__dict__["status"] == HTTPStatus.BAD_GATEWAY
-    assert record.__dict__["code"] == "provider_failure"
+    assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
     assert record.__dict__["reason"] == "Dropbox failed to move '/Docs/report.pdf' (quota)"
 

@@ -5,47 +5,64 @@
 
 ## Running locally
 ```bash
-uv run uvicorn cloud_storage_service.app:app --reload
+uv run python main.py                                      # from the repository root
+uv run uvicorn cloud_storage_service.app:app --reload      # while developing
 ```
 Interactive docs (Swagger UI) are served at `http://127.0.0.1:8000/docs`. If Dropbox credentials are missing, the service stops at startup with a `DropboxAuthError` telling you to run `uv run python -m dropbox_client_impl login`.
 
 The service handles at most `MAX_IN_FLIGHT_REQUESTS` requests at once (default `10`, set in `.env` or the environment); any more get `503 service_busy` immediately. See [overload protection](../../docs/overload-protection.md).
 
+## Modules
+
+| Module | Owns |
+|--------|------|
+| `app.py` | Builds the storage client at startup and puts the app together |
+| `routes.py` | One function per route, each calling one `Client` method |
+| `models.py` | Request and response bodies, and the path pattern |
+| `dependencies.py` | `get_storage_client`, which hands routes the client |
+| `errors.py` | The shared error format and the exception-to-status mapping |
+| `overload.py` | The limit on requests in flight |
+
 ## Choosing the provider
 `build_storage_client()` in `app.py` is the only place the service names a concrete provider (it returns a `DropboxClient`). The app calls it once at startup, stores the client on `app.state`, and routes receive it through the `get_storage_client` dependency as an abstract `Client`. Switching providers means changing `build_storage_client()` only; routes and response models stay the same.
 
 ## Conventions
-- Paths are absolute within the user's storage and start with `/` (e.g. `/Docs/report.pdf`). They must not end with `/` or contain empty segments (`/Docs//report.pdf`); such paths are rejected with `422`. `POST` routes take paths in the request body; `GET` and `DELETE` routes take a URL-encoded `path` query parameter. `GET /folders/list` also accepts `""` or `/` for the root.
-- Successful responses return a **File** object:
+- Paths follow the vertical's rule: the leading `/` is optional (`Docs/report.pdf` means `/Docs/report.pdf`), and a path must not be empty, end with `/`, or contain an empty, `.` or `..` segment (`/Docs//a`, `/Docs/../a`). Such paths are rejected with `400 invalid_request` before the provider is called. `POST` routes take paths in the request body; `GET`, `PATCH` and `DELETE` routes take a URL-encoded `path` query parameter. `GET /files` also accepts `""` or `/` for the root.
+- Successful responses return the vertical's **file info** object:
 
   | Field | Type | Meaning |
   |-------|------|---------|
-  | `id` | string | Provider's stable identifier for the entry |
+  | `id` | string | Provider's stable identifier; unchanged by move, rename and replace |
   | `name` | string | Last path segment, including any extension |
   | `path` | string | Full path, e.g. `/Docs/report.pdf` |
-  | `is_folder` | bool | `true` for folders |
   | `size` | int or null | Size in bytes; `null` for folders |
-  | `modified` | datetime or null | Last modified time (ISO 8601); `null` for folders |
+  | `modified_at` | string or null | Last modified time, ISO 8601 in UTC ending in `Z` (`2026-10-23T12:00:00Z`); `null` for folders |
+
+  Entries of a folder listing also have `type`: `"file"` or `"folder"`.
 
 - Errors return one of the status codes listed per endpoint in the team's shared error format: `{"error": {"code": "<code>", "message": "<message>"}}`.
 
 ### Shared error format
-The format is defined in `errors.py`: a route opts in by being registered on the `shared_errors` router in `app.py`, without its own `try`/`except`. Request validation errors and the built-in exceptions the `Client` contract documents are mapped as follows; any other exception is a bug and still surfaces as `500`.
+The format is defined in `errors.py`: every route is registered on the `router` in `routes.py`, which uses `SharedErrorRoute`, so no route has its own `try`/`except`. App-level handlers give the same body to requests no route handles. Every error the service returns uses this body:
 
 | Status | `code` | Cause |
 |--------|--------|-------|
-| `422` | `invalid_input` | Request validation failed, or the client raised `ValueError` or `IsADirectoryError` |
+| `400` | `invalid_request` | Request validation failed: missing field, invalid path, body that is not JSON |
+| `422` | `invalid_operation` | A valid request the operation refuses: the client raised `ValueError` or `IsADirectoryError` (e.g. a folder moved into itself, deleting the root, downloading a folder) |
 | `404` | `not_found` | `FileNotFoundError` |
 | `409` | `conflict` | `FileExistsError`: the destination is already taken |
 | `403` | `permission_denied` | `PermissionError`: the provider does not allow the operation on this entry |
-| `502` | `provider_failure` | Any other `OSError`: the provider failed |
+| `502` | `provider_error` | Any other `OSError`: the provider failed |
 | `503` | `provider_unavailable` | `ConnectionError`: the provider is unreachable or busy; try again later |
 | `503` | `service_busy` | Overload protection: the service already has `MAX_IN_FLIGHT_REQUESTS` requests in flight, so this one was rejected without contacting the provider. Comes with `Retry-After: 1`; retrying is always safe. Applies to every endpoint. See [overload protection](../../docs/overload-protection.md). |
+| `404` | `route_not_found` | No such route (a missing file is `not_found` instead) |
+| `405` | `method_not_allowed` | The route exists but not with this method; the `Allow` header lists the methods it accepts |
+| `500` | `internal_error` | An unexpected exception (a bug); the message is fixed and the details go to the log |
 
-`502` and `503` responses carry a fixed message, so provider details never reach the caller. Every failure is logged as a warning on the `cloud_storage_service.errors` logger, as `key=value` pairs that are also attached to the log record as attributes:
+`500`, `502` and `503` responses carry a fixed message, so provider details never reach the caller. Every failure is logged as a warning on the `cloud_storage_service.errors` logger, as `key=value` pairs that are also attached to the log record as attributes:
 
 ```text
-Request failed: operation='delete_entry' status=502 code='provider_failure' provider_failure=True reason="Dropbox failed to delete '/Docs' (DeleteError('too_many_files', None))"
+Request failed: operation='delete_entry' status=502 code='provider_error' provider_failure=True reason="Dropbox failed deleting '/Docs' (DeleteError('too_many_files', None))"
 ```
 
 The log never includes credentials, and validation failures record which parameter was wrong but not the value sent.
@@ -66,8 +83,9 @@ Errors use the [shared error format](#shared-error-format).
 | `200` | | Uploaded; body is the File. An overwritten file keeps its `id`. |
 | `403` | `permission_denied` | The provider does not allow writing at `remote_path` (e.g. no write permission, or a team folder) |
 | `409` | `conflict` | Something already exists at `remote_path` and `overwrite` is `false`, or a folder is there |
-| `422` | `invalid_input` | Invalid form (relative `remote_path`, missing `file`), a path the provider rejects, or a file over 150 MB |
-| `502` | `provider_failure` | The provider failed (e.g. the account is out of space, or the service's Dropbox credentials have expired) |
+| `400` | `invalid_request` | Invalid form (relative or malformed `remote_path`, missing `file`) |
+| `422` | `invalid_operation` | A path the provider rejects, or a file over 150 MB |
+| `502` | `provider_error` | The provider failed (e.g. the account is out of space, or the service's Dropbox credentials have expired) |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later. After a lost connection the upload may already have happened, so a retry without `overwrite` can return `409` |
 
 ```bash
@@ -88,11 +106,12 @@ Errors use the [shared error format](#shared-error-format).
 
 | Status | `code` | Meaning |
 |--------|--------|---------|
-| `200` | | Created; body is the folder (`size` and `modified` are `null`) |
+| `200` | | Created; body is the folder (`size` and `modified_at` are `null`) |
 | `403` | `permission_denied` | The provider does not allow creating a folder there |
 | `409` | `conflict` | Something already exists at `remote_path` |
-| `422` | `invalid_input` | Invalid body (relative path, missing field), or a path the provider rejects |
-| `502` | `provider_failure` | The provider failed (e.g. the account is out of space) |
+| `400` | `invalid_request` | Invalid body (malformed path, missing field) |
+| `422` | `invalid_operation` | A path the provider rejects |
+| `502` | `provider_error` | The provider failed (e.g. the account is out of space) |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ### `POST /files/copy`
@@ -110,8 +129,9 @@ Errors use the [shared error format](#shared-error-format).
 | `403` | `permission_denied` | The provider does not allow the copy (e.g. no write permission, or shared-folder restrictions) |
 | `404` | `not_found` | Nothing exists at `from_path` |
 | `409` | `conflict` | Something already exists at `to_path`, including the source itself |
-| `422` | `invalid_input` | Invalid body (relative path, missing field), or `to_path` is inside `from_path` (a folder copied into itself) |
-| `502` | `provider_failure` | The provider failed (e.g. the account is out of space) |
+| `400` | `invalid_request` | Invalid body (malformed path, missing field) |
+| `422` | `invalid_operation` | `to_path` is inside `from_path` (a folder copied into itself) |
+| `502` | `provider_error` | The provider failed (e.g. the account is out of space) |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
@@ -119,7 +139,7 @@ curl -X POST http://127.0.0.1:8000/files/copy \
   -H 'Content-Type: application/json' \
   -d '{"from_path": "/Docs", "to_path": "/Docs/Backup"}'
 # 422 response body:
-# {"error": {"code": "invalid_input", "message": "Cannot copy '/Docs' into itself: '/Docs/Backup' is inside the source"}}
+# {"error": {"code": "invalid_operation", "message": "Cannot copy '/Docs' into itself: '/Docs/Backup' is inside the source"}}
 ```
 
 ## Update endpoints
@@ -142,8 +162,8 @@ Errors use the [shared error format](#shared-error-format).
 | `403` | `permission_denied` | The provider does not allow the rename (e.g. the entry is locked or read-only for this account) |
 | `404` | `not_found` | Nothing exists at `path` |
 | `409` | `conflict` | The folder already contains an entry named `new_name`, including the entry itself |
-| `422` | `invalid_input` | Invalid body (relative path, empty name, name with `/`, missing field) |
-| `502` | `provider_failure` | The provider failed (e.g. the service's Dropbox credentials have expired) |
+| `400` | `invalid_request` | Invalid body (malformed path, empty name, name with `/`, missing field) |
+| `502` | `provider_error` | The provider failed (e.g. the service's Dropbox credentials have expired) |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
@@ -170,8 +190,9 @@ Errors use the [shared error format](#shared-error-format).
 | `403` | `permission_denied` | The provider does not allow the move (e.g. no write permission, or moving a shared folder somewhere it can't go) |
 | `404` | `not_found` | Nothing exists at `from_path`, including an entry that was already moved |
 | `409` | `conflict` | Something already exists at `to_path`, including the entry itself |
-| `422` | `invalid_input` | Invalid body (relative path, root as source, missing field), or `to_path` is inside `from_path` (a folder moved into itself) |
-| `502` | `provider_failure` | The provider failed (e.g. the account is out of space, or the service's Dropbox credentials have expired) |
+| `400` | `invalid_request` | Invalid body (malformed path, root as source, missing field) |
+| `422` | `invalid_operation` | `to_path` is inside `from_path` (a folder moved into itself) |
+| `502` | `provider_error` | The provider failed (e.g. the account is out of space, or the service's Dropbox credentials have expired) |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
@@ -201,8 +222,8 @@ Errors use the [shared error format](#shared-error-format).
 | `200` | | Success; body is the File object |
 | `403` | `permission_denied` | The provider does not allow reading metadata for the entry |
 | `404` | `not_found` | Nothing exists at `path` |
-| `422` | `invalid_input` | Invalid query parameter (missing `path`, relative or root path) |
-| `502` | `provider_failure` | The provider failed |
+| `400` | `invalid_request` | Invalid query parameter (missing `path`, malformed or root path) |
+| `502` | `provider_error` | The provider failed |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
@@ -222,33 +243,35 @@ Errors use the [shared error format](#shared-error-format).
 | `200` | | Success; body contains raw file bytes (`application/octet-stream`) |
 | `403` | `permission_denied` | The provider does not allow reading the file |
 | `404` | `not_found` | Nothing exists at `path` |
-| `422` | `invalid_input` | Path points to a folder, or invalid query parameter |
-| `502` | `provider_failure` | The provider failed |
+| `400` | `invalid_request` | Invalid query parameter (missing or malformed `path`) |
+| `422` | `invalid_operation` | Path points to a folder |
+| `502` | `provider_error` | The provider failed |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
 curl -o downloaded.pdf "http://127.0.0.1:8000/files/download?path=/Docs/report.pdf"
 ```
 
-### `GET /folders/list`
-List all direct children in the folder at `path`. Returns an empty list or root entries if `path` is empty or root (`/`).
+### `GET /files`
+List the direct children of the folder at `path`, sorted by path. Every provider page is fetched, so the whole folder comes back as one array with no cursor.
 
 Query parameters:
-- `path` (optional, defaults to empty): absolute path of the folder to list (e.g. `?path=/Docs`), or empty for root. Must start with `/` or be empty.
+- `path` (required): the folder to list (e.g. `?path=/Docs`); `""` or `/` lists the root.
 
 Errors use the [shared error format](#shared-error-format).
 
 | Status | `code` | Meaning |
 |--------|--------|---------|
-| `200` | | Success; body is a JSON array of File objects |
+| `200` | | Success; body is a JSON array of file info objects, each with `type` (`"file"` or `"folder"`) |
+| `400` | `invalid_request` | Missing or malformed `path` |
 | `403` | `permission_denied` | The provider does not allow listing the folder |
 | `404` | `not_found` | Folder does not exist |
-| `422` | `invalid_input` | Path points to a file rather than a folder, or invalid relative path |
-| `502` | `provider_failure` | The provider failed |
+| `422` | `invalid_operation` | Path points to a file rather than a folder |
+| `502` | `provider_error` | The provider failed |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
-curl "http://127.0.0.1:8000/folders/list?path=/Docs"
+curl "http://127.0.0.1:8000/files?path=/Docs"
 ```
 
 ### `GET /files/search`
@@ -263,8 +286,8 @@ Errors use the [shared error format](#shared-error-format).
 | Status | `code` | Meaning |
 |--------|--------|---------|
 | `200` | | Success; body is a JSON array of matching File objects |
-| `422` | `invalid_input` | Invalid query (`q` empty or over 1000 characters, or `max_results` not between 1 and 1000) |
-| `502` | `provider_failure` | The provider failed |
+| `400` | `invalid_request` | Invalid query (`q` empty or over 1000 characters, or `max_results` not between 1 and 1000) |
+| `502` | `provider_error` | The provider failed |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later |
 
 ```bash
@@ -277,7 +300,7 @@ curl "http://127.0.0.1:8000/files/search?q=report&max_results=5"
 Delete a file, or a folder together with everything inside it.
 
 Query parameters:
-- `path` (required): absolute path of the entry to delete (e.g. `?path=/Docs/report.pdf`). The root (`/`) can never be deleted.
+- `path` (required): the entry to delete (e.g. `?path=/Docs/report.pdf`). The root (`/` or empty) can never be deleted.
 
 Errors use the [shared error format](#shared-error-format).
 
@@ -286,8 +309,9 @@ Errors use the [shared error format](#shared-error-format).
 | `204` | | Deleted; the response has no body |
 | `403` | `permission_denied` | The provider does not allow deleting the entry (e.g. it is locked, a team folder, or read-only for this account) |
 | `404` | `not_found` | Nothing exists at `path`, including a path that was already deleted |
-| `422` | `invalid_input` | Invalid query parameter (missing, empty, relative, or the root `/`), or a path the provider rejects as malformed |
-| `502` | `provider_failure` | The provider failed (e.g. the folder holds too many files to delete in one call, or the service's Dropbox credentials have expired) |
+| `400` | `invalid_request` | Missing or malformed `path` |
+| `422` | `invalid_operation` | The path is the root, or a path the provider rejects as malformed |
+| `502` | `provider_error` | The provider failed (e.g. the folder holds too many files to delete in one call, or the service's Dropbox credentials have expired) |
 | `503` | `provider_unavailable` | The provider is unreachable or busy (e.g. too many write operations in progress); nothing was deleted, so try again later |
 
 ```bash
@@ -296,7 +320,7 @@ curl -X DELETE "http://127.0.0.1:8000/files?path=/Docs/report.pdf"
 # {"error": {"code": "not_found", "message": "No file or folder at '/Docs/report.pdf'"}}
 ```
 
-Delete is not idempotent: deleting the same path twice returns `204` the first time and `404` the second. The response has no body because the `Client.delete` contract returns only `True`, not the deleted entry. The root path is rejected before the provider is contacted. Dropbox implements delete as a single `files_delete_v2` call; deleted entries go to the Dropbox account's trash, but this service does not offer restore.
+Delete is not idempotent: deleting the same path twice returns `204` the first time and `404` the second. The response has no body because the `Client.delete` contract returns only `True`, not the deleted entry. The root path is rejected by the client before the provider is contacted. Dropbox implements delete as a single `files_delete_v2` call; deleted entries go to the Dropbox account's trash, but this service does not offer restore.
 
 
 ## Testing

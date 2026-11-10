@@ -77,22 +77,24 @@ from cloud_storage_client_api import get_client
 client = get_client()  # -> DropboxClient
 ```
 
-## Method ownership and Dropbox endpoints
+## Dropbox endpoints
 
-| Method | Owner | Dropbox SDK call |
-|--------|-------|------------------|
-| `upload_file` | Zesan | `files_upload` (single request, up to 150 MB) |
-| `create_folder` | Zesan | `files_create_folder_v2` |
-| `copy` | Zesan | `files_copy_v2` (files and folders) |
-| `download_file` | Jing | `files_download_to_file` |
-| `get_metadata` | Jing | `files_get_metadata` |
-| `list_folder` | Jing | `files_list_folder` / `files_list_folder_continue` |
-| `search` | Jing | `files_search_v2` |
-| `rename` | Shreyas | `files_move_v2` (same folder, new name) |
-| `move` | Shreyas | `files_move_v2` |
-| `delete` | John | `files_delete_v2` |
+| Method | Dropbox SDK call |
+|--------|------------------|
+| `upload_file` | `files_upload` (single request, up to 150 MB) |
+| `create_folder` | `files_create_folder_v2` |
+| `copy` | `files_copy_v2` (files and folders) |
+| `download_file` | `files_download_to_file` |
+| `get_metadata` | `files_get_metadata` |
+| `list_folder` | `files_list_folder` / `files_list_folder_continue` |
+| `search` | `files_search_v2` |
+| `rename` | `files_move_v2` (same folder, new name) |
+| `move` | `files_move_v2` |
+| `delete` | `files_delete_v2` |
 
-`rename` and `move` are implemented: both call `files_move_v2` with `autorename=False`, and translate Dropbox's `not_found` and `conflict` errors into `FileNotFoundError` and `FileExistsError`. `delete` rejects an empty or root path with `ValueError` without calling Dropbox, and translates every Dropbox failure into a built-in exception: `path_lookup.not_found` into `FileNotFoundError`, malformed paths into `ValueError`, locked, restricted or read-only entries into `PermissionError`, rate limits, too many write operations and network failures into `ConnectionError`, and anything else into `OSError`. The remaining methods are stubs that raise `NotImplementedError`. Implement yours on a `<name>-<feature>` branch, wrap SDK metadata with `DropboxFile(metadata)`, and add unit tests that mock `client.dbx`.
+## Error translation
+
+No Dropbox exception leaves `DropboxClient`. [`errors.py`](src/dropbox_client_impl/errors.py) translates every failed SDK call in the same three steps: the SDK's own argument check becomes `ValueError` and rate limits or network errors become `ConnectionError`; otherwise the call's reason reader names an outcome (`not_found`, `conflict`, `denied`, ...); one table gives each outcome its exception and message. Anything unrecognised becomes `OSError`. Adding a Dropbox call means adding one `Operation` with its reason reader.
 
 ## Testing
 ```bash

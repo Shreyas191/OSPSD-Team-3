@@ -100,42 +100,60 @@ def test_repeat_delete_returns_404(storage: FakeStorageClient, http: TestClient)
     assert storage.entries == {}
 
 
+def test_relative_path_deletes_the_absolute_entry(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """A path without the leading ``/`` deletes the entry at the absolute path."""
+    storage.add("/Docs/report.pdf")
+
+    response = http.delete("/files", params={"path": "Docs/report.pdf"})
+
+    assert response.status_code == HTTPStatus.NO_CONTENT
+    assert storage.entries == {}
+
+
 @pytest.mark.parametrize(
     "params",
     [
-        {"path": "/"},
         {"path": "//"},
-        {"path": ""},
-        {"path": "Docs/report.pdf"},
         {"path": "/Docs/"},
+        {"path": "/Docs//report.pdf"},
+        {"path": "/Docs/../report.pdf"},
         {},
     ],
 )
-def test_invalid_or_root_path_is_rejected_and_changes_nothing(
+def test_invalid_path_is_rejected_and_changes_nothing(
     storage: FakeStorageClient,
     http: TestClient,
     params: dict[str, str],
 ) -> None:
-    """Root, empty, relative, trailing-slash and missing paths return 422 and change nothing."""
+    """Trailing-slash, empty, ``..`` and missing paths return 400 and change nothing."""
     report = storage.add("/Docs/report.pdf")
 
     response = http.delete("/files", params=params)
 
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.status_code == HTTPStatus.BAD_REQUEST
     error = response.json()["error"]
-    assert error["code"] == "invalid_input"
+    assert error["code"] == "invalid_request"
     assert error["message"].startswith("query.path: ")
     assert storage.entries == {"/Docs/report.pdf": report}
 
 
 @pytest.mark.parametrize("path", ["/", ""])
-def test_root_path_never_reaches_the_client(provider: Mock, http: TestClient, path: str) -> None:
-    """Request validation rejects the root before the provider's ``delete`` is called."""
+def test_deleting_the_root_returns_422_and_changes_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+    path: str,
+) -> None:
+    """The root is a valid path, but the client refuses to delete it: 422 invalid_operation."""
+    report = storage.add("/Docs/report.pdf")
+
     response = http.delete("/files", params={"path": path})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_input"
-    provider.delete.assert_not_called()
+    assert response.json()["error"]["code"] == "invalid_operation"
+    assert storage.entries == {"/Docs/report.pdf": report}
 
 
 def test_path_rejected_by_the_client_returns_422(provider: Mock, http: TestClient) -> None:
@@ -147,7 +165,7 @@ def test_path_rejected_by_the_client_returns_422(provider: Mock, http: TestClien
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert response.json() == {
         "error": {
-            "code": "invalid_input",
+            "code": "invalid_operation",
             "message": "Dropbox rejected '/Docs/bad' as an invalid path",
         },
     }
@@ -179,7 +197,7 @@ def test_permission_denied_returns_403(provider: Mock, http: TestClient) -> None
         (
             OSError("DeleteError('too_many_files', None)"),
             HTTPStatus.BAD_GATEWAY,
-            "provider_failure",
+            "provider_error",
         ),
     ],
 )
@@ -217,13 +235,13 @@ def test_failure_is_logged_as_a_structured_warning(
     record = _failure_log(caplog)
     assert record.__dict__["operation"] == "delete_entry"
     assert record.__dict__["status"] == HTTPStatus.BAD_GATEWAY
-    assert record.__dict__["code"] == "provider_failure"
+    assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
     assert (
         record.__dict__["reason"]
         == "Dropbox failed to delete '/Docs/report.pdf' (InternalServerError)"
     )
-    assert "status=502 code='provider_failure' provider_failure=True" in record.getMessage()
+    assert "status=502 code='provider_error' provider_failure=True" in record.getMessage()
 
 
 def test_validation_failure_log_omits_the_rejected_input(
@@ -233,10 +251,11 @@ def test_validation_failure_log_omits_the_rejected_input(
 ) -> None:
     """Invalid input is logged as a client error, describing the problem but not the value sent."""
     with caplog.at_level(logging.WARNING):
-        http.delete("/files", params={"path": "relative/secret-name.txt"})
+        http.delete("/files", params={"path": "/secret-name/../x.txt"})
 
     record = _failure_log(caplog)
-    assert record.__dict__["status"] == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert record.__dict__["status"] == HTTPStatus.BAD_REQUEST
+    assert record.__dict__["code"] == "invalid_request"
     assert record.__dict__["provider_failure"] is False
     assert "secret-name" not in record.getMessage()
 

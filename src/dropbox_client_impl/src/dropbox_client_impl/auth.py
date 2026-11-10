@@ -139,7 +139,8 @@ def get_dropbox_client() -> dropbox.Dropbox:
 
     Raises:
         DropboxAuthError: If no credentials are configured, or a refresh token is found but
-            ``DROPBOX_APP_KEY`` / ``DROPBOX_APP_SECRET`` are missing.
+            ``DROPBOX_APP_KEY`` / ``DROPBOX_APP_SECRET`` are missing. The message names the
+            missing variables and never contains a credential value.
 
     """
     refresh_token = load_refresh_token()
@@ -156,7 +157,14 @@ def get_dropbox_client() -> dropbox.Dropbox:
     if access_token:
         return dropbox.Dropbox(oauth2_access_token=access_token, timeout=REQUEST_TIMEOUT_SECONDS)
 
-    msg = f"Dropbox is not authorized. Run `{LOGIN_COMMAND}` to connect your Dropbox account."
+    # Name what is missing (never a value), so an operator of a deployed service, where
+    # the interactive login cannot run, knows which variable to set.
+    oauth_vars = (APP_KEY_ENV_VAR, APP_SECRET_ENV_VAR, REFRESH_TOKEN_ENV_VAR)
+    missing = ", ".join(name for name in oauth_vars if not _env(name))
+    msg = (
+        f"Dropbox is not authorized: missing {missing}. Set {', '.join(oauth_vars)} in the "
+        f"environment, or run `{LOGIN_COMMAND}` to connect your Dropbox account."
+    )
     raise DropboxAuthError(msg)
 
 
