@@ -48,11 +48,11 @@ def error_responses(descriptions: dict[int, str]) -> dict[int | str, dict[str, A
 
 
 @router.post(
-    "/files/upload",
+    "/files",
     responses=error_responses(
         {
             403: "The provider does not allow writing there",
-            409: "Something is at the path: `overwrite` is false, or it's a folder",
+            409: "A file or folder is at the specified path or `overwrite` is false",
             422: "Missing file, invalid path, or a file over the provider's upload limit",
         },
     ),
@@ -62,19 +62,15 @@ def upload_file(
     remote_path: Annotated[
         str,
         Form(
-            pattern=ABSOLUTE_PATH_PATTERN,
+            pattern=_ABSOLUTE_PATH_PATTERN,
             description="Destination path in cloud storage, including the file name",
             examples=["/Docs/report.pdf"],
         ),
     ],
     client: StorageClient,
-    *,
-    overwrite: Annotated[
-        bool,
-        Form(description="Replace an existing file at remote_path"),
-    ] = False,
 ) -> FileResponse:
-    """Upload a file to cloud storage and return its metadata."""
+    """Upload a file that does not exist on cloud storage to cloud storage and return its 
+    metadata."""
     # The fields are declared one by one rather than as a single form model: FastAPI declares
     # a form model that contains an ``UploadFile`` as ``application/x-www-form-urlencoded`` in
     # the OpenAPI schema, so Swagger UI's "Try it out" could not send the file.
@@ -82,9 +78,40 @@ def upload_file(
         tmp_path = Path(tmp_dir) / "upload"
         with tmp_path.open("wb") as out:
             shutil.copyfileobj(file.file, out)
-        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=overwrite)
+        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=False)
     return FileResponse.from_file(uploaded)
 
+@router.put(
+    "/files",
+    responses=error_responses(
+        {
+            403: "The provider does not allow writing there",
+            404: "File to be replaced does not exist",
+            409: "The file has changed since you last retrieved it. Fetch the latest version "
+                "before retrying the replacement.",
+            422: "Missing file, invalid path, or a file over the provider's upload limit",
+        },
+    )
+)
+def replace_file(
+    file: Annotated[UploadFile, File(description="Replacement file contents")],
+    remote_path: Annotated[
+        str,
+        Form(
+            pattern=_ABSOLUTE_PATH_PATTERN,
+            description="Path of the file to replace, including the file name",
+            examples=["/Docs/report.pdf"],
+        ),
+    ],
+    client: StorageClient,
+) -> FileResponse:
+    """Replace a file at the destination"""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "upload"
+        with tmp_path.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=True)
+    return FileResponse.from_file(uploaded)
 
 @router.post(
     "/folders/create",
