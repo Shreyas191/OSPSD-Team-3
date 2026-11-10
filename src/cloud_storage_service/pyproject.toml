@@ -8,6 +8,7 @@ dependencies = [
     "cloud-storage-client-api",
     "dropbox-client-impl",
     "fastapi>=0.115.0",
+    "python-multipart>=0.0.32",
     "uvicorn>=0.30.0",
 ]
 

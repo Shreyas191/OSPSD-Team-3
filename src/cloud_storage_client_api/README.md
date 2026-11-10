@@ -11,14 +11,13 @@
 ## Architecture
 
 ### `Client` operations
-All paths are absolute within the user's storage and start with `/` (e.g. `/Documents/report.pdf`).
+All paths are absolute within the user's storage and start with `/` (e.g. `/Documents/report.pdf`). For `search`, `max_results` must be between 1 and 1000.
 
 | Area   | Method | Returns |
 |--------|--------|---------|
 | Create | `upload_file(local_path, remote_path, *, overwrite=False)` | `File` |
 | Create | `create_folder(remote_path)` | `File` |
-| Create | `copy_file(from_path, to_path)` | `File` |
-| Create | `copy_folder(from_path, to_path)` | `File` |
+| Create | `copy(from_path, to_path)` (file or folder) | `File` |
 | Read   | `download_file(remote_path, local_path)` | `File` |
 | Read   | `get_metadata(remote_path)` | `File` |
 | Read   | `list_folder(remote_path="")` | `Iterator[File]` |

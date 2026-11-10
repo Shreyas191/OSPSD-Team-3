@@ -1,28 +1,32 @@
-"""Main module for demonstrating the cloud storage client."""
+"""Entry point: start the Cloud Storage Service.
 
-import logging
+    uv run python main.py    # http://127.0.0.1:8000, Swagger UI at /docs
 
-import cloud_storage_client_api
-import dropbox_client_impl  # noqa: F401  (import registers the Dropbox implementation)
+``HOST`` and ``PORT`` change the address. The service needs Dropbox credentials (see the
+README). Without them it stops before serving, with one line that names the missing
+settings and exits with status 1. The container image runs this same file.
+"""
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import os
+
+import uvicorn
+from cloud_storage_service.app import ConfigurationError, check_configuration
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8000
 
 
 def main() -> None:
-    """Initialize the client and list the root folder of the Dropbox account."""
-    # get_client() returns a DropboxClient because dropbox_client_impl registered itself.
-    client = cloud_storage_client_api.get_client()
-    logger.info("Using %s", type(client).__name__)
-
+    """Check the configuration, then serve the FastAPI app in ``cloud_storage_service.app``."""
     try:
-        for entry in client.list_folder(""):
-            kind = "folder" if entry.is_folder else f"{entry.size} bytes"
-            logger.info("%s (%s)", entry.path, kind)
-    except NotImplementedError:
-        logger.info("list_folder is not implemented yet.")
-
-    print("Demo complete.")  # noqa: T201
+        check_configuration()
+    except ConfigurationError as e:
+        # One line on stderr, no traceback: the message names settings, never their values.
+        msg = f"Startup failed: {e}"
+        raise SystemExit(msg) from None
+    host = os.environ.get("HOST", DEFAULT_HOST)
+    port = int(os.environ.get("PORT", DEFAULT_PORT))
+    uvicorn.run("cloud_storage_service.app:app", host=host, port=port)
 
 
 if __name__ == "__main__":

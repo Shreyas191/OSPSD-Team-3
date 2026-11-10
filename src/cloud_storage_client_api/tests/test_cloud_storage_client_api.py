@@ -28,18 +28,19 @@ def test_client_cannot_be_instantiated() -> None:
 
 
 def test_client_declares_all_crud_methods() -> None:
-    """The contract exposes one abstract method per agreed CRUD feature."""
+    """The contract exposes one abstract method per agreed CRUD feature, plus a health check."""
     expected = {
         "upload_file",
+        "replace_file",
         "create_folder",
-        "copy_file",
-        "copy_folder",
+        "copy",
         "download_file",
         "get_metadata",
         "list_folder",
         "search",
         "rename",
         "move",
+        "check_health",
         "delete",
     }
     assert expected == Client.__abstractmethods__
@@ -77,27 +78,36 @@ def test_client_create_folder() -> None:
     assert folder.is_folder is True
 
 
-def test_client_copy_file() -> None:
-    """``copy_file`` returns the metadata of the duplicate."""
+def test_client_copy() -> None:
+    """``copy`` returns the metadata of the copy, for a file or a folder."""
     mock_client = Mock(spec=Client)
-    mock_client.copy_file.return_value = _mock_file("/Docs/report (copy).pdf")
+    mock_client.copy.return_value = _mock_file("/Docs (copy)", is_folder=True)
 
-    duplicate = mock_client.copy_file("/Docs/report.pdf", "/Docs/report (copy).pdf")
+    duplicate = mock_client.copy("/Docs", "/Docs (copy)")
 
-    mock_client.copy_file.assert_called_once_with("/Docs/report.pdf", "/Docs/report (copy).pdf")
-    assert duplicate.name == "report (copy).pdf"
-
-
-def test_client_copy_folder() -> None:
-    """``copy_folder`` returns the metadata of the duplicated folder."""
-    mock_client = Mock(spec=Client)
-    mock_client.copy_folder.return_value = _mock_file("/Docs (copy)", is_folder=True)
-
-    duplicate = mock_client.copy_folder("/Docs", "/Docs (copy)")
-
-    mock_client.copy_folder.assert_called_once_with("/Docs", "/Docs (copy)")
+    mock_client.copy.assert_called_once_with("/Docs", "/Docs (copy)")
     assert duplicate.name == "Docs (copy)"
     assert duplicate.is_folder is True
+
+
+def test_client_replace_file() -> None:
+    """``replace_file`` returns the metadata of the replaced file."""
+    mock_client = Mock(spec=Client)
+    mock_client.replace_file.return_value = _mock_file("/Docs/report.pdf")
+
+    replaced = mock_client.replace_file("report.pdf", "/Docs/report.pdf")
+
+    mock_client.replace_file.assert_called_once_with("report.pdf", "/Docs/report.pdf")
+    assert replaced.path == "/Docs/report.pdf"
+
+
+def test_client_replace_file_missing_raises() -> None:
+    """``replace_file`` never creates: a missing file raises FileNotFoundError."""
+    mock_client = Mock(spec=Client)
+    mock_client.replace_file.side_effect = FileNotFoundError("/Docs/missing.pdf")
+
+    with pytest.raises(FileNotFoundError):
+        mock_client.replace_file("report.pdf", "/Docs/missing.pdf")
 
 
 # ----- Read -----
@@ -167,6 +177,21 @@ def test_client_move() -> None:
     moved = mock_client.move("/Docs/report.pdf", "/Archive/report.pdf")
 
     assert moved.path == "/Archive/report.pdf"
+
+
+# ----- Health -----
+
+
+def test_client_check_health() -> None:
+    """``check_health`` returns None when healthy and raises ConnectionError when unreachable."""
+    mock_client = Mock(spec=Client)
+    mock_client.check_health.return_value = None
+
+    assert mock_client.check_health() is None
+
+    mock_client.check_health.side_effect = ConnectionError("unreachable")
+    with pytest.raises(ConnectionError):
+        mock_client.check_health()
 
 
 # ----- Delete -----

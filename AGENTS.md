@@ -9,10 +9,11 @@ Guide for contributors (people and coding agents) working in this repository. Re
 | Path | Owns | Knows about Dropbox? |
 |------|------|----------------------|
 | `src/cloud_storage_client_api/` | The contract: abstract `Client` and `File` classes and the `get_client()` factory | No |
-| `src/dropbox_client_impl/` | `DropboxClient` (implements `Client`), `DropboxFile` (implements `File`), OAuth in `auth.py`, `register()` that binds `get_client()` to Dropbox | **Yes, the only package that does** |
-| `src/cloud_storage_service/` | FastAPI app exposing `Client` operations over HTTP | No |
+| `src/dropbox_client_impl/` | `DropboxClient` (implements `Client`), `DropboxFile` (implements `File`), Dropbox error translation in `errors.py`, OAuth in `auth.py`, `register()` that binds `get_client()` to Dropbox | **Yes, the only package that does** |
+| `src/cloud_storage_service/` | FastAPI app exposing `Client` operations over HTTP: wiring in `app.py`, routes in `routes.py`, bodies in `models.py`, error format in `errors.py` | No |
 | `tests/integration/` | Tests against the real Dropbox API (skip without credentials) | Yes |
-| `tests/e2e/` | Runs `main.py` as a whole | Yes |
+| `main.py` | Entry point: starts the HTTP service | No |
+| `tests/e2e/` | Starts `main.py` as a separate process | Yes |
 | `src/*/tests/` | Fast unit tests for each package (Dropbox SDK mocked) | Mocked only |
 | `docs/` | MkDocs site: [testing](docs/testing.md), [component layout](docs/component.md), [CI setup](docs/circleci-setup.md), [workflow](docs/workflow.md) | — |
 
@@ -24,7 +25,7 @@ These are boundaries reviewers will check. Don't break them without discussing i
 
 1. **Dropbox types stay inside `dropbox_client_impl`.** The contract and service packages must never import `dropbox`. Wrap SDK metadata in `DropboxFile` before returning it.
 2. **Translate provider errors at the boundary.** `DropboxClient` turns Dropbox errors into the built-in exceptions documented on the `Client` method (`FileNotFoundError`, `FileExistsError`, `ValueError`). The service maps those to HTTP status codes. Never let an `ApiError` decide the HTTP response directly.
-3. **Code depends on the contract, not the implementation.** Use `cloud_storage_client_api.get_client()`; importing `dropbox_client_impl` registers the Dropbox implementation. In the service, get the client through the `get_storage_client` dependency so tests can override it.
+3. **Code depends on the contract, not the implementation.** Use `cloud_storage_client_api.get_client()`; importing `dropbox_client_impl` registers the Dropbox implementation. In the service, `build_storage_client()` in `app.py` is the only place that names a provider; routes get the client through the `get_storage_client` dependency so tests can override it.
 4. **Credentials come only from `dropbox_client_impl.auth`.** No other module reads tokens or environment variables for Dropbox.
 5. **Keep the public contract stable.** Changing a `Client` method signature or an HTTP request/response shape is a contract change: open an issue, agree on it as a team, and update docs and tests in the same PR.
 6. **Only add what's needed now.** No speculative abstractions, retries, or features beyond the current level of the spec.
@@ -52,7 +53,7 @@ uv run pytest src/ tests/ -m "not local_credentials"
 
 See [docs/testing.md](docs/testing.md) for markers and commands.
 
-- **Unit tests (`src/*/tests/`)** must not touch the network or need credentials. Mock `client.dbx` for the Dropbox client, and override `get_storage_client` for HTTP routes. Coverage must stay at or above 85%.
+- **Unit tests (`src/*/tests/`)** must not touch the network or need credentials. Mock `client.dbx` for the Dropbox client, and override `get_storage_client` with the in-memory `FakeStorageClient` from `tests/fakes.py` for HTTP routes. Coverage must stay at or above 85%.
 - **Integration tests (`tests/integration/`)** hit real Dropbox. Skip them when no credentials are available, and create and delete everything inside a uniquely named scratch folder so the account is left unchanged.
 - Test public behaviour (HTTP status codes and response bodies, `File` fields, raised exceptions), not private helpers.
 

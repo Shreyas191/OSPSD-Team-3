@@ -1,104 +1,87 @@
-"""FastAPI application exposing cloud storage operations over HTTP.
+"""The FastAPI application: builds the storage client and puts the service together.
 
-Request flow: FastAPI validates the JSON body against a request model, the route calls the
-provider-independent ``cloud_storage_client_api.Client``, and the returned ``File`` is
-serialized as a :class:`FileResponse`. Routes never see Dropbox types: the client raises
-built-in exceptions (``FileNotFoundError``, ``FileExistsError``, ``ValueError``), which are
-mapped to HTTP status codes here.
-
-Paths are passed in the request body rather than the URL because they contain ``/``.
+A request goes: :mod:`overload` (limit on requests in flight) → a route in :mod:`routes`
+→ a ``Client`` method → the provider. The client raises built-in exceptions, which
+:mod:`errors` turns into the shared error body. Request and response bodies are in
+:mod:`models`.
 """
 
-from datetime import datetime
-from functools import lru_cache
-from typing import Annotated
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import cloud_storage_client_api
-import dropbox_client_impl  # noqa: F401  (import registers the Dropbox implementation)
-from fastapi import Depends, FastAPI, HTTPException, status
-from pydantic import BaseModel, Field
+from dropbox_client_impl import DropboxAuthError, DropboxClient
+from fastapi import FastAPI
 
-AbsolutePath = Annotated[str, Field(pattern=r"^/.+", examples=["/Docs/report.pdf"])]
+from cloud_storage_service.dependencies import get_storage_client
+from cloud_storage_service.errors import add_error_handlers
+from cloud_storage_service.models import FileResponse
+from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
+from cloud_storage_service.routes import router
 
-app = FastAPI(title="Cloud Storage Service")
-
-
-@lru_cache(maxsize=1)
-def get_storage_client() -> cloud_storage_client_api.Client:
-    """Return the shared storage client, built once on first use."""
-    return cloud_storage_client_api.get_client()
-
-
-StorageClient = Annotated[cloud_storage_client_api.Client, Depends(get_storage_client)]
-
-
-class FileResponse(BaseModel):
-    """A file or folder as returned by the service."""
-
-    id: str
-    name: str
-    path: str
-    is_folder: bool
-    size: int | None = Field(description="Size in bytes; null for folders")
-    modified: datetime | None = Field(description="Last modified time; null for folders")
-
-    @classmethod
-    def from_file(cls, file: cloud_storage_client_api.File) -> "FileResponse":
-        """Build a response from any ``File`` implementation."""
-        return cls(
-            id=file.id,
-            name=file.name,
-            path=file.path,
-            is_folder=file.is_folder,
-            size=file.size,
-            modified=file.modified,
-        )
+__all__ = [
+    "ConfigurationError",
+    "FileResponse",
+    "app",
+    "build_storage_client",
+    "check_configuration",
+    "get_storage_client",
+]
 
 
-class RenameRequest(BaseModel):
-    """Rename the entry at ``path`` to ``new_name`` within the same folder."""
+class ConfigurationError(RuntimeError):
+    """Required configuration, such as a provider credential, is missing or unusable.
 
-    path: AbsolutePath
-    new_name: str = Field(min_length=1, pattern=r"^[^/]+$", examples=["summary.pdf"])
-
-
-class MoveRequest(BaseModel):
-    """Move the entry at ``from_path`` to the full destination path ``to_path``."""
-
-    from_path: AbsolutePath
-    to_path: AbsolutePath = Field(examples=["/Archive/report.pdf"])
+    The message names the settings involved and never contains their values, so it is safe
+    to log.
+    """
 
 
-def _to_http_error(error: Exception) -> HTTPException:
-    """Map the client contract's documented exceptions onto HTTP status codes."""
-    if isinstance(error, FileNotFoundError):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, FileExistsError):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+def build_storage_client() -> cloud_storage_client_api.Client:
+    """Build the storage client the service runs against.
 
+    This is the only place the service names a provider: to switch providers, return a
+    different ``Client`` implementation here. Building a ``DropboxClient`` makes no network
+    call, but it fails if no Dropbox credentials are configured, so the service stops at
+    startup instead of on its first request.
 
-_ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
-    404: {"description": "The source file or folder does not exist"},
-    409: {"description": "The destination already exists"},
-}
+    Raises:
+        ConfigurationError: If the provider's credentials are missing or unreadable.
 
-
-@app.post("/files/rename", responses=_ERROR_RESPONSES)
-def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
-    """Rename a file or folder in place and return its updated metadata."""
+    """
     try:
-        renamed = client.rename(request.path, request.new_name)
-    except (FileNotFoundError, FileExistsError, ValueError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(renamed)
+        return DropboxClient()
+    except DropboxAuthError as e:
+        # The provider's message already names only the missing settings; `from None` keeps
+        # its internals out of the startup log.
+        raise ConfigurationError(str(e)) from None
 
 
-@app.post("/files/move", responses=_ERROR_RESPONSES)
-def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
-    """Move a file or folder to a new path and return its updated metadata."""
-    try:
-        moved = client.move(request.from_path, request.to_path)
-    except (FileNotFoundError, FileExistsError) as e:
-        raise _to_http_error(e) from e
-    return FileResponse.from_file(moved)
+def check_configuration() -> None:
+    """Fail fast, before the server starts, if required configuration is missing.
+
+    It builds the storage client once and discards it. Building makes no network call, so
+    this checks that the settings are present, not that the provider accepts them; that is
+    ``GET /health/provider``'s job. A provider outage therefore never stops the service
+    from starting.
+
+    Raises:
+        ConfigurationError: If a required setting is missing or unusable.
+
+    """
+    build_storage_client()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Create the storage client when the app starts; it lives as long as the app."""
+    app.state.storage_client = build_storage_client()
+    yield
+
+
+app = FastAPI(title="Cloud Storage Service", lifespan=lifespan)
+# At most MAX_IN_FLIGHT_REQUESTS requests run at once; the rest get 503 service_busy at once
+# instead of queueing (see overload.py).
+app.add_middleware(ConcurrencyLimitMiddleware, max_in_flight=max_in_flight_from_env())
+app.include_router(router)
+add_error_handlers(app)

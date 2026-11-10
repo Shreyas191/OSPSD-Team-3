@@ -127,9 +127,12 @@ jobs:
           name: "Verify Environment Variables"
           command: |
             echo "Checking for required environment variables..."
+            # This job only runs on main and dev, where the real-Dropbox tests must run.
+            # Without credentials they would all be skipped and the job would still pass.
             if [ -z "$DROPBOX_APP_KEY" ] || [ -z "$DROPBOX_APP_SECRET" ] || [ -z "$DROPBOX_REFRESH_TOKEN" ]; then
-              echo "WARNING: Missing Dropbox environment variables. Integration tests may be skipped."
-              echo "Required: DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN"
+              echo "ERROR: Missing Dropbox environment variables; the integration tests would be skipped."
+              echo "Required in the 'dropbox-client' context: DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN"
+              exit 1
             else
               echo "All required environment variables are present."
             fi
