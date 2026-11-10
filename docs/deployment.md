@@ -1,6 +1,6 @@
 # Container Image and Configuration
 
-This page covers HW2 Milestone 3, Level 1, for two items: building the service as a container image (item 2.1), and the configuration and secrets it needs at run time (item 2.2). The infrastructure that runs the image (Cloud Run, Artifact Registry, service accounts) is item 2.3 and is not described here yet.
+This page covers HW2 Milestone 3, Level 1, for two items: building the service as a container image (item 2.1), and the configuration and secrets it needs at run time (item 2.2). The infrastructure that runs the image (Cloud Run, Artifact Registry, service accounts, secrets) is item 2.3, in [Infrastructure](infrastructure.md).
 
 ## Build the image
 
