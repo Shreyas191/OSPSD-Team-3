@@ -3,7 +3,7 @@ name = "dropbox-client-impl"
 version = "0.1.0"
 description = "Dropbox implementation of the cloud storage client API"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "cloud-storage-client-api",
     "dropbox>=12.0.2",
@@ -41,7 +41,7 @@ packages = ["src/dropbox_client_impl"]
 
 [tool.ruff]
 line-length = 100  # Default formatting width
-target-version = "py311"  # Adjust based on actual Python version
+target-version = "py312"  # Adjust based on actual Python version
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint]

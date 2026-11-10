@@ -3,7 +3,7 @@ name = "cloud-storage-client-api"
 version = "0.1.0"
 description = "Abstract cloud storage client contract (Client and File ABCs)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = []
 
 [build-system]
@@ -18,7 +18,7 @@ packages = ["src/cloud_storage_client_api"]
 
 [tool.ruff]
 line-length = 100  # Default formatting width
-target-version = "py311"  # Adjust based on actual Python version
+target-version = "py312"  # Adjust based on actual Python version
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint]
