@@ -369,6 +369,15 @@ class DropboxClient(cloud_storage_client_api.Client):
         return True
 
 
+    # ----- Health -----
+
+    def check_provider_health(self) -> None:
+        """Verify that Dropbox responds to a live authenticated request."""
+        try:
+            self.dbx.users_get_current_account()
+        except DROPBOX_FAILURES as exc:
+            raise errors.translate(exc, errors.HEALTH, "provider health") from exc
+
 def _validate_search_arguments(query: str, max_results: int) -> None:
     """Raise ``ValueError`` for arguments Dropbox would reject, without contacting it."""
     if not query:

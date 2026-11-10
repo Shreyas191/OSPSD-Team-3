@@ -80,6 +80,7 @@ class Operation:
     action: str
     read_reason: ReasonReader = _no_specific_reason
     describe: Callable[[str], str] = repr
+    outcome_override: Outcome | None = None
 
 
 def translate(
@@ -98,7 +99,12 @@ def translate(
 
     """
     reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
-    outcome = _sdk_outcome(error) or operation.read_reason(reason) or "failed"
+    outcome = (
+        operation.outcome_override
+        or _sdk_outcome(error)
+        or operation.read_reason(reason)
+        or "failed"
+    )
     kind, template = _OUTCOMES[outcome]
     source = operation.describe(path)
     destination = source if to_path is None else repr(to_path)
@@ -265,3 +271,4 @@ CREATE_FOLDER = Operation("creating a folder at", _write_reason)
 MOVE = Operation("moving", _relocation_reason)
 COPY = Operation("copying", _relocation_reason)
 DELETE = Operation("deleting", _delete_reason)
+HEALTH = Operation("checking", outcome_override="unavailable")
