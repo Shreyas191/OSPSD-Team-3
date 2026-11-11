@@ -29,6 +29,7 @@ nav:
   - 'Infrastructure': 'infrastructure.md'
   - 'Teardown': 'teardown.md'
   - 'Release Pipeline': 'release-pipeline.md'
+  - 'Rollback Drill': 'rollback-drill.md'
   - 'Runbook': 'runbook.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
