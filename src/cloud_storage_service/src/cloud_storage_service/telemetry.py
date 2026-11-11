@@ -14,7 +14,13 @@ Trace is slow or down, spans are dropped and requests are not affected.
 
 **What is never recorded:** request or response bodies, file contents, file paths (quoted
 text in error reasons is redacted), query strings, headers (so no tokens), and the values a
-caller sent that failed validation.
+caller sent that failed validation. Request spans keep the URL's path but not its query
+string (:func:`strip_query`), where file paths travel.
+
+Cloud Run itself also logs every request (``run.googleapis.com/requests``) and starts a
+root span for sampled ones; both record the full URL, query string included. Those are
+the platform's records, readable only by members of the project, and this module can't
+change them.
 """
 
 import json
@@ -226,6 +232,22 @@ def configure_logging() -> None:
 # ----- Traces -----
 
 
+def strip_query(span: trace.Span, scope: dict[str, Any]) -> None:
+    """Remove the query string from a request span's URL attributes before it is exported.
+
+    File paths travel in the query string (``?path=/Docs/a.pdf``), and they are user data.
+    Used as the FastAPI instrumentation's ``server_request_hook``.
+    """
+    attributes = getattr(span, "attributes", None) or {}
+    for key in ("http.url", "url.full"):
+        if key in attributes:
+            span.set_attribute(key, str(attributes[key]).split("?", 1)[0])
+    if "http.target" in attributes:
+        span.set_attribute("http.target", str(scope.get("path", "")))
+    if "url.query" in attributes:
+        span.set_attribute("url.query", "")
+
+
 def configure_tracing(app: FastAPI) -> None:
     """Trace requests and Dropbox calls to Cloud Trace when ``TRACE_EXPORTER=gcp``."""
     if os.environ.get("TRACE_EXPORTER") != "gcp":
@@ -241,9 +263,13 @@ def configure_tracing(app: FastAPI) -> None:
     from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
     from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
     from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.sampling import ALWAYS_ON  # noqa: PLC0415
 
     provider = TracerProvider(
         resource=Resource.create({"service.name": SERVICE, "service.version": RELEASE}),
+        # Trace every request, even ones Cloud Run itself didn't sample: traffic is a few
+        # requests a minute, and a failed request without a trace can't be explained.
+        sampler=ALWAYS_ON,
     )
     # Bounded queue, exported in the background: if Cloud Trace is unavailable, spans are
     # dropped instead of slowing or failing requests.
@@ -253,6 +279,12 @@ def configure_tracing(app: FastAPI) -> None:
     # Continue the trace Cloud Run starts for each request (X-Cloud-Trace-Context).
     set_global_textmap(CloudTraceFormatPropagator())
     # The health probes run every 30 s; tracing them would only add noise.
-    FastAPIInstrumentor.instrument_app(app, excluded_urls="health")
+    FastAPIInstrumentor.instrument_app(
+        app,
+        excluded_urls="health",
+        server_request_hook=strip_query,
+        # The ASGI send/receive steps would add two empty spans to every request.
+        exclude_spans=["receive", "send"],
+    )
     # Every Dropbox API call goes through `requests`, so each one becomes its own span.
     RequestsInstrumentor().instrument()
