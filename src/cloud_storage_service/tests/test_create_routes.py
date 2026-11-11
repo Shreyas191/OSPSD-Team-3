@@ -351,6 +351,144 @@ def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClien
     assert storage.uploaded_bytes is None
 
 
+# --- POST /files (strict create) and PUT /files (strict replace) ----------------------------
+
+
+def send_file(
+    http: TestClient,
+    method: str,
+    content: bytes = b"%PDF-data",
+    path: str = "/Docs/report.pdf",
+) -> Response:
+    """Send ``content`` as a multipart request to ``/files`` with the ``path`` form field."""
+    response: Response = http.request(
+        method,
+        "/files",
+        files={"file": ("report.pdf", content)},
+        data={"path": path},
+    )
+    return response
+
+
+@pytest.mark.parametrize("method", ["post", "put"])
+def test_files_write_is_documented_as_multipart(http: TestClient, method: str) -> None:
+    """Both write routes declare multipart/form-data so Swagger UI can send the file."""
+    spec = http.get("/openapi.json").json()
+    content = spec["paths"]["/files"][method]["requestBody"]["content"]
+
+    assert list(content) == ["multipart/form-data"]
+
+
+def test_create_file_returns_201_and_stores_bytes(
+    storage: RecordingStorageClient,
+    http: TestClient,
+) -> None:
+    """Creating a file returns 201 with its metadata and stores exactly the sent bytes."""
+    response = send_file(http, "POST")
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json()["path"] == "/Docs/report.pdf"
+    assert response.json()["size"] == len(b"%PDF-data")
+    assert storage.uploaded_bytes == b"%PDF-data"
+    assert storage.uploaded_from is not None
+    assert not Path(storage.uploaded_from).exists()
+
+
+@pytest.mark.parametrize("is_folder", [False, True])
+def test_create_file_never_overwrites(
+    storage: FakeStorageClient,
+    http: TestClient,
+    *,
+    is_folder: bool,
+) -> None:
+    """Creating where a file or folder already exists is a 409 and changes nothing."""
+    existing = storage.add("/Docs/report.pdf", is_folder=is_folder, size=1)
+
+    response = send_file(http, "POST")
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["error"]["code"] == "conflict"
+    assert storage.entries == {"/Docs/report.pdf": existing}
+
+
+def test_replace_file_keeps_id_and_updates_contents(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Replacing an existing file returns 200, keeps its ID and stores the new size."""
+    existing = storage.add("/Docs/report.pdf", size=1)
+
+    response = send_file(http, "PUT", b"new content")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["id"] == existing.id
+    assert response.json()["size"] == len(b"new content")
+
+
+def test_replace_missing_file_returns_404_and_creates_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Replacing a file that does not exist is a 404; no file is created."""
+    response = send_file(http, "PUT")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["error"]["code"] == "not_found"
+    assert storage.entries == {}
+
+
+def test_replace_folder_returns_422(storage: FakeStorageClient, http: TestClient) -> None:
+    """A folder cannot be replaced with a file's contents."""
+    folder = storage.add("/Docs/report.pdf", is_folder=True)
+
+    response = send_file(http, "PUT")
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.json()["error"]["code"] == "invalid_operation"
+    assert storage.entries == {"/Docs/report.pdf": folder}
+
+
+def test_replace_changed_file_returns_409(provider: Mock, http: TestClient) -> None:
+    """A file that changed during the replace is a 409 the caller can retry."""
+    provider.replace_file.side_effect = FileExistsError("The file changed")
+
+    response = send_file(http, "PUT")
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["error"]["code"] == "conflict"
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_files_write_rejects_invalid_path(
+    storage: RecordingStorageClient,
+    http: TestClient,
+    method: str,
+) -> None:
+    """A malformed path (a ``..`` segment) is a 400, and nothing is written."""
+    response = send_file(http, method, path="/Docs/../report.pdf")
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert storage.uploaded_bytes is None
+    assert storage.entries == {}
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_files_write_requires_file_and_path(
+    storage: RecordingStorageClient,
+    http: TestClient,
+    method: str,
+) -> None:
+    """A request without the file, or without the path, is a 400."""
+    no_file = http.request(method, "/files", data={"path": "/Docs/report.pdf"})
+    no_path = http.request(method, "/files", files={"file": ("report.pdf", b"x")})
+
+    for response in (no_file, no_path):
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["error"]["code"] == "invalid_request"
+    assert storage.uploaded_bytes is None
+
+
 # --- Provider failures and logging (shared error format) ---------------------------------
 
 
