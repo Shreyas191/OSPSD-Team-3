@@ -31,6 +31,7 @@ nav:
   - 'Release Pipeline': 'release-pipeline.md'
   - 'Rollback Drill': 'rollback-drill.md'
   - 'Runbook': 'runbook.md'
+  - 'Telemetry Walkthrough': 'telemetry-walkthrough.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'
