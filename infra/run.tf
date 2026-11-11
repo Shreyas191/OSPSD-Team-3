@@ -41,6 +41,21 @@ resource "google_cloud_run_v2_service" "service" {
         value = tostring(var.max_in_flight_requests)
       }
 
+      # Telemetry (src/cloud_storage_service/.../telemetry.py): one JSON log line per
+      # request, and traces of each request and its Dropbox calls in Cloud Trace.
+      env {
+        name  = "LOG_FORMAT"
+        value = "json"
+      }
+      env {
+        name  = "TRACE_EXPORTER"
+        value = "gcp"
+      }
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+
       dynamic "env" {
         for_each = local.dropbox_secrets
         content {

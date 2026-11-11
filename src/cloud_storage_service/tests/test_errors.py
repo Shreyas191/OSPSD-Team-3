@@ -54,8 +54,11 @@ def http() -> TestClient:
 
 def _failure_log(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
     """Return the single warning the service logged for a failed request."""
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
-    assert record.levelno == logging.WARNING
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
+    # Server errors (5xx) are logged as ERROR, caller errors (4xx) as WARNING.
+    assert record.levelno == (
+        logging.ERROR if record.__dict__["status"] >= 500 else logging.WARNING
+    )
     return record
 
 
@@ -134,7 +137,7 @@ def test_unexpected_exception_is_logged_but_not_as_a_provider_failure(
     assert record.__dict__["status"] == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert record.__dict__["code"] == "internal_error"
     assert record.__dict__["provider_failure"] is False
-    assert "secret internal detail" in record.__dict__["reason"]
+    assert record.__dict__["reason"] == "RuntimeError('…')"  # the type, never the message
 
 
 def test_body_that_is_not_json_returns_400(storage: FakeStorageClient, http: TestClient) -> None:

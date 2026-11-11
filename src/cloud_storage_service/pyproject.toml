@@ -8,6 +8,12 @@ dependencies = [
     "cloud-storage-client-api",
     "dropbox-client-impl",
     "fastapi>=0.115.0",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-exporter-gcp-trace>=1.15.0",
+    "opentelemetry-instrumentation-fastapi>=0.66b1",
+    "opentelemetry-instrumentation-requests>=0.66b1",
+    "opentelemetry-propagator-gcp>=1.15.0",
+    "opentelemetry-sdk>=1.45.1",
     "python-multipart>=0.0.32",
     "uvicorn>=0.30.0",
 ]

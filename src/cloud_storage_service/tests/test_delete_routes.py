@@ -46,8 +46,11 @@ def http() -> TestClient:
 
 def _failure_log(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
     """Return the single warning the service logged for a failed request."""
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
-    assert record.levelno == logging.WARNING
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
+    # Server errors (5xx) are logged as ERROR, caller errors (4xx) as WARNING.
+    assert record.levelno == (
+        logging.ERROR if record.__dict__["status"] >= 500 else logging.WARNING
+    )
     return record
 
 
@@ -237,10 +240,7 @@ def test_failure_is_logged_as_a_structured_warning(
     assert record.__dict__["status"] == HTTPStatus.BAD_GATEWAY
     assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
-    assert (
-        record.__dict__["reason"]
-        == "Dropbox failed to delete '/Docs/report.pdf' (InternalServerError)"
-    )
+    assert record.__dict__["reason"] == "Dropbox failed to delete '…' (InternalServerError)"
     assert "status=502 code='provider_error' provider_failure=True" in record.getMessage()
 
 
