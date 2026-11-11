@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from cloud_storage_service.dependencies import get_storage_client
 from cloud_storage_service.errors import add_error_handlers
+from cloud_storage_service.faults import with_faults
 from cloud_storage_service.models import FileResponse
 from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
 from cloud_storage_service.routes import router
@@ -76,7 +77,9 @@ def check_configuration() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Create the storage client when the app starts; it lives as long as the app."""
-    app.state.storage_client = build_storage_client()
+    # with_faults returns the client unchanged unless FAULT_INJECTION asks for faults
+    # (test deployments only; see faults.py).
+    app.state.storage_client = with_faults(build_storage_client())
     yield
 
 
