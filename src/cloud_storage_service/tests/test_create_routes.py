@@ -17,6 +17,7 @@ from unittest.mock import Mock
 
 import cloud_storage_client_api
 import pytest
+from cloud_storage_client_api import FileTooLargeError
 from fastapi import status
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -78,6 +79,7 @@ def make_file(path: str = "/Docs/report.pdf", *, is_folder: bool = False) -> Fil
         is_folder=is_folder,
         size=None if is_folder else 2048,
         modified=None if is_folder else MODIFIED,
+        etag=None if is_folder else "015f1a2b3c4d",
     )
     return FileResponse.from_file(cast("cloud_storage_client_api.File", file))
 
@@ -90,13 +92,14 @@ def test_from_file_maps_every_field() -> None:
         "path": "/Docs/report.pdf",
         "size": 2048,
         "modified_at": "2026-10-13T12:00:00Z",
+        "etag": "015f1a2b3c4d",
     }
 
 
-def test_from_file_folder_has_null_size_and_modified_at() -> None:
-    """Keep folder size and modification time null in the response."""
+def test_from_file_folder_has_null_size_modified_at_and_etag() -> None:
+    """Keep folder size, modification time and etag null in the response."""
     response = make_file("/Docs", is_folder=True)
-    assert (response.size, response.modified_at) == (None, None)
+    assert (response.size, response.modified_at, response.etag) == (None, None, None)
 
 
 def test_from_file_converts_modified_time_to_utc() -> None:
@@ -112,6 +115,7 @@ def test_from_file_converts_modified_time_to_utc() -> None:
             is_folder=False,
             size=1,
             modified=moment,
+            etag="rev1",
         )
         response = FileResponse.from_file(cast("cloud_storage_client_api.File", file))
         assert response.modified_at == "2026-10-13T12:00:00Z"
@@ -351,6 +355,144 @@ def test_upload_requires_a_file(storage: RecordingStorageClient, http: TestClien
     assert storage.uploaded_bytes is None
 
 
+# --- POST /files (strict create) and PUT /files (strict replace) ----------------------------
+
+
+def send_file(
+    http: TestClient,
+    method: str,
+    content: bytes = b"%PDF-data",
+    path: str = "/Docs/report.pdf",
+) -> Response:
+    """Send ``content`` as a multipart request to ``/files`` with the ``path`` form field."""
+    response: Response = http.request(
+        method,
+        "/files",
+        files={"file": ("report.pdf", content)},
+        data={"path": path},
+    )
+    return response
+
+
+@pytest.mark.parametrize("method", ["post", "put"])
+def test_files_write_is_documented_as_multipart(http: TestClient, method: str) -> None:
+    """Both write routes declare multipart/form-data so Swagger UI can send the file."""
+    spec = http.get("/openapi.json").json()
+    content = spec["paths"]["/files"][method]["requestBody"]["content"]
+
+    assert list(content) == ["multipart/form-data"]
+
+
+def test_create_file_returns_201_and_stores_bytes(
+    storage: RecordingStorageClient,
+    http: TestClient,
+) -> None:
+    """Creating a file returns 201 with its metadata and stores exactly the sent bytes."""
+    response = send_file(http, "POST")
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json()["path"] == "/Docs/report.pdf"
+    assert response.json()["size"] == len(b"%PDF-data")
+    assert storage.uploaded_bytes == b"%PDF-data"
+    assert storage.uploaded_from is not None
+    assert not Path(storage.uploaded_from).exists()
+
+
+@pytest.mark.parametrize("is_folder", [False, True])
+def test_create_file_never_overwrites(
+    storage: FakeStorageClient,
+    http: TestClient,
+    *,
+    is_folder: bool,
+) -> None:
+    """Creating where a file or folder already exists is a 409 and changes nothing."""
+    existing = storage.add("/Docs/report.pdf", is_folder=is_folder, size=1)
+
+    response = send_file(http, "POST")
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["error"]["code"] == "conflict"
+    assert storage.entries == {"/Docs/report.pdf": existing}
+
+
+def test_replace_file_keeps_id_and_updates_contents(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Replacing an existing file returns 200, keeps its ID and stores the new size."""
+    existing = storage.add("/Docs/report.pdf", size=1)
+
+    response = send_file(http, "PUT", b"new content")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["id"] == existing.id
+    assert response.json()["size"] == len(b"new content")
+
+
+def test_replace_missing_file_returns_404_and_creates_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Replacing a file that does not exist is a 404; no file is created."""
+    response = send_file(http, "PUT")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["error"]["code"] == "not_found"
+    assert storage.entries == {}
+
+
+def test_replace_folder_returns_422(storage: FakeStorageClient, http: TestClient) -> None:
+    """A folder cannot be replaced with a file's contents."""
+    folder = storage.add("/Docs/report.pdf", is_folder=True)
+
+    response = send_file(http, "PUT")
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.json()["error"]["code"] == "invalid_operation"
+    assert storage.entries == {"/Docs/report.pdf": folder}
+
+
+def test_replace_changed_file_returns_409(provider: Mock, http: TestClient) -> None:
+    """A file that changed during the replace is a 409 the caller can retry."""
+    provider.replace_file.side_effect = FileExistsError("The file changed")
+
+    response = send_file(http, "PUT")
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["error"]["code"] == "conflict"
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_files_write_rejects_invalid_path(
+    storage: RecordingStorageClient,
+    http: TestClient,
+    method: str,
+) -> None:
+    """A malformed path (a ``..`` segment) is a 400, and nothing is written."""
+    response = send_file(http, method, path="/Docs/../report.pdf")
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert storage.uploaded_bytes is None
+    assert storage.entries == {}
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_files_write_requires_file_and_path(
+    storage: RecordingStorageClient,
+    http: TestClient,
+    method: str,
+) -> None:
+    """A request without the file, or without the path, is a 400."""
+    no_file = http.request(method, "/files", data={"path": "/Docs/report.pdf"})
+    no_path = http.request(method, "/files", files={"file": ("report.pdf", b"x")})
+
+    for response in (no_file, no_path):
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["error"]["code"] == "invalid_request"
+    assert storage.uploaded_bytes is None
+
+
 # --- Provider failures and logging (shared error format) ---------------------------------
 
 
@@ -385,13 +527,49 @@ CREATE_ROUTES = ["upload", "create_folder", "copy"]
 @pytest.mark.parametrize("route", CREATE_ROUTES)
 def test_value_error_from_client_returns_422(provider: Mock, http: TestClient, route: str) -> None:
     """A path or file the provider rejects is an invalid operation, with the client's message."""
-    error = ValueError("The file for '/Docs/report.pdf' is too large to upload in one request")
+    error = ValueError("Dropbox rejected '/Docs/report.pdf' as invalid")
     _fail_with(provider, error)
 
     response = _call_create_route(http, route)
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert response.json() == {"error": {"code": "invalid_operation", "message": str(error)}}
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_file_too_large_returns_413(provider: Mock, http: TestClient, method: str) -> None:
+    """A file over the provider's upload limit is a 413 ``file_too_large``, with the message."""
+    error = FileTooLargeError("The file for '/Docs/report.pdf' is too large (150 MB limit)")
+    provider.upload_file.side_effect = provider.replace_file.side_effect = error
+
+    response = send_file(http, method)
+
+    assert response.status_code == status.HTTP_413_CONTENT_TOO_LARGE
+    assert response.json() == {"error": {"code": "file_too_large", "message": str(error)}}
+
+
+def test_upload_route_file_too_large_returns_413(provider: Mock, http: TestClient) -> None:
+    """The older upload route reports an oversized file the same way."""
+    provider.upload_file.side_effect = FileTooLargeError("too large")
+
+    response = post_upload(http)
+
+    assert response.status_code == status.HTTP_413_CONTENT_TOO_LARGE
+    assert response.json()["error"]["code"] == "file_too_large"
+
+
+def test_etag_changes_when_the_file_is_replaced(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Create returns an etag; after a replace, metadata shows a different one."""
+    created = send_file(http, "POST", b"old").json()
+    replaced = send_file(http, "PUT", b"new").json()
+    metadata = http.get("/files/metadata", params={"path": "/Docs/report.pdf"}).json()
+
+    assert created["etag"] is not None
+    assert replaced["etag"] != created["etag"]
+    assert metadata["etag"] == replaced["etag"]
 
 
 @pytest.mark.parametrize("route", CREATE_ROUTES)
@@ -451,13 +629,16 @@ def test_failure_is_logged_as_a_structured_warning(
     with caplog.at_level(logging.WARNING):
         _call_create_route(http, "upload")
 
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
-    assert record.levelno == logging.WARNING
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
+    # Server errors (5xx) are logged as ERROR, caller errors (4xx) as WARNING.
+    assert record.levelno == (
+        logging.ERROR if record.__dict__["status"] >= 500 else logging.WARNING
+    )
     assert record.__dict__["operation"] == "upload_file"
     assert record.__dict__["status"] == status.HTTP_502_BAD_GATEWAY
     assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
-    assert record.__dict__["reason"] == "Dropbox failed uploading to '/Docs/report.pdf' (quota)"
+    assert record.__dict__["reason"] == "Dropbox failed uploading to '…' (quota)"
 
 
 def test_unexpected_errors_are_not_disguised_as_provider_failures(

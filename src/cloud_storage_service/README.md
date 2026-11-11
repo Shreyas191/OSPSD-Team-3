@@ -37,6 +37,7 @@ The service handles at most `MAX_IN_FLIGHT_REQUESTS` requests at once (default `
   | `path` | string | Full path, e.g. `/Docs/report.pdf` |
   | `size` | int or null | Size in bytes; `null` for folders |
   | `modified_at` | string or null | Last modified time, ISO 8601 in UTC ending in `Z` (`2026-10-23T12:00:00Z`); `null` for folders |
+  | `etag` | string or null | Fingerprint of the file's current version (the Dropbox `rev`); it changes whenever the file changes. `null` for folders |
 
   Entries of a folder listing also have `type`: `"file"` or `"folder"`.
 
@@ -48,6 +49,7 @@ The format is defined in `errors.py`: every route is registered on the `router` 
 | Status | `code` | Cause |
 |--------|--------|-------|
 | `400` | `invalid_request` | Request validation failed: missing field, invalid path, body that is not JSON |
+| `413` | `file_too_large` | `FileTooLargeError`: the file is over the provider's single-upload limit (150 MB for Dropbox) |
 | `422` | `invalid_operation` | A valid request the operation refuses: the client raised `ValueError` or `IsADirectoryError` (e.g. a folder moved into itself, deleting the root, downloading a folder) |
 | `404` | `not_found` | `FileNotFoundError` |
 | `409` | `conflict` | `FileExistsError`: the destination is already taken |
@@ -69,8 +71,43 @@ The log never includes credentials, and validation failures record which paramet
 
 ## Create endpoints
 
+### `POST /files`
+Create a new file. The request is `multipart/form-data` with `file` (the contents) and `path` (absolute path, including the file name). It never overwrites: use `PUT /files` to replace a file.
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `201` | | Created; body is the File |
+| `400` | `invalid_request` | Missing `file` or `path`, or a malformed `path` |
+| `403` | `permission_denied` | The provider does not allow writing at `path` |
+| `409` | `conflict` | A file or folder already exists at `path` |
+| `413` | `file_too_large` | A file over 150 MB, Dropbox's single-upload limit |
+| `422` | `invalid_operation` | A path the provider rejects |
+| `502` / `503` | `provider_error` / `provider_unavailable` | The provider failed or is unreachable |
+
+```bash
+curl -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/Docs/report.pdf"
+```
+
+### `PUT /files`
+Replace the contents of an existing file. Same form fields as `POST /files`. It never creates a file, and the write is refused if the file changes while it is being replaced.
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Replaced; body is the File, which keeps its `id` |
+| `400` | `invalid_request` | Missing `file` or `path`, or a malformed `path` |
+| `403` | `permission_denied` | The provider does not allow writing at `path` |
+| `404` | `not_found` | No file exists at `path` |
+| `409` | `conflict` | The file changed during the replace; read it again and retry |
+| `413` | `file_too_large` | A file over 150 MB, Dropbox's single-upload limit |
+| `422` | `invalid_operation` | `path` is a folder |
+| `502` / `503` | `provider_error` / `provider_unavailable` | The provider failed or is unreachable |
+
+```bash
+curl -X PUT http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/Docs/report.pdf"
+```
+
 ### `POST /files/upload`
-Upload a file. The request is `multipart/form-data`, not JSON.
+Upload a file, optionally overwriting (kept for existing callers; prefer `POST /files` and `PUT /files`). The request is `multipart/form-data`, not JSON.
 
 - `file` (required): the file contents.
 - `remote_path` (required): absolute destination path, including the file name.
@@ -84,7 +121,8 @@ Errors use the [shared error format](#shared-error-format).
 | `403` | `permission_denied` | The provider does not allow writing at `remote_path` (e.g. no write permission, or a team folder) |
 | `409` | `conflict` | Something already exists at `remote_path` and `overwrite` is `false`, or a folder is there |
 | `400` | `invalid_request` | Invalid form (relative or malformed `remote_path`, missing `file`) |
-| `422` | `invalid_operation` | A path the provider rejects, or a file over 150 MB |
+| `413` | `file_too_large` | A file over 150 MB, Dropbox's single-upload limit |
+| `422` | `invalid_operation` | A path the provider rejects |
 | `502` | `provider_error` | The provider failed (e.g. the account is out of space, or the service's Dropbox credentials have expired) |
 | `503` | `provider_unavailable` | The provider is unreachable or rate limited the request; try again later. After a lost connection the upload may already have happened, so a retry without `overwrite` can return `409` |
 
@@ -143,6 +181,30 @@ curl -X POST http://127.0.0.1:8000/files/copy \
 ```
 
 ## Update endpoints
+
+### `PATCH /files`
+Move or rename a file: `PATCH /files?path=<from>` with a JSON body naming the full destination. A rename is a move within the same folder. As the shared conformance suite requires, only files move, and nothing at `new_path` is ever overwritten. The file keeps its `id`; missing parent folders of `new_path` are created.
+
+```json
+{"new_path": "/Archive/report.pdf"}
+```
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Moved; body is the File at its new path |
+| `400` | `invalid_request` | Missing or malformed `path` or `new_path` (including the root), or a body that is not JSON |
+| `403` | `permission_denied` | The provider does not allow the move |
+| `404` | `not_found` | Nothing exists at `path` |
+| `409` | `conflict` | Something already exists at `new_path` |
+| `422` | `invalid_operation` | `path` is a folder, or `new_path` is `path` itself (ignoring case) |
+| `502` / `503` | `provider_error` / `provider_unavailable` | The provider failed or is unreachable |
+
+```bash
+curl -X PATCH 'http://127.0.0.1:8000/files?path=/Docs/report.pdf' \
+  -H 'Content-Type: application/json' -d '{"new_path": "/Archive/report.pdf"}'
+```
+
+To move a folder, use `POST /files/move`.
 
 ### `POST /files/rename`
 Rename a file or folder in place. The entry stays in the same folder; only its name changes. Existing entries are never overwritten.

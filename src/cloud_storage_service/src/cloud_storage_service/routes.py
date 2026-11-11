@@ -6,6 +6,8 @@ raises become ``{"error": {"code", "message"}}`` responses (see ``errors.py``).
 
 import shutil
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -22,6 +24,7 @@ from cloud_storage_service.models import (
     FolderPath,
     ListEntry,
     MoveRequest,
+    PatchRequest,
     RenameRequest,
     clean_path,
 )
@@ -52,13 +55,72 @@ def error_responses(descriptions: dict[int, str]) -> dict[int | str, dict[str, A
 # ----- Create -----
 
 
+@contextmanager
+def saved_upload(file: UploadFile) -> Iterator[str]:
+    """Save an uploaded file to a temporary local path, removed when the block ends."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "upload"
+        with tmp_path.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+        yield str(tmp_path)
+
+
+# The form fields are declared one by one rather than as a single form model: FastAPI
+# declares a form model that contains an ``UploadFile`` as
+# ``application/x-www-form-urlencoded`` in the OpenAPI schema, so Swagger UI's
+# "Try it out" could not send the file.
+UploadedFile = Annotated[UploadFile, File(description="The file contents")]
+FilePathField = Annotated[
+    str,
+    AfterValidator(clean_path),
+    Form(description="Path of the file in cloud storage, including the file name"),
+]
+
+
+@router.post(
+    "/files",
+    status_code=status.HTTP_201_CREATED,
+    responses=error_responses(
+        {
+            403: "The provider does not allow writing there",
+            409: "Something already exists at the path",
+            413: "A file over the provider's upload limit",
+        },
+    ),
+)
+def create_file(file: UploadedFile, path: FilePathField, client: StorageClient) -> FileResponse:
+    """Create a new file at ``path``; an existing file or folder there is never overwritten."""
+    with saved_upload(file) as local_path:
+        created = client.upload_file(local_path, path, overwrite=False)
+    return FileResponse.from_file(created)
+
+
+@router.put(
+    "/files",
+    responses=error_responses(
+        {
+            403: "The provider does not allow writing there",
+            404: "No file exists at the path",
+            409: "The file changed while it was being replaced; read it again and retry",
+            413: "A file over the provider's upload limit",
+            422: "The path is a folder",
+        },
+    ),
+)
+def replace_file(file: UploadedFile, path: FilePathField, client: StorageClient) -> FileResponse:
+    """Replace the contents of the existing file at ``path``; a missing file is never created."""
+    with saved_upload(file) as local_path:
+        replaced = client.replace_file(local_path, path)
+    return FileResponse.from_file(replaced)
+
+
 @router.post(
     "/files/upload",
     responses=error_responses(
         {
             403: "The provider does not allow writing there",
             409: "Something is at the path: `overwrite` is false, or it's a folder",
-            422: "A file over the provider's upload limit",
+            413: "A file over the provider's upload limit",
         },
     ),
 )
@@ -79,15 +141,13 @@ def upload_file(
         Form(description="Replace an existing file at remote_path"),
     ] = False,
 ) -> FileResponse:
-    """Upload a file to cloud storage and return its metadata."""
-    # The fields are declared one by one rather than as a single form model: FastAPI declares
-    # a form model that contains an ``UploadFile`` as ``application/x-www-form-urlencoded`` in
-    # the OpenAPI schema, so Swagger UI's "Try it out" could not send the file.
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "upload"
-        with tmp_path.open("wb") as out:
-            shutil.copyfileobj(file.file, out)
-        uploaded = client.upload_file(str(tmp_path), remote_path, overwrite=overwrite)
+    """Upload a file to cloud storage and return its metadata.
+
+    ``POST /files`` (create) and ``PUT /files`` (replace) are the strict versions; this
+    route stays for existing callers.
+    """
+    with saved_upload(file) as local_path:
+        uploaded = client.upload_file(local_path, remote_path, overwrite=overwrite)
     return FileResponse.from_file(uploaded)
 
 
@@ -210,6 +270,35 @@ def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
 def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
     """Move a file or folder to a new path and return its updated metadata."""
     return FileResponse.from_file(client.move(request.from_path, request.to_path))
+
+
+@router.patch(
+    "/files",
+    responses=error_responses(
+        {
+            403: "The provider does not allow the move",
+            404: "No file exists at the path",
+            409: "Something already exists at `new_path`",
+            422: "The path is a folder, or `new_path` is the path itself (ignoring case)",
+        },
+    ),
+)
+def update_entry(path: EntryPath, request: PatchRequest, client: StorageClient) -> FileResponse:
+    """Move or rename the file at ``path`` to ``new_path`` and return its new metadata.
+
+    Follows the shared conformance suite: only files move (a folder is ``422``), a
+    ``new_path`` equal to ``path`` ignoring case is ``422``, and nothing already at
+    ``new_path`` is overwritten (``409``). The file keeps its ``id``. The source is read
+    first to apply those rules, so a move costs one extra provider call.
+    """
+    source = client.get_metadata(path)
+    if source.is_folder:
+        msg = f"Cannot move {path!r}: it is a folder, and only files can be moved"
+        raise IsADirectoryError(msg)
+    if request.new_path.lower() == path.lower():
+        msg = f"Cannot move {path!r} to {request.new_path!r}: it is the same path (ignoring case)"
+        raise ValueError(msg)
+    return FileResponse.from_file(client.move(path, request.new_path))
 
 
 # ----- Delete -----

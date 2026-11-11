@@ -54,6 +54,11 @@ class FileResponse(BaseModel):
         description="Last modified time, ISO 8601 in UTC ending in Z; null for folders",
         examples=["2026-10-23T12:00:00Z"],
     )
+    etag: str | None = Field(
+        description="Fingerprint of the file's current version; it changes whenever the file "
+        "changes. Null for folders",
+        examples=["015f1a2b3c4d"],
+    )
 
     @classmethod
     def from_file(cls, file: cloud_storage_client_api.File) -> "FileResponse":
@@ -64,6 +69,7 @@ class FileResponse(BaseModel):
             path=file.path,
             size=file.size,
             modified_at=utc_timestamp(file.modified),
+            etag=file.etag,
         )
 
 
@@ -107,3 +113,9 @@ class MoveRequest(BaseModel):
 
     from_path: EntryPath
     to_path: EntryPath = Field(examples=["/Archive/report.pdf"])
+
+
+class PatchRequest(BaseModel):
+    """Move or rename the entry at the ``path`` query parameter to ``new_path``."""
+
+    new_path: EntryPath = Field(examples=["/Archive/report.pdf"])

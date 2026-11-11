@@ -46,8 +46,11 @@ def http() -> TestClient:
 
 def _failure_log(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
     """Return the single warning the service logged for a failed request."""
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
-    assert record.levelno == logging.WARNING
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
+    # Server errors (5xx) are logged as ERROR, caller errors (4xx) as WARNING.
+    assert record.levelno == (
+        logging.ERROR if record.__dict__["status"] >= 500 else logging.WARNING
+    )
     return record
 
 
@@ -67,6 +70,7 @@ def test_get_metadata_file_returns_200(storage: FakeStorageClient, http: TestCli
         "path": "/Docs/report.pdf",
         "size": 2048,
         "modified_at": "2026-10-01T12:30:00Z",
+        "etag": "rev:id:1",
     }
 
 
@@ -83,6 +87,7 @@ def test_get_metadata_folder_returns_200(storage: FakeStorageClient, http: TestC
         "path": "/Docs",
         "size": None,
         "modified_at": None,
+        "etag": None,
     }
 
 
@@ -254,6 +259,7 @@ def test_list_folder_entries_have_type_and_file_info(
             "path": "/Docs/Archive",
             "size": None,
             "modified_at": None,
+            "etag": None,
             "type": "folder",
         },
         {
@@ -262,6 +268,7 @@ def test_list_folder_entries_have_type_and_file_info(
             "path": "/Docs/report.pdf",
             "size": 1024,
             "modified_at": "2026-10-01T12:30:00Z",
+            "etag": f"rev:{report.id}",
             "type": "file",
         },
     ]

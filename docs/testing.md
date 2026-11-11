@@ -83,6 +83,35 @@ export DROPBOX_REFRESH_TOKEN="your-refresh-token"
 
 To get a refresh token for CI, run `uv run python -m dropbox_client_impl login` locally. Then copy the `refresh_token` value out of `.dropbox_token.json` straight into the CI secret store. Don't paste it anywhere else.
 
+## Conformance checks (the vertical's shared suite)
+
+The Document Storage vertical keeps one HTTP test suite that every team's service must pass. It isn't merged in `Dayana20/ospsd26-cloud-storage` yet (that repository's PR #6), so CI pins Team 6's commit `b77617c`; move the pin in `.circleci/config.yml` when the suite is merged and tagged.
+
+| Where it runs | Against | When | Result on Nov 11, 2026 |
+|---|---|---|---|
+| CI job `conformance` | Our real HTTP app on `InMemoryClient` (`tests/memory_client.py`), served by `scripts/serve_in_memory.py`; no network, no credentials | Every push and pull request; the release jobs require it | 55 passed |
+| By hand | The deployed `test` service, so real Dropbox | Before a release, or to check a deploy | 55 passed |
+
+`InMemoryClient` is not the route-test fake (`tests/fakes.py`). It behaves like Dropbox where the contract can tell: it stores file bytes, creates parent folders, compares paths ignoring case, and stamps every write with the current UTC time and a new `etag`. If the suite fails in CI but passes against the deployed service, the in-memory client is the likely cause, not the service.
+
+To run it yourself (the suite imports `httpx2`, which we point at our locked `httpx` instead of installing it):
+
+```bash
+git clone https://github.com/prateeks99/ospsd26-cloud-storage.git /tmp/shared
+git -C /tmp/shared checkout b77617c218d345c8cde28dbf08cf4d1a5cbaef38
+mkdir -p /tmp/shim && printf 'import sys\n\nimport httpx\n\nsys.modules[__name__] = httpx\n' > /tmp/shim/httpx2.py
+uv run python scripts/serve_in_memory.py 8000 &        # or skip this and use the deployed URL below
+CONFORMANCE_BASE_URL=http://127.0.0.1:8000 \
+PYTHONPATH=/tmp/shim:/tmp/shared:/tmp/shared/src/cloud_storage_api/src \
+  uv run pytest /tmp/shared/conformance/tests -c /dev/null --rootdir /tmp/shared -p no:cacheprovider
+```
+
+Against the deployed service, set `CONFORMANCE_BASE_URL=https://cloud-storage-service-test-gyesjhieva-uc.a.run.app`. Each test works in its own `/conformance-<random>` folder and deletes it.
+
+## Infrastructure checks
+
+CI job `infra_validate` installs OpenTofu 1.13.9 (verifying its signature) and runs `tofu fmt -check -recursive infra` and `tofu validate` with no backend and no credentials, on every push and pull request. It catches syntax, type and formatting errors; it can't catch what only a `tofu plan` against the real project shows, so infrastructure PRs include the plan in their description (see [Infrastructure](infrastructure.md)).
+
 ## How the Dropbox unit tests are organised
 
 `src/dropbox_client_impl/tests/` has one file per `Client` method (`test_upload.py`, `test_copy.py`, `test_list_folder.py`, ...) plus the `test_auth_*.py` files. The `dbx` fixture in `conftest.py` is `create_autospec(dropbox.Dropbox, instance=True)`: a call with arguments the real SDK would reject fails the test, and every success test asserts the exact SDK call. Tests return and raise real SDK objects built with the helpers in `tests/dropbox_sdk.py`, not `Mock()` stand-ins.

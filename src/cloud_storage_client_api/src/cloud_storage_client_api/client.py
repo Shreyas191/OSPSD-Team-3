@@ -39,8 +39,9 @@ class Client(ABC):
                 the provider).
             FileExistsError: If something already exists at ``remote_path`` and
                 ``overwrite`` is false, or a folder is there.
-            ValueError: If the provider rejects ``remote_path`` as malformed or the file is
-                too large for it to accept in one upload.
+            FileTooLargeError: If the file is too large for the provider to accept in one
+                upload (a ``ValueError``).
+            ValueError: If the provider rejects ``remote_path`` as malformed.
             PermissionError: If the provider does not allow writing at ``remote_path``.
             ConnectionError: If the provider could not be reached or is temporarily too
                 busy; retrying later may succeed.
@@ -71,8 +72,9 @@ class Client(ABC):
             IsADirectoryError: If ``remote_path`` is a folder.
             FileExistsError: If the file changed while it was being replaced; reading it
                 again and retrying may succeed.
-            ValueError: If the provider rejects the path or the file is too large for it
-                to accept in one upload.
+            FileTooLargeError: If the file is too large for the provider to accept in one
+                upload (a ``ValueError``).
+            ValueError: If the provider rejects the path.
             PermissionError: If the provider does not allow writing at ``remote_path``.
             ConnectionError: If the provider could not be reached or is temporarily too
                 busy; the file may or may not have been replaced.

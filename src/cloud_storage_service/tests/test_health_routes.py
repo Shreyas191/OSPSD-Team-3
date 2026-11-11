@@ -123,7 +123,7 @@ def test_provider_health_is_503_when_dropbox_fails(
     error = ConnectionError("connection refused to provider")
     provider.check_health.side_effect = error
 
-    with caplog.at_level(logging.WARNING, logger="cloud_storage_service.errors"):
+    with caplog.at_level(logging.WARNING, logger="cloud_storage_service.requests"):
         response = http.get("/health/provider")
 
     assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
@@ -133,8 +133,11 @@ def test_provider_health_is_503_when_dropbox_fails(
     assert str(error) not in response.text
     provider.check_health.assert_called_once_with()
 
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
-    assert record.levelno == logging.WARNING
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
+    # Server errors (5xx) are logged as ERROR, caller errors (4xx) as WARNING.
+    assert record.levelno == (
+        logging.ERROR if record.__dict__["status"] >= 500 else logging.WARNING
+    )
     assert record.__dict__["operation"] == "check_provider_health"
     assert record.__dict__["status"] == HTTPStatus.SERVICE_UNAVAILABLE
     assert record.__dict__["code"] == "provider_unavailable"
@@ -151,7 +154,7 @@ def test_provider_health_when_credentials_invalid_returns_502(
     error = OSError("Dropbox failed checking the Dropbox account: invalid token")
     provider.check_health.side_effect = error
 
-    with caplog.at_level(logging.WARNING, logger="cloud_storage_service.errors"):
+    with caplog.at_level(logging.WARNING, logger="cloud_storage_service.requests"):
         response = http.get("/health/provider")
 
     assert response.status_code == HTTPStatus.BAD_GATEWAY
@@ -161,7 +164,7 @@ def test_provider_health_when_credentials_invalid_returns_502(
     assert str(error) not in response.text
     provider.check_health.assert_called_once_with()
 
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
     assert record.__dict__["operation"] == "check_provider_health"
     assert record.__dict__["status"] == HTTPStatus.BAD_GATEWAY
     assert record.__dict__["code"] == "provider_error"

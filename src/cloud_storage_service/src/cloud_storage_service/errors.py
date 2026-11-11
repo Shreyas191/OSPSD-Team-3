@@ -12,6 +12,7 @@ Every error the service returns uses this body. Two places produce it:
 |-----------------------------------------|--------|--------------------------|
 | request validation (bad path, missing   | 400    | ``invalid_request``      |
 | field, body that is not JSON)           |        |                          |
+| ``FileTooLargeError``                   | 413    | ``file_too_large``       |
 | ``ValueError``, ``IsADirectoryError``   | 422    | ``invalid_operation``    |
 | ``FileNotFoundError``                   | 404    | ``not_found``            |
 | ``FileExistsError``                     | 409    | ``conflict``             |
@@ -27,10 +28,10 @@ For ``5xx`` responses the message is fixed, so provider details never reach the 
 the exception's own message is kept in the warning log.
 """
 
-import logging
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Any
 
+from cloud_storage_client_api import FileTooLargeError
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -38,7 +39,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException
 
-logger = logging.getLogger(__name__)
+from cloud_storage_service.telemetry import record_failure
 
 
 class ErrorDetail(BaseModel):
@@ -82,7 +83,7 @@ class SharedErrorRoute(APIRoute):
             except (ValueError, OSError) as e:
                 status_code, code, message = _classify(e)
                 reason = str(e)
-            log_failure(operation, status_code, code, reason)
+            record_failure(operation, status_code, code, reason)
             return error_response(status_code, code, message)
 
         return handle
@@ -103,31 +104,33 @@ def add_error_handlers(app: FastAPI) -> None:
             ),
         }
         code, message = known.get(exc.status_code, ("invalid_request", str(exc.detail)))
-        log_failure(f"{request.method} {request.url.path}", exc.status_code, code, message)
+        record_failure(f"{request.method} {request.url.path}", exc.status_code, code, message)
         return error_response(exc.status_code, code, message, headers=exc.headers)
 
     @app.exception_handler(Exception)
-    def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    def unexpected_error(_request: Request, _exc: Exception) -> JSONResponse:
+        # The request's log line (telemetry.RequestTelemetryMiddleware) already records the
+        # exception: this handler runs after that middleware has finished.
         status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        log_failure(
-            f"{request.method} {request.url.path}",
-            status_code,
-            "internal_error",
-            repr(exc),
-        )
         return error_response(status_code, "internal_error", "The service failed unexpectedly")
+
+
+# Client errors keep the client's message. Checked in order: FileTooLargeError is a
+# ValueError, so it comes first.
+_CLIENT_ERRORS: tuple[tuple[type[Exception] | tuple[type[Exception], ...], int, str], ...] = (
+    (FileTooLargeError, status.HTTP_413_CONTENT_TOO_LARGE, "file_too_large"),
+    ((ValueError, IsADirectoryError), status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_operation"),
+    (FileNotFoundError, status.HTTP_404_NOT_FOUND, "not_found"),
+    (FileExistsError, status.HTTP_409_CONFLICT, "conflict"),
+    (PermissionError, status.HTTP_403_FORBIDDEN, "permission_denied"),
+)
 
 
 def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
     """Return the status code, error code and caller-facing message for a contract exception."""
-    if isinstance(error, ValueError | IsADirectoryError):
-        return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_operation", str(error)
-    if isinstance(error, FileNotFoundError):
-        return status.HTTP_404_NOT_FOUND, "not_found", str(error)
-    if isinstance(error, FileExistsError):
-        return status.HTTP_409_CONFLICT, "conflict", str(error)
-    if isinstance(error, PermissionError):
-        return status.HTTP_403_FORBIDDEN, "permission_denied", str(error)
+    for kinds, status_code, code in _CLIENT_ERRORS:
+        if isinstance(error, kinds):
+            return status_code, code, str(error)
     if isinstance(error, ConnectionError):
         message = "The storage provider is unreachable or busy; try again later"
         return status.HTTP_503_SERVICE_UNAVAILABLE, "provider_unavailable", message
@@ -141,32 +144,3 @@ def _describe(error: RequestValidationError) -> str:
         f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}" for item in error.errors()
     )
     return "; ".join(problems)
-
-
-def log_failure(
-    operation: str,
-    status_code: int,
-    code: str,
-    reason: str,
-    *,
-    provider_failure: bool | None = None,
-) -> None:
-    """Log a failed request as ``key=value`` pairs, also attached to the record as ``extra``.
-
-    ``provider_failure`` defaults to "the status is 502 or 503". Callers that answer with a
-    503 the provider did not cause (the service shedding load) pass ``False``.
-    """
-    if provider_failure is None:
-        provider_failure = status_code in {
-            status.HTTP_502_BAD_GATEWAY,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-        }
-    fields = {
-        "operation": operation,
-        "status": status_code,
-        "code": code,
-        "provider_failure": provider_failure,
-        "reason": reason,
-    }
-    pairs = " ".join(f"{key}={value!r}" for key, value in fields.items())
-    logger.warning("Request failed: %s", pairs, extra=fields)

@@ -1,4 +1,4 @@
-"""HTTP contract tests for the update routes (POST /files/rename and POST /files/move).
+"""HTTP contract tests for the update routes (PATCH /files, POST /files/rename and POST /files/move).
 
 The storage client is replaced through FastAPI's dependency overrides, either with the
 in-memory ``FakeStorageClient`` from ``tests/fakes.py`` or, to simulate provider failures,
@@ -17,6 +17,7 @@ import pytest
 from cloud_storage_client_api import Client
 from dropbox_client_impl import DropboxClient
 from fastapi.testclient import TestClient
+from httpx import Response
 from tests.fakes import FakeStorageClient
 
 from cloud_storage_service.app import app, build_storage_client, get_storage_client
@@ -52,8 +53,11 @@ MOVE = ("/files/move", {"from_path": "/Docs/report.pdf", "to_path": "/Archive/re
 
 def _failure_log(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
     """Return the single warning the service logged for a failed request."""
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
-    assert record.levelno == logging.WARNING
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
+    # Server errors (5xx) are logged as ERROR, caller errors (4xx) as WARNING.
+    assert record.levelno == (
+        logging.ERROR if record.__dict__["status"] >= 500 else logging.WARNING
+    )
     return record
 
 
@@ -73,6 +77,7 @@ def test_rename_returns_updated_file(storage: FakeStorageClient, http: TestClien
         "path": "/Docs/summary.pdf",
         "size": 2048,
         "modified_at": "2026-10-01T12:30:00Z",
+        "etag": "rev:id:1",
     }
     assert set(storage.entries) == {"/Docs/summary.pdf"}
 
@@ -297,7 +302,7 @@ def test_failure_is_logged_as_a_structured_warning(
     assert record.__dict__["status"] == HTTPStatus.BAD_GATEWAY
     assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
-    assert record.__dict__["reason"] == "Dropbox failed to move '/Docs/report.pdf' (quota)"
+    assert record.__dict__["reason"] == "Dropbox failed to move '…' (quota)"
 
 
 def test_conflict_is_logged_as_a_client_error(
@@ -327,6 +332,165 @@ def test_unexpected_errors_are_not_disguised_as_provider_failures(
 
     with pytest.raises(RuntimeError, match="bug"):
         http.post(MOVE[0], json=MOVE[1])
+
+
+# --- PATCH /files?path=<from> with {"new_path": "<to>"} ------------------------------------
+
+
+def patch(http: TestClient, path: str, new_path: str) -> Response:
+    """Send ``PATCH /files?path=<path>`` with ``{"new_path": <new_path>}``."""
+    response: Response = http.patch("/files", params={"path": path}, json={"new_path": new_path})
+    return response
+
+
+def test_patch_moves_file_and_keeps_its_id(storage: FakeStorageClient, http: TestClient) -> None:
+    """A move to another folder returns 200 and the same entry at its new path."""
+    original = storage.add("/Docs/report.pdf")
+
+    response = patch(http, "/Docs/report.pdf", "/Archive/report.pdf")
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["path"] == "/Archive/report.pdf"
+    assert response.json()["id"] == original.id
+    assert set(storage.entries) == {"/Archive/report.pdf"}
+
+
+def test_patch_renames_within_the_folder(storage: FakeStorageClient, http: TestClient) -> None:
+    """A new name in the same folder is a rename."""
+    storage.add("/Docs/report.pdf")
+
+    response = patch(http, "/Docs/report.pdf", "/Docs/summary.pdf")
+
+    assert response.status_code == HTTPStatus.OK
+    assert (response.json()["name"], response.json()["path"]) == (
+        "summary.pdf",
+        "/Docs/summary.pdf",
+    )
+
+
+def test_patch_folder_returns_422_and_moves_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Only files can be moved: a folder is an invalid operation, and nothing moves."""
+    storage.add("/Docs", is_folder=True)
+    storage.add("/Docs/report.pdf")
+
+    response = patch(http, "Docs", "Archive")
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json()["error"]["code"] == "invalid_operation"
+    assert set(storage.entries) == {"/Docs", "/Docs/report.pdf"}
+
+
+@pytest.mark.parametrize("new_path", ["/Docs/report.pdf", "/Docs/REPORT.pdf", "Docs/report.pdf"])
+def test_patch_to_the_same_path_returns_422(
+    storage: FakeStorageClient,
+    http: TestClient,
+    new_path: str,
+) -> None:
+    """A ``new_path`` equal to ``path``, or differing only in case, is an invalid operation."""
+    report = storage.add("/Docs/report.pdf")
+
+    response = patch(http, "/Docs/report.pdf", new_path)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json()["error"]["code"] == "invalid_operation"
+    assert storage.entries == {"/Docs/report.pdf": report}
+
+
+@pytest.mark.parametrize(
+    ("params", "body"),
+    [
+        ({"path": "/Docs/../report.pdf"}, {"new_path": "/a.pdf"}),
+        ({"path": "/"}, {"new_path": "/a.pdf"}),
+        ({}, {"new_path": "/a.pdf"}),
+        ({"path": "/Docs/report.pdf"}, {"new_path": "/Archive/"}),
+        ({"path": "/Docs/report.pdf"}, {"new_path": "/"}),
+        ({"path": "/Docs/report.pdf"}, {}),
+    ],
+)
+def test_patch_invalid_request_returns_400_and_changes_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+    params: dict[str, str],
+    body: dict[str, str],
+) -> None:
+    """Missing or malformed ``path`` or ``new_path`` (including the root) is a 400."""
+    storage.add("/Docs/report.pdf")
+
+    response = http.patch("/files", params=params, json=body)
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert set(storage.entries) == {"/Docs/report.pdf"}
+
+
+def test_patch_body_that_is_not_json_returns_400(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """A body that is not valid JSON is a 400 in the shared error format."""
+    response = http.patch(
+        "/files",
+        params={"path": "/Docs/report.pdf"},
+        content=b"{not json",
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_patch_missing_source_returns_404(storage: FakeStorageClient, http: TestClient) -> None:
+    """Moving something that does not exist is a 404."""
+    response = patch(http, "/Docs/missing.pdf", "/Archive/a.pdf")
+
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert response.json() == {
+        "error": {"code": "not_found", "message": "No file or folder at '/Docs/missing.pdf'"},
+    }
+
+
+def test_patch_occupied_destination_returns_409(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """A destination that already exists is a 409, and neither file changes."""
+    report = storage.add("/Docs/report.pdf")
+    summary = storage.add("/Docs/summary.pdf")
+
+    response = patch(http, "/Docs/report.pdf", "/Docs/summary.pdf")
+
+    assert response.status_code == HTTPStatus.CONFLICT
+    assert response.json()["error"]["code"] == "conflict"
+    assert storage.entries == {"/Docs/report.pdf": report, "/Docs/summary.pdf": summary}
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (PermissionError("not allowed"), HTTPStatus.FORBIDDEN, "permission_denied"),
+        (ConnectionError("RateLimitError"), HTTPStatus.SERVICE_UNAVAILABLE, "provider_unavailable"),
+        (OSError("insufficient_quota"), HTTPStatus.BAD_GATEWAY, "provider_error"),
+    ],
+)
+def test_patch_client_failures_use_the_shared_error_format(
+    provider: Mock,
+    http: TestClient,
+    error: OSError,
+    status: HTTPStatus,
+    code: str,
+) -> None:
+    """Client errors map to the same statuses as the other update routes."""
+    provider.get_metadata.return_value.is_folder = False
+    provider.move.side_effect = error
+
+    response = patch(http, "/Docs/report.pdf", "/Archive/report.pdf")
+
+    assert response.status_code == status
+    assert response.json()["error"]["code"] == code
+    provider.move.assert_called_once_with("/Docs/report.pdf", "/Archive/report.pdf")
 
 
 def test_routes_use_the_client_built_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:

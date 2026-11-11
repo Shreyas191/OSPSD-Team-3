@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. No secrets go here.
+project_id = "your-team-project-id"
+# region   = "us-central1"
+circleci_org_id     = "<CircleCI organization ID>"
+circleci_project_id = "<CircleCI project ID>"
+alert_email         = "<who receives the 5xx alert>"

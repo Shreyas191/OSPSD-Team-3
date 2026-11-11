@@ -208,4 +208,15 @@ def test_client_delete() -> None:
 
 def test_package_exports() -> None:
     """The package exposes the public names consumers depend on."""
-    assert set(cloud_storage_client_api.__all__) == {"Client", "File", "file", "get_client"}
+    assert set(cloud_storage_client_api.__all__) == {
+        "Client",
+        "File",
+        "FileTooLargeError",
+        "file",
+        "get_client",
+    }
+
+
+def test_file_too_large_error_is_a_value_error() -> None:
+    """Code that catches ``ValueError`` for invalid input also catches an oversized file."""
+    assert issubclass(cloud_storage_client_api.FileTooLargeError, ValueError)

@@ -95,7 +95,8 @@ def _run_steps(http: httpx.Client, root: str, path: str, new_path: str) -> bool:
             data=step.data,
         )
         is_json = response.headers.get("content-type", "").startswith("application/json")
-        body = response.json() if is_json else response.content
+        # A 204 has no body even when it is labelled JSON, so only parse a non-empty body.
+        body = response.json() if is_json and response.content else response.content
         matched = response.status_code == step.expected_status and body_ok(body)
         print(
             f"{'PASS' if matched else 'FAIL'} {step.name}: {step.method} {step.url} {step.params or ''}\n"
