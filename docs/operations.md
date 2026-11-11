@@ -17,7 +17,7 @@ One HTTP service (FastAPI, in this repository) stores files in Dropbox. It runs 
 | Service | Deployed from | Dropbox app | Status on Nov 11, 2026 |
 |---|---|---|---|
 | `cloud-storage-service-test` | every push to `hw2` | test app | Serving our service |
-| `cloud-storage-service-demo` | every push to `main` | demo app | **Not deployed yet.** It still serves Google's placeholder container ("It's running!"), because `main` has not been released since `hw2` gained the pipeline. The first merge of `hw2` into `main` deploys it. |
+| `cloud-storage-service-demo` | every push to `hw2`, after test passed its smoke check | demo app | Google's placeholder container ("It's running!") until the first `hw2` release that includes `deploy_demo` |
 
 Around them, all created by OpenTofu from `infra/` ([Infrastructure](infrastructure.md)):
 

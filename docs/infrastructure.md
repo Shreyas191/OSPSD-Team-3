@@ -34,6 +34,12 @@ Settings that matter (all in [`infra/variables.tf`](https://github.com/Shreyas19
 | `storage-deployer` (CI) | Push images to our repository; deploy revisions of the two services; run them as their runtime identity | Read secret values, change IAM, create or delete services, touch state |
 | The project owner (a person) | Everything, including `tofu apply` and adding secret values | — |
 
+### Blast radius
+
+- **Test can't affect demo.** Each has its own runtime identity, its own three secrets and its own Dropbox app, so code running on test can't read demo's credentials or files. Teammates who run experiments get deploy rights on test only. A release reaches demo only after the same release passed its smoke check on test (`deploy_demo` requires `deploy_test`), so a release that breaks the contract stops at test. What the two do share: this project's quotas and budget, the image repository, the dashboard and the alert.
+- **What a leaked CI credential could do.** No Google key is stored; CircleCI gets a short-lived token, and only for pipelines on `hw2` or `main` of our project ([Release Pipeline](release-pipeline.md#signing-in-without-a-stored-key)). Whoever can push to those branches can deploy any image to either service. That image runs as that environment's runtime identity, so it could read that environment's Dropbox token and read, change or delete files in **that environment's Dropbox app folder**. It can't change IAM, infrastructure or the state bucket, create or delete services, or reach other Dropbox folders or other projects.
+- **Worst case of one bad merge to `hw2`.** It passes CI and the smoke check (which only exercise the contract) and is deployed to test and then demo. The worst it could do is damage or leak the data in the two Dropbox app folders. Recovery is a rollback ([Release Pipeline](release-pipeline.md), "Roll back") and, if credentials may have leaked, a token rotation ([Runbook](runbook.md#dropbox-rejects-our-credentials-502-provider_error)). Neither restores files the bad release already changed in Dropbox.
+
 ## One-time setup by hand
 
 These steps can't be automated, because they create the account and permissions everything else needs. The project owner does them once.

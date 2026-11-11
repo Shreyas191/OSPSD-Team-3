@@ -65,7 +65,7 @@ $ curl -s "$B/files/metadata?path=/ospsd-tutorial/Docs/missing.txt"
 | Environment | URL | Deployed from |
 |---|---|---|
 | test | <https://cloud-storage-service-test-gyesjhieva-uc.a.run.app> (Swagger UI at `/docs`) | every push to `hw2` |
-| demo | <https://cloud-storage-service-demo-gyesjhieva-uc.a.run.app> | every push to `main`. Not deployed yet: `main` hasn't been released since the pipeline was added. |
+| demo | <https://cloud-storage-service-demo-gyesjhieva-uc.a.run.app> | every push to `hw2`, after the same release passed its smoke check on test |
 
 Both run on Google Cloud Run in project `ospsd-team3`, created with OpenTofu from [`infra/`](infra/). Each environment uses its own Dropbox app. The services don't authenticate callers, so treat anything stored there as public. Owner: Shreyas Kaldate. Teardown: Dec 18, 2026 ([`docs/teardown.md`](docs/teardown.md)).
 
@@ -286,7 +286,7 @@ The project includes a comprehensive CircleCI configuration (`.circleci/config.y
 
 - **All Branches**: Linting, format check, type checking, unit tests, CI-compatible tests, the vertical's conformance suite, and OpenTofu checks
 - **`main` and `dev`**: Additional integration tests with real Dropbox API calls
-- **`hw2`**: Builds the container image and deploys it to the test service, smoke-checked before it gets traffic; `main` also deploys demo ([`docs/release-pipeline.md`](docs/release-pipeline.md))
+- **`hw2`**: Builds the container image and deploys it to test, then demo, each smoke-checked before it gets traffic ([`docs/release-pipeline.md`](docs/release-pipeline.md))
 - **Artifacts**: Coverage reports, test results, and build summaries
 
 See `docs/circleci-setup.md` for detailed CI/CD setup instructions.
