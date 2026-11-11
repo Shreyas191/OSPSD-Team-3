@@ -274,6 +274,70 @@ jobs:
               --format='value(image_summary.digest)')"
             scripts/deploy.sh << parameters.environment >> "${IMAGE_REPO}@${digest}" "${CIRCLE_SHA1}"
 
+  # Job 9: The vertical's shared conformance suite, against our real HTTP app running on an
+  # in-memory storage client (tests/memory_client.py). No network, no credentials.
+  conformance:
+    docker:
+      - image: cimg/python:3.12
+    environment:
+      # The suite isn't merged in Dayana20/ospsd26-cloud-storage yet (its PR #6), so it is
+      # pinned to Team 6's commit. Move the pin when the suite is merged and tagged.
+      CONFORMANCE_REPO: https://github.com/prateeks99/ospsd26-cloud-storage.git
+      CONFORMANCE_COMMIT: b77617c218d345c8cde28dbf08cf4d1a5cbaef38
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: "Fetch the pinned conformance suite"
+          command: |
+            git clone --quiet "${CONFORMANCE_REPO}" /tmp/shared
+            git -C /tmp/shared checkout --quiet "${CONFORMANCE_COMMIT}"
+            # The suite imports httpx2 for the httpx API; point that name at the httpx we
+            # already lock instead of installing an extra, unvetted package.
+            mkdir -p /tmp/shim
+            printf 'import sys\n\nimport httpx\n\nsys.modules[__name__] = httpx\n' > /tmp/shim/httpx2.py
+      - run:
+          name: "Start the app on the in-memory client"
+          background: true
+          command: |
+            source .venv/bin/activate
+            python scripts/serve_in_memory.py 8000
+      - run:
+          name: "Run the conformance suite against it"
+          command: |
+            source .venv/bin/activate
+            for _ in $(seq 1 30); do curl -sf http://127.0.0.1:8000/health && break; sleep 1; done
+            mkdir -p test-results/conformance
+            CONFORMANCE_BASE_URL=http://127.0.0.1:8000 \
+            PYTHONPATH=/tmp/shim:/tmp/shared:/tmp/shared/src/cloud_storage_api/src \
+              pytest /tmp/shared/conformance/tests -c /dev/null --rootdir /tmp/shared -p no:cacheprovider \
+                     --junitxml=test-results/conformance/junit.xml -v
+      - store_test_results:
+          path: test-results/conformance
+
+  # Job 10: Check the OpenTofu code without touching the cloud: formatting and validity.
+  infra_validate:
+    docker:
+      - image: cimg/base:stable
+    environment:
+      TOFU_VERSION: 1.13.9
+    steps:
+      - checkout
+      - run:
+          name: "Install OpenTofu ${TOFU_VERSION}"
+          command: |
+            curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh
+            sh /tmp/install-opentofu.sh --install-method standalone --opentofu-version "${TOFU_VERSION}" \
+              --install-path "$HOME/bin" --symlink-path -   # verifies the download's signature with GPG
+            echo 'export PATH="$HOME/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: "tofu fmt -check and tofu validate (no backend, no credentials)"
+          command: |
+            tofu fmt -check -recursive infra
+            cd infra
+            tofu init -backend=false -input=false
+            tofu validate
+
 # Orchestrate jobs using workflows
 workflows:
   # Main workflow: Build, Lint, Test (runs on all branches except main/dev)
@@ -323,9 +387,24 @@ workflows:
                 - main
                 - dev
 
+      - conformance:
+          requires:
+            - build
+          filters:
+            branches:
+              ignore:
+                - main
+                - dev
+      - infra_validate:
+          filters:
+            branches:
+              ignore:
+                - main
+                - dev
+
       # Release: every push to hw2 that passed the checks above ships to the test service.
       - release_image:
-          requires: [lint, unit_test, circleci_test]
+          requires: [lint, unit_test, circleci_test, conformance, infra_validate]
           context: gcp-deploy
           filters:
             branches:
@@ -397,9 +476,24 @@ workflows:
                 - main
                 - dev
 
+      - conformance:
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - main
+                - dev
+      - infra_validate:
+          filters:
+            branches:
+              only:
+                - main
+                - dev
+
       # Release: main ships to test first, and to demo only if test passed its smoke check.
       - release_image:
-          requires: [lint, unit_test, circleci_test, integration_test]
+          requires: [lint, unit_test, circleci_test, integration_test, conformance, infra_validate]
           context: gcp-deploy
           filters:
             branches:
