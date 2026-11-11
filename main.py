@@ -11,6 +11,7 @@ import os
 
 import uvicorn
 from cloud_storage_service.app import ConfigurationError, check_configuration
+from cloud_storage_service.telemetry import configure_logging
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -24,9 +25,11 @@ def main() -> None:
         # One line on stderr, no traceback: the message names settings, never their values.
         msg = f"Startup failed: {e}"
         raise SystemExit(msg) from None
+    configure_logging()
     host = os.environ.get("HOST", DEFAULT_HOST)
     port = int(os.environ.get("PORT", DEFAULT_PORT))
-    uvicorn.run("cloud_storage_service.app:app", host=host, port=port)
+    # The service writes its own log line per request, so uvicorn's access log is off.
+    uvicorn.run("cloud_storage_service.app:app", host=host, port=port, access_log=False)
 
 
 if __name__ == "__main__":

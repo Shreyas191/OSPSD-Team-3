@@ -629,13 +629,16 @@ def test_failure_is_logged_as_a_structured_warning(
     with caplog.at_level(logging.WARNING):
         _call_create_route(http, "upload")
 
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
-    assert record.levelno == logging.WARNING
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
+    # Server errors (5xx) are logged as ERROR, caller errors (4xx) as WARNING.
+    assert record.levelno == (
+        logging.ERROR if record.__dict__["status"] >= 500 else logging.WARNING
+    )
     assert record.__dict__["operation"] == "upload_file"
     assert record.__dict__["status"] == status.HTTP_502_BAD_GATEWAY
     assert record.__dict__["code"] == "provider_error"
     assert record.__dict__["provider_failure"] is True
-    assert record.__dict__["reason"] == "Dropbox failed uploading to '/Docs/report.pdf' (quota)"
+    assert record.__dict__["reason"] == "Dropbox failed uploading to '…' (quota)"
 
 
 def test_unexpected_errors_are_not_disguised_as_provider_failures(

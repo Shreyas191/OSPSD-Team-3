@@ -23,7 +23,8 @@ from fastapi import status
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from cloud_storage_service.errors import ErrorDetail, ErrorResponse, log_failure
+from cloud_storage_service.errors import ErrorDetail, ErrorResponse
+from cloud_storage_service.telemetry import record_failure
 
 MAX_IN_FLIGHT_ENV_VAR = "MAX_IN_FLIGHT_REQUESTS"
 # Assumption, not a measurement: well below the 40 worker threads, and small enough that a
@@ -85,7 +86,7 @@ class ConcurrencyLimitMiddleware:
     async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
         operation = f"{scope['method']} {scope['path']}"
         reason = f"{self.in_flight} requests in flight (limit {self.max_in_flight})"
-        log_failure(
+        record_failure(
             operation,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "service_busy",

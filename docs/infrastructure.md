@@ -123,4 +123,15 @@ A rollback restores code and configuration only. Files a faulty release already 
 
 ## Changing the infrastructure
 
+### Changing a Cloud Run service's template
+
+The pipeline names every revision it deploys, and `infra/run.tf` ignores that name so pipeline deploys don't show up as drift. When OpenTofu itself has to change the revision template (an environment variable, a probe, a resource limit), it would send the current revision's name with a new configuration, and Google refuses with `409 Revision named ... with different configuration already exists`. For that one apply:
+
+1. Remove the line `template[0].revision,` from `ignore_changes` in `infra/run.tf` (don't commit this).
+2. `tofu plan -out=x.tfplan` shows `revision = "<current name>" -> null` plus your change; `tofu apply x.tfplan`. Google names the new revision itself. It gets no traffic: traffic stays on the tagged release until the next deploy, which builds on the new template.
+3. Put the line back, and check `tofu plan` reports **No changes**.
+
+This happened on Nov 11 when the telemetry settings (`LOG_FORMAT`, `TRACE_EXPORTER`, `GOOGLE_CLOUD_PROJECT`) were added.
+
+
 Edit `infra/`, run `tofu fmt` and `tofu validate`, and open a pull request with the output of `tofu plan` in its description. Apply only after review, from the reviewed commit.

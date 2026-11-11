@@ -170,7 +170,7 @@ def test_rejection_is_logged_as_a_service_failure_not_a_provider_failure(
         for future in running:
             future.result(WAIT)
 
-    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.errors"]
+    [record] = [r for r in caplog.records if r.name == "cloud_storage_service.requests"]
     assert record.__dict__["operation"] == "POST /files/rename"
     assert record.__dict__["status"] == HTTPStatus.SERVICE_UNAVAILABLE
     assert record.__dict__["code"] == "service_busy"
@@ -180,8 +180,9 @@ def test_rejection_is_logged_as_a_service_failure_not_a_provider_failure(
 
 def test_the_app_is_protected_with_the_configured_limit() -> None:
     """The service app itself installs the middleware with the limit from the environment."""
-    [middleware] = app.user_middleware
-    assert cast("object", middleware.cls) is ConcurrencyLimitMiddleware
+    [middleware] = [
+        m for m in app.user_middleware if cast("object", m.cls) is ConcurrencyLimitMiddleware
+    ]
     assert middleware.kwargs == {"max_in_flight": max_in_flight_from_env()}
 
 

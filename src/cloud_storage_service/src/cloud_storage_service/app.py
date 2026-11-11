@@ -18,6 +18,7 @@ from cloud_storage_service.errors import add_error_handlers
 from cloud_storage_service.models import FileResponse
 from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
 from cloud_storage_service.routes import router
+from cloud_storage_service.telemetry import RequestTelemetryMiddleware, configure_tracing
 
 __all__ = [
     "ConfigurationError",
@@ -85,3 +86,7 @@ app = FastAPI(title="Cloud Storage Service", lifespan=lifespan)
 app.add_middleware(ConcurrencyLimitMiddleware, max_in_flight=max_in_flight_from_env())
 app.include_router(router)
 add_error_handlers(app)
+# Added last, so it wraps everything above, including requests the overload limit refuses:
+# every request gets exactly one log line (see telemetry.py).
+app.add_middleware(RequestTelemetryMiddleware)
+configure_tracing(app)
