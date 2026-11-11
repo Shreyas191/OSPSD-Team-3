@@ -28,9 +28,10 @@ def test_client_cannot_be_instantiated() -> None:
 
 
 def test_client_declares_all_crud_methods() -> None:
-    """The contract exposes one abstract method per agreed CRUD feature."""
+    """The contract exposes one abstract method per agreed CRUD feature, plus a health check."""
     expected = {
         "upload_file",
+        "replace_file",
         "create_folder",
         "copy",
         "download_file",
@@ -39,8 +40,8 @@ def test_client_declares_all_crud_methods() -> None:
         "search",
         "rename",
         "move",
+        "check_health",
         "delete",
-        "check_provider_health",
     }
     assert expected == Client.__abstractmethods__
 
@@ -87,6 +88,26 @@ def test_client_copy() -> None:
     mock_client.copy.assert_called_once_with("/Docs", "/Docs (copy)")
     assert duplicate.name == "Docs (copy)"
     assert duplicate.is_folder is True
+
+
+def test_client_replace_file() -> None:
+    """``replace_file`` returns the metadata of the replaced file."""
+    mock_client = Mock(spec=Client)
+    mock_client.replace_file.return_value = _mock_file("/Docs/report.pdf")
+
+    replaced = mock_client.replace_file("report.pdf", "/Docs/report.pdf")
+
+    mock_client.replace_file.assert_called_once_with("report.pdf", "/Docs/report.pdf")
+    assert replaced.path == "/Docs/report.pdf"
+
+
+def test_client_replace_file_missing_raises() -> None:
+    """``replace_file`` never creates: a missing file raises FileNotFoundError."""
+    mock_client = Mock(spec=Client)
+    mock_client.replace_file.side_effect = FileNotFoundError("/Docs/missing.pdf")
+
+    with pytest.raises(FileNotFoundError):
+        mock_client.replace_file("report.pdf", "/Docs/missing.pdf")
 
 
 # ----- Read -----
@@ -158,6 +179,21 @@ def test_client_move() -> None:
     assert moved.path == "/Archive/report.pdf"
 
 
+# ----- Health -----
+
+
+def test_client_check_health() -> None:
+    """``check_health`` returns None when healthy and raises ConnectionError when unreachable."""
+    mock_client = Mock(spec=Client)
+    mock_client.check_health.return_value = None
+
+    assert mock_client.check_health() is None
+
+    mock_client.check_health.side_effect = ConnectionError("unreachable")
+    with pytest.raises(ConnectionError):
+        mock_client.check_health()
+
+
 # ----- Delete -----
 
 
@@ -169,18 +205,6 @@ def test_client_delete() -> None:
     assert mock_client.delete("/Docs/report.pdf") is True
     mock_client.delete.assert_called_once_with("/Docs/report.pdf")
 
-
-# ----- Health -----
-
-def test_client_check_provider_health() -> None:
-    """``check_provider_health`` returns None on success."""
-    mock_client = Mock(spec=Client)
-    mock_client.check_provider_health.return_value = None
-
-    result = mock_client.check_provider_health()
-
-    mock_client.check_provider_health.assert_called_once_with()
-    assert result is None
 
 def test_package_exports() -> None:
     """The package exposes the public names consumers depend on."""

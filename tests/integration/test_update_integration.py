@@ -94,7 +94,7 @@ def test_missing_source_and_conflict(scratch: str, http: TestClient) -> None:
     assert case_only.status_code == HTTPStatus.CONFLICT
 
 
-def test_folder_moved_into_itself_is_invalid_input(client: DropboxClient, scratch: str, http: TestClient) -> None:
+def test_folder_moved_into_itself_is_invalid_operation(client: DropboxClient, scratch: str, http: TestClient) -> None:
     """A folder moved into itself is 422 in the shared format, and nothing moves in Dropbox.
 
     Dropbox reports this with the same error as a move onto the source's own path, so the
@@ -103,5 +103,5 @@ def test_folder_moved_into_itself_is_invalid_input(client: DropboxClient, scratc
     response = http.post("/files/move", json={"from_path": f"{scratch}/Archive", "to_path": f"{scratch}/Archive/Inner"})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
-    assert response.json()["error"]["code"] == "invalid_input"
+    assert response.json()["error"]["code"] == "invalid_operation"
     assert client.dbx.files_get_metadata(f"{scratch}/Archive").path_display == f"{scratch}/Archive"

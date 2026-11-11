@@ -2,7 +2,7 @@
 
 [![CircleCI](https://circleci.com/gh/Shreyas191/OSPSD-Team-3.svg?style=shield)](https://circleci.com/gh/Shreyas191/OSPSD-Team-3)
 [![Coverage](https://img.shields.io/badge/coverage-85%2B%25-brightgreen)](https://circleci.com/gh/Shreyas191/OSPSD-Team-3)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://python.org)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 This repository builds a component-based document storage client in Python. It defines a provider-agnostic cloud storage API and implements it on top of the Dropbox API, so files and folders can be created, read, updated, and deleted through one stable interface.
@@ -76,7 +76,7 @@ OSPSD-Team-3/
 
 ### 1. Prerequisites
 
--   Python 3.11 or higher
+-   Python 3.12 or higher
 -   `uv` – A fast, all-in-one Python package manager.
 
 ### 2. Initial Setup
@@ -120,7 +120,7 @@ OSPSD-Team-3/
     ```
 
 6.  **Check the Setup:**
-    Start the service, then open <http://127.0.0.1:8000/docs> and try `GET /folders/list`:
+    Start the service, then open <http://127.0.0.1:8000/docs> and try `GET /files` with `path=/`:
     ```bash
     uv run python main.py
     ```
@@ -147,6 +147,11 @@ uv run python main.py
 While developing, reload on every code change:
 ```bash
 uv run uvicorn cloud_storage_service.app:app --reload
+```
+
+To build and run the container image (tagged with the commit SHA), see [`docs/deployment.md`](docs/deployment.md):
+```bash
+scripts/build_image.sh
 ```
 
 ### Running the Toolchain

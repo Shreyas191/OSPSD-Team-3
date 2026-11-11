@@ -34,6 +34,7 @@ Outcome = Literal[
     "not_file",
     "not_folder",
     "conflict",
+    "stale",
     "malformed",
     "too_large",
     "nested",
@@ -50,6 +51,10 @@ _OUTCOMES: dict[Outcome, tuple[type[Exception], str]] = {
     "not_file": (IsADirectoryError, "Path is a folder: {source}"),
     "not_folder": (ValueError, "Path is a file: {source}"),
     "conflict": (FileExistsError, "Something already exists at {destination}"),
+    "stale": (
+        FileExistsError,
+        "{destination} changed while it was being replaced; read it again and retry",
+    ),
     "malformed": (ValueError, "Dropbox rejected {subject} as invalid"),
     "too_large": (
         ValueError,
@@ -80,7 +85,6 @@ class Operation:
     action: str
     read_reason: ReasonReader = _no_specific_reason
     describe: Callable[[str], str] = repr
-    outcome_override: Outcome | None = None
 
 
 def translate(
@@ -99,12 +103,7 @@ def translate(
 
     """
     reason = error.error if isinstance(error, dropbox.exceptions.ApiError) else None
-    outcome = (
-        operation.outcome_override
-        or _sdk_outcome(error)
-        or operation.read_reason(reason)
-        or "failed"
-    )
+    outcome = _sdk_outcome(error) or operation.read_reason(reason) or "failed"
     kind, template = _OUTCOMES[outcome]
     source = operation.describe(path)
     destination = source if to_path is None else repr(to_path)
@@ -209,6 +208,16 @@ def _write_reason(reason: object) -> Outcome | None:
     return None
 
 
+def _replace_reason(reason: object) -> Outcome | None:
+    """Read a failed revision-checked ``files_upload`` (``WriteMode.update``).
+
+    With ``autorename=False``, Dropbox reports a revision that no longer matches the file
+    as a write conflict: someone changed the file after we read its revision.
+    """
+    outcome = _write_reason(reason)
+    return "stale" if outcome == "conflict" else outcome
+
+
 def _relocation_reason(reason: object) -> Outcome | None:  # noqa: PLR0911
     """Read a failed ``files_move_v2`` or ``files_copy_v2``."""
     if not isinstance(reason, files.RelocationError):
@@ -267,8 +276,9 @@ LIST = Operation("listing", _list_reason)
 LIST_CONTINUE = Operation("listing", _list_continue_reason)
 SEARCH = Operation("searching for", describe=_describe_query)
 UPLOAD = Operation("uploading to", _write_reason)
+REPLACE = Operation("replacing", _replace_reason)
 CREATE_FOLDER = Operation("creating a folder at", _write_reason)
 MOVE = Operation("moving", _relocation_reason)
 COPY = Operation("copying", _relocation_reason)
 DELETE = Operation("deleting", _delete_reason)
-HEALTH = Operation("checking", outcome_override="unavailable")
+HEALTH = Operation("checking", describe=lambda _: "the Dropbox account")

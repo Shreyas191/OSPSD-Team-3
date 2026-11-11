@@ -18,13 +18,13 @@ Usage::
 # ruff: noqa: INP001
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from itertools import count
 from pathlib import Path
 
 from cloud_storage_client_api import Client, File
 
-FIXED_MODIFIED = datetime(2026, 10, 1, 12, 30)  # noqa: DTZ001 - providers may return naive UTC
+FIXED_MODIFIED = datetime(2026, 10, 1, 12, 30, tzinfo=UTC)
 _SEARCH_MAX_RESULTS_LIMIT = 1000
 
 
@@ -94,6 +94,7 @@ class FakeStorageClient(Client):
     def __init__(self) -> None:
         """Start with no entries."""
         self.entries: dict[str, FakeFile] = {}
+        self.health_error: OSError | None = None
         self._ids = count(1)
 
     def add(self, path: str, *, is_folder: bool = False, size: int = 0) -> FakeFile:
@@ -157,6 +158,17 @@ class FakeStorageClient(Client):
         )
         self.entries[remote_path] = uploaded
         return uploaded
+
+    def replace_file(self, local_path: str, remote_path: str) -> File:
+        """Replace an existing file at ``remote_path``; never create one."""
+        existing = self.entries.get(remote_path)
+        if existing is None:
+            msg = f"No file or folder at {remote_path!r}"
+            raise FileNotFoundError(msg)
+        if existing.is_folder:
+            msg = f"Path is a folder: {remote_path!r}"
+            raise IsADirectoryError(msg)
+        return self.upload_file(local_path, remote_path, overwrite=True)
 
     def create_folder(self, remote_path: str) -> File:
         """Create an empty folder at ``remote_path``; never overwrite an entry."""
@@ -268,6 +280,13 @@ class FakeStorageClient(Client):
                 if yielded >= max_results:
                     return
 
+    # ----- Health -----
+
+    def check_health(self) -> None:
+        """Raise ``health_error`` if a test set one; otherwise the provider is reachable."""
+        if self.health_error is not None:
+            raise self.health_error
+
     # ----- Delete -----
 
     def delete(self, remote_path: str) -> bool:
@@ -281,8 +300,3 @@ class FakeStorageClient(Client):
         for path in [p for p in self.entries if p == remote_path or p.startswith(f"{remote_path}/")]:
             del self.entries[path]
         return True
-
-    # ----- Health -----
-
-    def check_provider_health(self) -> None:
-        """Simulate a successful provider health check."""

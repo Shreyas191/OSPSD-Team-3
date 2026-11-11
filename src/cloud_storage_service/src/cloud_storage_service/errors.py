@@ -1,36 +1,42 @@
-"""The team's shared error format for HTTP responses: ``{"error": {"code", "message"}}``.
+"""The vertical's shared error format for HTTP responses: ``{"error": {"code", "message"}}``.
 
-Routes registered on a router with ``route_class=SharedErrorRoute`` report every failure
-in this format. Request validation errors and the built-in exceptions the ``Client``
-contract documents are mapped onto a status code and a stable machine-readable ``code``,
-and each failure is logged as a structured warning. Any other exception is a bug and is
-left alone, so it still surfaces as ``500``.
+Every error the service returns uses this body. Two places produce it:
 
-| Exception (or cause)                  | Status | ``code``                 |
-|---------------------------------------|--------|--------------------------|
-| request validation / ``ValueError``   | 422    | ``invalid_input``        |
-| ``IsADirectoryError`` (folder given   | 422    | ``invalid_input``        |
-| where a file is needed, e.g. download)|        |                          |
-| ``FileNotFoundError``                 | 404    | ``not_found``            |
-| ``FileExistsError``                   | 409    | ``conflict``             |
-| ``PermissionError``                   | 403    | ``permission_denied``    |
-| ``ConnectionError``                   | 503    | ``provider_unavailable`` |
-| too many requests in flight (overload)| 503    | ``service_busy``         |
-| any other ``OSError``                 | 502    | ``provider_failure``     |
+- :class:`SharedErrorRoute` handles requests that reach a route. Request validation errors
+  and the built-in exceptions the ``Client`` contract documents are mapped onto a status
+  and a stable ``code``, and each failure is logged as a structured warning.
+- :func:`add_error_handlers` handles everything else: an unknown route, a method the route
+  does not allow, and any unexpected exception (a bug).
 
-For ``502`` and ``503`` the response carries a fixed message, so provider details never
-reach the caller; the exception's own message is kept in the warning log.
+| Exception (or cause)                    | Status | ``code``                 |
+|-----------------------------------------|--------|--------------------------|
+| request validation (bad path, missing   | 400    | ``invalid_request``      |
+| field, body that is not JSON)           |        |                          |
+| ``ValueError``, ``IsADirectoryError``   | 422    | ``invalid_operation``    |
+| ``FileNotFoundError``                   | 404    | ``not_found``            |
+| ``FileExistsError``                     | 409    | ``conflict``             |
+| ``PermissionError``                     | 403    | ``permission_denied``    |
+| ``ConnectionError``                     | 503    | ``provider_unavailable`` |
+| too many requests in flight (overload)  | 503    | ``service_busy``         |
+| any other ``OSError``                   | 502    | ``provider_error``       |
+| no such route                           | 404    | ``route_not_found``      |
+| method not allowed on the route         | 405    | ``method_not_allowed``   |
+| unexpected exception                    | 500    | ``internal_error``       |
+
+For ``5xx`` responses the message is fixed, so provider details never reach the caller;
+the exception's own message is kept in the warning log.
 """
 
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Any
 
-from fastapi import Request, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +49,20 @@ class ErrorDetail(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    """The body of every error response from a route using :class:`SharedErrorRoute`."""
+    """The body of every error response."""
 
     error: ErrorDetail
+
+
+def error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    """Return a response with the shared error body."""
+    body = ErrorResponse(error=ErrorDetail(code=code, message=message))
+    return JSONResponse(body.model_dump(), status_code=status_code, headers=headers)
 
 
 class SharedErrorRoute(APIRoute):
@@ -60,22 +77,51 @@ class SharedErrorRoute(APIRoute):
             try:
                 return await handle_request(request)
             except RequestValidationError as e:
-                status_code, code = status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_input"
+                status_code, code = status.HTTP_400_BAD_REQUEST, "invalid_request"
                 message = reason = _describe(e)
             except (ValueError, OSError) as e:
                 status_code, code, message = _classify(e)
                 reason = str(e)
             log_failure(operation, status_code, code, reason)
-            body = ErrorResponse(error=ErrorDetail(code=code, message=message))
-            return JSONResponse(body.model_dump(), status_code=status_code)
+            return error_response(status_code, code, message)
 
         return handle
+
+
+def add_error_handlers(app: FastAPI) -> None:
+    """Make the errors no route handles use the shared body too."""
+
+    @app.exception_handler(HTTPException)
+    def http_error(request: Request, exc: HTTPException) -> JSONResponse:
+        # Starlette raises these for 404 (no route) and 405 (wrong method); any other
+        # status keeps its own code and is reported as an invalid request.
+        known = {
+            status.HTTP_404_NOT_FOUND: ("route_not_found", f"No route {request.url.path}"),
+            status.HTTP_405_METHOD_NOT_ALLOWED: (
+                "method_not_allowed",
+                f"{request.method} is not allowed on {request.url.path}",
+            ),
+        }
+        code, message = known.get(exc.status_code, ("invalid_request", str(exc.detail)))
+        log_failure(f"{request.method} {request.url.path}", exc.status_code, code, message)
+        return error_response(exc.status_code, code, message, headers=exc.headers)
+
+    @app.exception_handler(Exception)
+    def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        log_failure(
+            f"{request.method} {request.url.path}",
+            status_code,
+            "internal_error",
+            repr(exc),
+        )
+        return error_response(status_code, "internal_error", "The service failed unexpectedly")
 
 
 def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
     """Return the status code, error code and caller-facing message for a contract exception."""
     if isinstance(error, ValueError | IsADirectoryError):
-        return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_input", str(error)
+        return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_operation", str(error)
     if isinstance(error, FileNotFoundError):
         return status.HTTP_404_NOT_FOUND, "not_found", str(error)
     if isinstance(error, FileExistsError):
@@ -86,7 +132,7 @@ def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
         message = "The storage provider is unreachable or busy; try again later"
         return status.HTTP_503_SERVICE_UNAVAILABLE, "provider_unavailable", message
     message = "The storage provider failed to complete the request"
-    return status.HTTP_502_BAD_GATEWAY, "provider_failure", message
+    return status.HTTP_502_BAD_GATEWAY, "provider_error", message
 
 
 def _describe(error: RequestValidationError) -> str:
@@ -107,11 +153,14 @@ def log_failure(
 ) -> None:
     """Log a failed request as ``key=value`` pairs, also attached to the record as ``extra``.
 
-    ``provider_failure`` defaults to "the status is a 5xx". Callers that answer with a 5xx
-    the provider did not cause (e.g. the service shedding load) pass ``False``.
+    ``provider_failure`` defaults to "the status is 502 or 503". Callers that answer with a
+    503 the provider did not cause (the service shedding load) pass ``False``.
     """
     if provider_failure is None:
-        provider_failure = status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR
+        provider_failure = status_code in {
+            status.HTTP_502_BAD_GATEWAY,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        }
     fields = {
         "operation": operation,
         "status": status_code,

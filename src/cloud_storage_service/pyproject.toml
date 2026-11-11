@@ -3,7 +3,7 @@ name = "cloud-storage-service"
 version = "0.1.0"
 description = "FastAPI HTTP service exposing the cloud storage client API"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "cloud-storage-client-api",
     "dropbox-client-impl",
@@ -24,7 +24,7 @@ packages = ["src/cloud_storage_service"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint]
