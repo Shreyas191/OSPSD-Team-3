@@ -364,17 +364,35 @@ def test_patch_renames_within_the_folder(storage: FakeStorageClient, http: TestC
     )
 
 
-def test_patch_moves_folder_with_contents(storage: FakeStorageClient, http: TestClient) -> None:
-    """Moving a folder returns it with null size and modified_at, and its contents move too."""
+def test_patch_folder_returns_422_and_moves_nothing(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Only files can be moved: a folder is an invalid operation, and nothing moves."""
     storage.add("/Docs", is_folder=True)
     storage.add("/Docs/report.pdf")
 
     response = patch(http, "Docs", "Archive")
 
-    assert response.status_code == HTTPStatus.OK
-    body = response.json()
-    assert (body["path"], body["size"], body["modified_at"]) == ("/Archive", None, None)
-    assert set(storage.entries) == {"/Archive", "/Archive/report.pdf"}
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json()["error"]["code"] == "invalid_operation"
+    assert set(storage.entries) == {"/Docs", "/Docs/report.pdf"}
+
+
+@pytest.mark.parametrize("new_path", ["/Docs/report.pdf", "/Docs/REPORT.pdf", "Docs/report.pdf"])
+def test_patch_to_the_same_path_returns_422(
+    storage: FakeStorageClient,
+    http: TestClient,
+    new_path: str,
+) -> None:
+    """A ``new_path`` equal to ``path``, or differing only in case, is an invalid operation."""
+    report = storage.add("/Docs/report.pdf")
+
+    response = patch(http, "/Docs/report.pdf", new_path)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json()["error"]["code"] == "invalid_operation"
+    assert storage.entries == {"/Docs/report.pdf": report}
 
 
 @pytest.mark.parametrize(
@@ -430,32 +448,19 @@ def test_patch_missing_source_returns_404(storage: FakeStorageClient, http: Test
     }
 
 
-@pytest.mark.parametrize("new_path", ["/Docs/summary.pdf", "/Docs/report.pdf"])
 def test_patch_occupied_destination_returns_409(
     storage: FakeStorageClient,
     http: TestClient,
-    new_path: str,
 ) -> None:
-    """A destination that already exists (including the source itself) is a 409."""
+    """A destination that already exists is a 409, and neither file changes."""
     report = storage.add("/Docs/report.pdf")
     summary = storage.add("/Docs/summary.pdf")
 
-    response = patch(http, "/Docs/report.pdf", new_path)
+    response = patch(http, "/Docs/report.pdf", "/Docs/summary.pdf")
 
     assert response.status_code == HTTPStatus.CONFLICT
     assert response.json()["error"]["code"] == "conflict"
     assert storage.entries == {"/Docs/report.pdf": report, "/Docs/summary.pdf": summary}
-
-
-def test_patch_folder_into_itself_returns_422(storage: FakeStorageClient, http: TestClient) -> None:
-    """Moving a folder into its own subfolder is an invalid operation."""
-    storage.add("/Docs", is_folder=True)
-
-    response = patch(http, "/Docs", "/Docs/Inner")
-
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert response.json()["error"]["code"] == "invalid_operation"
-    assert set(storage.entries) == {"/Docs"}
 
 
 @pytest.mark.parametrize(
@@ -474,6 +479,7 @@ def test_patch_client_failures_use_the_shared_error_format(
     code: str,
 ) -> None:
     """Client errors map to the same statuses as the other update routes."""
+    provider.get_metadata.return_value.is_folder = False
     provider.move.side_effect = error
 
     response = patch(http, "/Docs/report.pdf", "/Archive/report.pdf")

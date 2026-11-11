@@ -213,13 +213,32 @@ def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
     return FileResponse.from_file(client.move(request.from_path, request.to_path))
 
 
-@router.patch("/files", responses=_UPDATE_ERRORS)
+@router.patch(
+    "/files",
+    responses=error_responses(
+        {
+            403: "The provider does not allow the move",
+            404: "No file exists at the path",
+            409: "Something already exists at `new_path`",
+            422: "The path is a folder, or `new_path` is the path itself (ignoring case)",
+        },
+    ),
+)
 def update_entry(path: EntryPath, request: PatchRequest, client: StorageClient) -> FileResponse:
-    """Move or rename the file or folder at ``path`` to ``new_path``; return its new metadata.
+    """Move or rename the file at ``path`` to ``new_path`` and return its new metadata.
 
-    A rename is a move within the same folder. The entry keeps its ``id``, and nothing
-    already at ``new_path`` is overwritten.
+    Follows the shared conformance suite: only files move (a folder is ``422``), a
+    ``new_path`` equal to ``path`` ignoring case is ``422``, and nothing already at
+    ``new_path`` is overwritten (``409``). The file keeps its ``id``. The source is read
+    first to apply those rules, so a move costs one extra provider call.
     """
+    source = client.get_metadata(path)
+    if source.is_folder:
+        msg = f"Cannot move {path!r}: it is a folder, and only files can be moved"
+        raise IsADirectoryError(msg)
+    if request.new_path.lower() == path.lower():
+        msg = f"Cannot move {path!r} to {request.new_path!r}: it is the same path (ignoring case)"
+        raise ValueError(msg)
     return FileResponse.from_file(client.move(path, request.new_path))
 
 
