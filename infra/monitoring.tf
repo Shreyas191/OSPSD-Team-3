@@ -36,7 +36,9 @@ resource "google_monitoring_alert_policy" "server_errors" {
       ])
       comparison      = "COMPARISON_GT"
       threshold_value = var.alert_5xx_threshold
-      duration        = "0s"
+      # The count must stay above the threshold for a minute, so one brief spike that is
+      # already over doesn't page anyone (Google also requires a non-zero duration here).
+      duration = "60s"
 
       aggregations {
         alignment_period     = "300s"
