@@ -79,7 +79,10 @@ resource "google_cloud_run_v2_service" "service" {
   lifecycle {
     # The pipeline deploys every release (a new image and its RELEASE label), not OpenTofu.
     # Ignoring them keeps a repeated apply from rolling the service back to initial_image.
+    # Cloud Run also fills in a service-level scaling block with zeros after creation; our
+    # limits are in template.scaling, so that block is Google's default, not drift.
     ignore_changes = [
+      scaling,
       template[0].containers[0].image,
       template[0].labels,
       client,

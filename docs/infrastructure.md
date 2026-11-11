@@ -2,7 +2,7 @@
 
 This page covers HW2 Milestone 3, Level 1, item 2.3: the cloud resources the service runs on, declared in [`infra/`](https://github.com/Shreyas191/OSPSD-Team-3/tree/hw2/infra) and created with OpenTofu. The container image is described in [Container and Configuration](deployment.md), and removing everything in [Teardown](teardown.md).
 
-**Status: written and checked offline (`validate`, `fmt`) on Nov 9, 2026. Not applied yet:** it needs the team's own Google Cloud project, and that project's owner is still to be named.
+**Status: applied on Nov 11, 2026** to the team's project `ospsd-team3` (owner: Shreyas Kaldate), in two steps as described below: 10 resources, then 19. A second `tofu plan` reported "No changes", and both services answered `GET /health` with `200`.
 
 ## What gets created, and why
 
