@@ -234,3 +234,30 @@ def delete_entry(path: FolderPath, client: StorageClient) -> None:
     ``422 invalid_operation``: it is a valid path, but deleting it is never allowed.
     """
     client.delete(path)
+
+
+# ----- Health -----
+
+
+@router.get(
+    "/health",
+    status_code=status.HTTP_200_OK,
+)
+def check_service_health() -> dict[str, str]:
+    """Report that the service is running, without contacting the storage provider."""
+    return {"status": "ok"}
+
+
+@router.get(
+    "/health/provider",
+    status_code=status.HTTP_200_OK,
+    responses=error_responses(
+        {
+            503: "The storage provider is unreachable or busy",
+        },
+    ),
+)
+def check_provider_health(client: StorageClient) -> dict[str, str]:
+    """Check that the storage provider is reachable with configured credentials."""
+    client.check_health()
+    return {"status": "ok"}
