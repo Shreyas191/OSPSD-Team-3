@@ -2,7 +2,7 @@
 
 This page covers HW2 Milestone 3, Level 4, item 3.4. It defines two service level indicators (SLIs) for one representative operation, `GET /files/metadata`: an SLI is the share of eligible requests that were good. Each SLI gets a service level objective (SLO), a target over a window, and the error budget that target allows. The page reports both over a recorded run. What the team does when a budget is spent is the error budget policy (item 3.6).
 
-**Status:** definitions and targets written on Nov 11, 2026, from the measurement below and before the recorded run, so the run can't have shaped them. Changing a definition later is a pull request to this page that says why; never after a failure, to improve the result.
+**Status:** definitions and targets written on Nov 11, 2026, from the measurement below, and committed before the recorded run ([`1f24208`](https://github.com/Shreyas191/OSPSD-Team-3/commit/1f24208), 22:06:16 UTC, and pushed; the run started at 22:06:27), so the run can't have shaped them. Changing a definition later is a pull request to this page that says why; never after a failure, to improve the result.
 
 ## The operation: `GET /files/metadata`
 
@@ -106,4 +106,26 @@ A recorded run is made with `scripts/slo_run.py <service URL>`. It sends metadat
 
 ## Recorded run
 
-Not run yet.
+**When and where:** Nov 11, 2026, 22:06:27 to 22:10:01 UTC, on `cloud-storage-service-test`, revision `00024-zuz`, release `098ebe9`, one instance.
+**How:** `scripts/slo_run.py` sent 300 metadata requests one at a time, half a second apart, in the scratch folder `/slo-run-9733ec387bd4`, which it deleted afterwards (`204`).
+**Report:** `scripts/slo_report.py --service cloud-storage-service-test --start 2026-11-11T22:06:27Z --end 2026-11-11T22:10:01Z`, run two minutes after the run ended.
+
+| | Availability | Latency |
+|---|---|---|
+| Logged requests | 300: `200` ×265, `404` ×21, `400` ×14 | |
+| Eligible (denominator) | 286 (the 14 `400`s excluded) | 286 (answered `200` or `404`) |
+| Good (numerator) | 286 answered `200` or `404` | 285 within 1,000 ms |
+| Current value | **100.00%** (target 99%) | **99.65%** (target 95%) |
+| Error budget for this traffic | 2.86 failed requests | 14.30 slow requests |
+| Used | 0 | 1 |
+| Remaining | 2.86 (100%) | 13.30 (93%) |
+| For 1,000 eligible requests | 10 failed allowed | 50 slow allowed |
+
+Both SLOs were met over the run. With 286 eligible requests it is above the 100-request floor, so the percentages count.
+
+- **The client and the server agree.** The script counted the same statuses (`200` ×265, `404` ×21, `400` ×14) as Cloud Run logged, so no request was lost on the way.
+- **Latency at Cloud Run:** p50 139 ms, p95 170 ms, p99 349 ms. The client measured p50 196 ms and p95 230 ms: the extra ~60 ms is mostly the network between the client and Google, which the SLI can't see.
+- **The one slow request** (22:08:03, `200`) took 2,261 ms at Cloud Run. The service's own log line shows 2,259 ms inside the service, so it was neither a cold start nor Cloud Run; its trace (`4cefa2c766f8d9f9a99b62c724450d1b`) shows whether the Dropbox call took the time.
+- **No cold start in this run.** The instance was still running from 11 minutes earlier, so the first request took 349 ms. Cold starts are in the measurement above, and on demo, with fewer requests, they will be a larger share of the slow ones.
+
+A report on test for the 24 hours before the run shows why test isn't covered: the overload test's 301 `service_busy` refusals put availability at 45.97% (257 of 559), with the budget spent 50 times over. That was a deliberate experiment, which is what test is for.
