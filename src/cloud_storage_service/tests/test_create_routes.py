@@ -17,6 +17,7 @@ from unittest.mock import Mock
 
 import cloud_storage_client_api
 import pytest
+from cloud_storage_client_api import FileTooLargeError
 from fastapi import status
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -78,6 +79,7 @@ def make_file(path: str = "/Docs/report.pdf", *, is_folder: bool = False) -> Fil
         is_folder=is_folder,
         size=None if is_folder else 2048,
         modified=None if is_folder else MODIFIED,
+        etag=None if is_folder else "015f1a2b3c4d",
     )
     return FileResponse.from_file(cast("cloud_storage_client_api.File", file))
 
@@ -90,13 +92,14 @@ def test_from_file_maps_every_field() -> None:
         "path": "/Docs/report.pdf",
         "size": 2048,
         "modified_at": "2026-10-13T12:00:00Z",
+        "etag": "015f1a2b3c4d",
     }
 
 
-def test_from_file_folder_has_null_size_and_modified_at() -> None:
-    """Keep folder size and modification time null in the response."""
+def test_from_file_folder_has_null_size_modified_at_and_etag() -> None:
+    """Keep folder size, modification time and etag null in the response."""
     response = make_file("/Docs", is_folder=True)
-    assert (response.size, response.modified_at) == (None, None)
+    assert (response.size, response.modified_at, response.etag) == (None, None, None)
 
 
 def test_from_file_converts_modified_time_to_utc() -> None:
@@ -112,6 +115,7 @@ def test_from_file_converts_modified_time_to_utc() -> None:
             is_folder=False,
             size=1,
             modified=moment,
+            etag="rev1",
         )
         response = FileResponse.from_file(cast("cloud_storage_client_api.File", file))
         assert response.modified_at == "2026-10-13T12:00:00Z"
@@ -523,13 +527,49 @@ CREATE_ROUTES = ["upload", "create_folder", "copy"]
 @pytest.mark.parametrize("route", CREATE_ROUTES)
 def test_value_error_from_client_returns_422(provider: Mock, http: TestClient, route: str) -> None:
     """A path or file the provider rejects is an invalid operation, with the client's message."""
-    error = ValueError("The file for '/Docs/report.pdf' is too large to upload in one request")
+    error = ValueError("Dropbox rejected '/Docs/report.pdf' as invalid")
     _fail_with(provider, error)
 
     response = _call_create_route(http, route)
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert response.json() == {"error": {"code": "invalid_operation", "message": str(error)}}
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_file_too_large_returns_413(provider: Mock, http: TestClient, method: str) -> None:
+    """A file over the provider's upload limit is a 413 ``file_too_large``, with the message."""
+    error = FileTooLargeError("The file for '/Docs/report.pdf' is too large (150 MB limit)")
+    provider.upload_file.side_effect = provider.replace_file.side_effect = error
+
+    response = send_file(http, method)
+
+    assert response.status_code == status.HTTP_413_CONTENT_TOO_LARGE
+    assert response.json() == {"error": {"code": "file_too_large", "message": str(error)}}
+
+
+def test_upload_route_file_too_large_returns_413(provider: Mock, http: TestClient) -> None:
+    """The older upload route reports an oversized file the same way."""
+    provider.upload_file.side_effect = FileTooLargeError("too large")
+
+    response = post_upload(http)
+
+    assert response.status_code == status.HTTP_413_CONTENT_TOO_LARGE
+    assert response.json()["error"]["code"] == "file_too_large"
+
+
+def test_etag_changes_when_the_file_is_replaced(
+    storage: FakeStorageClient,
+    http: TestClient,
+) -> None:
+    """Create returns an etag; after a replace, metadata shows a different one."""
+    created = send_file(http, "POST", b"old").json()
+    replaced = send_file(http, "PUT", b"new").json()
+    metadata = http.get("/files/metadata", params={"path": "/Docs/report.pdf"}).json()
+
+    assert created["etag"] is not None
+    assert replaced["etag"] != created["etag"]
+    assert metadata["etag"] == replaced["etag"]
 
 
 @pytest.mark.parametrize("route", CREATE_ROUTES)

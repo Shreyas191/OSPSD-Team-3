@@ -41,6 +41,10 @@ class _InMemoryFile(File):
     def modified(self) -> datetime | None:
         return self._modified
 
+    @property
+    def etag(self) -> str | None:
+        return None if self._size is None else "rev1"
+
 
 def test_file_cannot_be_instantiated() -> None:
     """File is abstract and cannot be created directly."""
@@ -50,7 +54,15 @@ def test_file_cannot_be_instantiated() -> None:
 
 def test_file_declares_expected_properties() -> None:
     """Every implementation must provide these properties."""
-    assert {"id", "name", "path", "is_folder", "size", "modified"} == File.__abstractmethods__
+    assert {
+        "id",
+        "name",
+        "path",
+        "is_folder",
+        "size",
+        "modified",
+        "etag",
+    } == File.__abstractmethods__
 
 
 def test_concrete_file_satisfies_contract() -> None:

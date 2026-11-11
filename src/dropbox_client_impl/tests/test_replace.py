@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import requests
+from cloud_storage_client_api import FileTooLargeError
 from dropbox import exceptions, files
 from dropbox.files import WriteMode
 from tests.dropbox_sdk import api_error, file_metadata, folder_metadata, rate_limited, server_error
@@ -123,7 +124,7 @@ def test_replace_stale_revision_is_file_exists(
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
-        (api_error(files.UploadError.payload_too_large), ValueError),
+        (api_error(files.UploadError.payload_too_large), FileTooLargeError),
         (_write_failed(files.WriteError.no_write_permission), PermissionError),
         (rate_limited(), ConnectionError),
         (requests.exceptions.ConnectionError("connection refused"), ConnectionError),

@@ -74,6 +74,7 @@ def test_rename_returns_updated_file(storage: FakeStorageClient, http: TestClien
         "path": "/Docs/summary.pdf",
         "size": 2048,
         "modified_at": "2026-10-01T12:30:00Z",
+        "etag": "rev:id:1",
     }
     assert set(storage.entries) == {"/Docs/summary.pdf"}
 

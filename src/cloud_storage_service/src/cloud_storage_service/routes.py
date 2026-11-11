@@ -84,7 +84,7 @@ FilePathField = Annotated[
         {
             403: "The provider does not allow writing there",
             409: "Something already exists at the path",
-            422: "A file over the provider's upload limit",
+            413: "A file over the provider's upload limit",
         },
     ),
 )
@@ -102,7 +102,8 @@ def create_file(file: UploadedFile, path: FilePathField, client: StorageClient) 
             403: "The provider does not allow writing there",
             404: "No file exists at the path",
             409: "The file changed while it was being replaced; read it again and retry",
-            422: "The path is a folder, or the file is over the provider's upload limit",
+            413: "A file over the provider's upload limit",
+            422: "The path is a folder",
         },
     ),
 )
@@ -119,7 +120,7 @@ def replace_file(file: UploadedFile, path: FilePathField, client: StorageClient)
         {
             403: "The provider does not allow writing there",
             409: "Something is at the path: `overwrite` is false, or it's a folder",
-            422: "A file over the provider's upload limit",
+            413: "A file over the provider's upload limit",
         },
     ),
 )
