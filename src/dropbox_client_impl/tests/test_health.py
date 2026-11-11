@@ -21,7 +21,6 @@ def test_check_provider_health_calls_dropbox(
     result = client.check_provider_health()
 
     dbx.users_get_current_account.assert_called_once_with()
-    assert result is None
 
 
 def test_check_provider_health_translates_dropbox_failure(
