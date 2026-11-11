@@ -31,7 +31,7 @@ _SEARCH_MAX_RESULTS_LIMIT = 1000
 class FakeFile(File):
     """A ``File`` with fixed values; a moved or renamed entry is a new ``FakeFile``."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - one argument per File property
         self,
         file_id: str,
         path: str,
@@ -39,9 +39,11 @@ class FakeFile(File):
         is_folder: bool,
         size: int | None,
         modified: datetime | None,
+        etag: str | None = None,
     ) -> None:
-        """Store the entry's values."""
+        """Store the entry's values. A file with no ``etag`` gets one derived from its ID."""
         self._id = file_id
+        self._etag = None if is_folder else (etag or f"rev:{file_id}")
         self._path = path
         self._is_folder = is_folder
         self._size = size
@@ -77,6 +79,11 @@ class FakeFile(File):
         """Return the last modified time, or ``None`` for folders."""
         return self._modified
 
+    @property
+    def etag(self) -> str | None:
+        """Return the version fingerprint, or ``None`` for folders."""
+        return self._etag
+
     def moved_to(self, path: str) -> "FakeFile":
         """Return the same entry at a new path."""
         return FakeFile(
@@ -85,6 +92,7 @@ class FakeFile(File):
             is_folder=self._is_folder,
             size=self._size,
             modified=self._modified,
+            etag=self._etag,
         )
 
 
@@ -96,6 +104,7 @@ class FakeStorageClient(Client):
         self.entries: dict[str, FakeFile] = {}
         self.health_error: OSError | None = None
         self._ids = count(1)
+        self._revisions = count(1)
 
     def add(self, path: str, *, is_folder: bool = False, size: int = 0) -> FakeFile:
         """Seed an entry at ``path`` (test setup only, not part of ``Client``)."""
@@ -155,6 +164,8 @@ class FakeStorageClient(Client):
             is_folder=False,
             size=size,
             modified=FIXED_MODIFIED,
+            # Every write is a new version, so it gets a new etag.
+            etag=f"rev:{next(self._revisions)}",
         )
         self.entries[remote_path] = uploaded
         return uploaded

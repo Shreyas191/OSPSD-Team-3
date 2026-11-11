@@ -66,6 +66,16 @@ class DropboxFile(cloud_storage_client_api.File):
             return modified.replace(tzinfo=UTC) if modified.tzinfo is None else modified
         return None
 
+    @property
+    def etag(self) -> str | None:
+        """Return the file's Dropbox revision (``rev``), or ``None`` for folders.
+
+        Dropbox gives a file a new ``rev`` every time its contents change.
+        """
+        if isinstance(self._metadata, files.FileMetadata):
+            return str(self._metadata.rev)
+        return None
+
     def __repr__(self) -> str:
         """Return a readable representation for debugging."""
         kind = "folder" if self.is_folder else "file"
