@@ -23,6 +23,9 @@ resource "google_project_service" "apis" {
     "artifactregistry.googleapis.com",
     "secretmanager.googleapis.com",
     "iam.googleapis.com",
+    # For CircleCI to exchange its OIDC token for a short-lived deployer token (ci.tf).
+    "sts.googleapis.com",
+    "iamcredentials.googleapis.com",
   ])
 
   service = each.value
