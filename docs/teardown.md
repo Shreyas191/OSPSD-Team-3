@@ -4,11 +4,11 @@ This page covers HW2 Milestone 3, item 2.4: removing everything the team created
 
 **When:** after HW2 grades are returned. The proposed date is **Dec 18, 2026** (DESIGN.md, "Deployment tools").
 **Who:** the Google Cloud project owner, who also owns the Dropbox apps for `test` and `demo`.
-**Status:** written on Nov 9, 2026; not run yet, because nothing is provisioned. A teammate who did not write it must run it from this page alone and record any question they had to ask (see the last section).
+**Status:** written on Nov 9 and updated on Nov 11, 2026 for the CircleCI sign-in (item 2.6). Not run yet: the infrastructure is live and in use. A teammate who did not write it must run it from this page alone and record any question they had to ask (see the last section).
 
 ## 1. Destroy what OpenTofu created
 
-From a clean checkout of the commit that was applied:
+Run from a terminal signed in as the project owner (see "One-time setup by hand" in [Infrastructure](infrastructure.md)). `infra/terraform.tfvars` needs the same three values as the apply did: `project_id`, `circleci_org_id` and `circleci_project_id`. From a clean checkout of the commit that was applied:
 
 ```bash
 cd infra
@@ -22,7 +22,8 @@ This removes:
 - both Cloud Run services and every revision;
 - the Artifact Registry repository and every image in it;
 - the six Dropbox secrets and all their versions;
-- the three service accounts and every IAM binding they had.
+- the three service accounts and every IAM binding they had;
+- the CircleCI workload identity pool and its provider, so CI can no longer sign in.
 
 Check that nothing is left:
 
@@ -32,7 +33,10 @@ gcloud run services list --region=us-central1                     # no cloud-sto
 gcloud artifacts repositories list --location=us-central1         # no cloud-storage-service
 gcloud secrets list --filter="labels.service=cloud-storage-service"   # 0 items
 gcloud iam service-accounts list --filter="email~^storage-"       # 0 items
+gcloud iam workload-identity-pools list --location=global         # circleci shows state DELETED
 ```
+
+Google keeps a deleted workload identity pool for 30 days, and its ID can't be reused in that time. To provision again within 30 days, either undelete it (`gcloud iam workload-identity-pools undelete circleci --location=global`, then the same for its provider) and `tofu import` both, or change `workload_identity_pool_id` in `infra/ci.tf`.
 
 ## 2. Delete the state bucket
 
@@ -48,7 +52,7 @@ gcloud storage rm --recursive gs://<project-id>-tofu-state
 
 | What | How | Why it isn't in OpenTofu |
 |---|---|---|
-| CI credentials for the deployer (CircleCI context `gcp-deploy`, once item 2.6 adds it) | CircleCI → Organization Settings → Contexts → delete `gcp-deploy` | CircleCI settings aren't managed by our OpenTofu code |
+| CircleCI context `gcp-deploy` (empty; only lets the release jobs get a sign-in token) | CircleCI → Organization Settings → Contexts → delete `gcp-deploy` | CircleCI settings aren't managed by our OpenTofu code |
 | Dropbox apps for `test` and `demo` | Dropbox App Console → each app → Settings → Delete app. This also removes the app folders and all files in them. | Dropbox has no OpenTofu provider we use |
 | Local credentials | `uv run python -m dropbox_client_impl logout`, then delete `.env` and `infra/terraform.tfvars` | They live only on each person's machine |
 | Grafana Cloud stack (once item 3.1 adds it) | Grafana Cloud portal → the stack → Delete | Not provisioned by our OpenTofu code |

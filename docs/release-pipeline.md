@@ -6,9 +6,9 @@ This page covers HW2 Milestone 3, Level 2, item 2.6: how a merged change reaches
 
 | Branch | Pipeline |
 |---|---|
-| `hw2` | lint → unit tests → CI tests → **build image → deploy to `test` → smoke check** |
-| `main` | lint → unit tests → CI tests → real-Dropbox integration tests → **build image → deploy to `test` → smoke check → deploy to `demo` → smoke check** |
-| any other branch or pull request | lint and tests only; no Google credentials at all |
+| `hw2` | lint → unit tests → CI tests → conformance suite → infrastructure checks → **build image → deploy to `test` → smoke check** |
+| `main` | lint → unit tests → CI tests → real-Dropbox integration tests → conformance suite → infrastructure checks → **build image → deploy to `test` → smoke check → deploy to `demo` → smoke check** |
+| any other branch or pull request | lint, tests, conformance suite and infrastructure checks; no Google credentials at all |
 
 A change can only be deployed after every check before it passed: CircleCI runs the release jobs with `requires:` on the checks.
 
