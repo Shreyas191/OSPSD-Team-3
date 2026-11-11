@@ -58,7 +58,7 @@ The tag is `rel-<first 7 characters of the commit SHA>`. Each revision also carr
 
 ## Roll back
 
-Every release stays available as a tagged revision. To send traffic back to the previous good one:
+Every release stays available as a tagged revision. To send traffic back to the previous good one (exercised in the [Rollback Drill](rollback-drill.md)):
 
 ```bash
 gcloud run revisions list --service=cloud-storage-service-demo --region=us-central1
