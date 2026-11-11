@@ -8,6 +8,11 @@ output "image_repository" {
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.images.repository_id}"
 }
 
+output "workload_identity_provider" {
+  description = "Full name of the CircleCI provider, used by the deploy job to sign in."
+  value       = google_iam_workload_identity_pool_provider.circleci.name
+}
+
 output "deployer_service_account" {
   description = "Identity the CI pipeline deploys with."
   value       = google_service_account.deployer.email

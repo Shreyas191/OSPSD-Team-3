@@ -47,3 +47,19 @@ variable "public" {
   type        = bool
   default     = true
 }
+
+variable "circleci_org_id" {
+  description = "CircleCI organization ID (Organization Settings > Overview). Not a secret; it is in every token CircleCI issues."
+  type        = string
+}
+
+variable "circleci_project_id" {
+  description = "CircleCI project ID of Shreyas191/OSPSD-Team-3 (Project Settings > Overview). Only this project's pipelines may deploy."
+  type        = string
+}
+
+variable "deploy_branches" {
+  description = "Branches whose pipelines may sign in as the deployer. Every other branch, and every fork, gets no Google credentials."
+  type        = list(string)
+  default     = ["hw2", "main"]
+}
