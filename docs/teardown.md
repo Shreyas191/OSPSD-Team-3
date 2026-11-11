@@ -23,7 +23,8 @@ This removes:
 - the Artifact Registry repository and every image in it;
 - the six Dropbox secrets and all their versions;
 - the three service accounts and every IAM binding they had;
-- the CircleCI workload identity pool and its provider, so CI can no longer sign in.
+- the CircleCI workload identity pool and its provider, so CI can no longer sign in;
+- the three log-based metrics, the golden-signals dashboard, the 5xx alert and its email channel.
 
 Check that nothing is left:
 
@@ -55,7 +56,8 @@ gcloud storage rm --recursive gs://<project-id>-tofu-state
 | CircleCI context `gcp-deploy` (empty; only lets the release jobs get a sign-in token) | CircleCI → Organization Settings → Contexts → delete `gcp-deploy` | CircleCI settings aren't managed by our OpenTofu code |
 | Dropbox apps for `test` and `demo` | Dropbox App Console → each app → Settings → Delete app. This also removes the app folders and all files in them. | Dropbox has no OpenTofu provider we use |
 | Local credentials | `uv run python -m dropbox_client_impl logout`, then delete `.env` and `infra/terraform.tfvars` | They live only on each person's machine |
-| Grafana Cloud stack (once item 3.1 adds it) | Grafana Cloud portal → the stack → Delete | Not provisioned by our OpenTofu code |
+
+Telemetry needs nothing here: logs, metrics, traces and the dashboard all live in the Google Cloud project, and step 4 deletes what step 1 left (stored log entries and traces).
 
 ## 4. Delete the project
 
