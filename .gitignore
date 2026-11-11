@@ -36,3 +36,11 @@ credentials.json
 .coverage*
 TESTING_STATUS.md
 .DS_Store
+
+# OpenTofu: local working files, saved plans and state never go in Git
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.*
+infra/terraform.tfvars
+crash.log
