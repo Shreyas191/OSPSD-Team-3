@@ -12,16 +12,15 @@ from tests.dropbox_sdk import server_error
 
 from dropbox_client_impl.dropbox_impl import DropboxClient
 
-
 def test_check_provider_health_calls_dropbox(
     client: DropboxClient,
     dbx: MagicMock,
 ) -> None:
-    """Probe Dropbox and return None when the account request succeeds."""
-    result = client.check_provider_health()
+    """Call Dropbox once and return None on success."""
+    result = client.check_provider_health()  # type: ignore[func-returns-value]
 
+    assert result is None
     dbx.users_get_current_account.assert_called_once_with()
-
 
 def test_check_provider_health_translates_dropbox_failure(
     client: DropboxClient,
