@@ -12,6 +12,7 @@ Every error the service returns uses this body. Two places produce it:
 |-----------------------------------------|--------|--------------------------|
 | request validation (bad path, missing   | 400    | ``invalid_request``      |
 | field, body that is not JSON)           |        |                          |
+| ``FileTooLargeError``                   | 413    | ``file_too_large``       |
 | ``ValueError``, ``IsADirectoryError``   | 422    | ``invalid_operation``    |
 | ``FileNotFoundError``                   | 404    | ``not_found``            |
 | ``FileExistsError``                     | 409    | ``conflict``             |
@@ -31,6 +32,7 @@ import logging
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Any
 
+from cloud_storage_client_api import FileTooLargeError
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -118,16 +120,22 @@ def add_error_handlers(app: FastAPI) -> None:
         return error_response(status_code, "internal_error", "The service failed unexpectedly")
 
 
+# Client errors keep the client's message. Checked in order: FileTooLargeError is a
+# ValueError, so it comes first.
+_CLIENT_ERRORS: tuple[tuple[type[Exception] | tuple[type[Exception], ...], int, str], ...] = (
+    (FileTooLargeError, status.HTTP_413_CONTENT_TOO_LARGE, "file_too_large"),
+    ((ValueError, IsADirectoryError), status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_operation"),
+    (FileNotFoundError, status.HTTP_404_NOT_FOUND, "not_found"),
+    (FileExistsError, status.HTTP_409_CONFLICT, "conflict"),
+    (PermissionError, status.HTTP_403_FORBIDDEN, "permission_denied"),
+)
+
+
 def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
     """Return the status code, error code and caller-facing message for a contract exception."""
-    if isinstance(error, ValueError | IsADirectoryError):
-        return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_operation", str(error)
-    if isinstance(error, FileNotFoundError):
-        return status.HTTP_404_NOT_FOUND, "not_found", str(error)
-    if isinstance(error, FileExistsError):
-        return status.HTTP_409_CONFLICT, "conflict", str(error)
-    if isinstance(error, PermissionError):
-        return status.HTTP_403_FORBIDDEN, "permission_denied", str(error)
+    for kinds, status_code, code in _CLIENT_ERRORS:
+        if isinstance(error, kinds):
+            return status_code, code, str(error)
     if isinstance(error, ConnectionError):
         message = "The storage provider is unreachable or busy; try again later"
         return status.HTTP_503_SERVICE_UNAVAILABLE, "provider_unavailable", message

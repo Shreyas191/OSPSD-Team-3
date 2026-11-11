@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import requests
+from cloud_storage_client_api import FileTooLargeError
 from dropbox import auth, exceptions, files, stone_validators
 from dropbox.files import WriteMode
 from tests.dropbox_sdk import api_error, file_metadata, rate_limited, server_error
@@ -133,7 +134,7 @@ def test_upload_identical_content_without_overwrite_is_a_conflict(
         (_conflict(), FileExistsError),
         (_write_failed(files.WriteError.malformed_path("bad")), ValueError),
         (_write_failed(files.WriteError.disallowed_name), ValueError),
-        (api_error(files.UploadError.payload_too_large), ValueError),
+        (api_error(files.UploadError.payload_too_large), FileTooLargeError),
         (_write_failed(files.WriteError.no_write_permission), PermissionError),
         (_write_failed(files.WriteError.team_folder), PermissionError),
         (_write_failed(files.WriteError.too_many_write_operations), ConnectionError),
@@ -164,10 +165,10 @@ def test_upload_too_large_message_explains_the_limit(
     dbx: MagicMock,
     local_file: Path,
 ) -> None:
-    """A file over Dropbox's single-upload limit is reported as invalid input with the limit."""
+    """A file over Dropbox's single-upload limit raises ``FileTooLargeError`` naming the limit."""
     dbx.files_upload.side_effect = api_error(files.UploadError.payload_too_large)
 
-    with pytest.raises(ValueError, match="150 MB"):
+    with pytest.raises(FileTooLargeError, match="150 MB"):
         client.upload_file(str(local_file), "/big.bin")
 
 

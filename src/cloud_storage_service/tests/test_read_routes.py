@@ -67,6 +67,7 @@ def test_get_metadata_file_returns_200(storage: FakeStorageClient, http: TestCli
         "path": "/Docs/report.pdf",
         "size": 2048,
         "modified_at": "2026-10-01T12:30:00Z",
+        "etag": "rev:id:1",
     }
 
 
@@ -83,6 +84,7 @@ def test_get_metadata_folder_returns_200(storage: FakeStorageClient, http: TestC
         "path": "/Docs",
         "size": None,
         "modified_at": None,
+        "etag": None,
     }
 
 
@@ -254,6 +256,7 @@ def test_list_folder_entries_have_type_and_file_info(
             "path": "/Docs/Archive",
             "size": None,
             "modified_at": None,
+            "etag": None,
             "type": "folder",
         },
         {
@@ -262,6 +265,7 @@ def test_list_folder_entries_have_type_and_file_info(
             "path": "/Docs/report.pdf",
             "size": 1024,
             "modified_at": "2026-10-01T12:30:00Z",
+            "etag": f"rev:{report.id}",
             "type": "file",
         },
     ]

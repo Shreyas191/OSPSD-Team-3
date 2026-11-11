@@ -19,6 +19,7 @@ from typing import Literal
 
 import dropbox
 import requests
+from cloud_storage_client_api import FileTooLargeError
 from dropbox import files, stone_validators
 
 # Every failure an SDK call can raise: Dropbox API and HTTP errors, the SDK's local
@@ -57,7 +58,7 @@ _OUTCOMES: dict[Outcome, tuple[type[Exception], str]] = {
     ),
     "malformed": (ValueError, "Dropbox rejected {subject} as invalid"),
     "too_large": (
-        ValueError,
+        FileTooLargeError,
         "The file for {destination} is too large to upload in one request "
         "(Dropbox's limit is 150 MB)",
     ),

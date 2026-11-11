@@ -62,8 +62,8 @@ class DropboxClient(cloud_storage_client_api.Client):
             FileNotFoundError: If ``local_path`` does not exist (Dropbox is not contacted).
             FileExistsError: If something already exists at ``remote_path`` and
                 ``overwrite`` is false, or a folder is there.
-            ValueError: If Dropbox rejects ``remote_path`` as malformed or the file is too
-                large for a single upload (150 MB).
+            FileTooLargeError: If the file is over Dropbox's single-upload limit (150 MB).
+            ValueError: If Dropbox rejects ``remote_path`` as malformed.
             PermissionError: If Dropbox does not allow writing to ``remote_path``.
             ConnectionError: If Dropbox could not be reached or rate limited the request.
             OSError: For any other Dropbox failure, such as a full account.

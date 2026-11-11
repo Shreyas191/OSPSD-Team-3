@@ -42,3 +42,13 @@ class File(ABC):
     def modified(self) -> datetime | None:
         """Return when the file was last modified (time zone aware), or ``None`` for folders."""
         raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def etag(self) -> str | None:
+        """Return a fingerprint of the file's current version, or ``None`` for folders.
+
+        It changes whenever the file changes (for example after a replace), so callers can
+        tell whether a file they read earlier is still the same.
+        """
+        raise NotImplementedError

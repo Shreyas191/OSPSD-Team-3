@@ -49,6 +49,7 @@ def test_file_metadata_properties() -> None:
     assert report.is_folder is False
     assert report.size == SIZE
     assert report.modified == MODIFIED.replace(tzinfo=UTC)
+    assert report.etag == "0123456789abcdef"
 
 
 def test_folder_metadata_properties() -> None:
@@ -61,6 +62,7 @@ def test_folder_metadata_properties() -> None:
     assert folder.is_folder is True
     assert folder.size is None
     assert folder.modified is None
+    assert folder.etag is None
 
 
 def test_modified_is_the_server_time_not_the_client_time() -> None:
