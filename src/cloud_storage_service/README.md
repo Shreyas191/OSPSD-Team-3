@@ -144,6 +144,28 @@ curl -X POST http://127.0.0.1:8000/files/copy \
 
 ## Update endpoints
 
+### `PATCH /files`
+Move or rename a file or folder: `PATCH /files?path=<from>` with a JSON body naming the full destination. A rename is a move within the same folder. The entry keeps its `id`, a folder moves with its contents, and nothing at `new_path` is ever overwritten.
+
+```json
+{"new_path": "/Archive/report.pdf"}
+```
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Moved; body is the File at its new path |
+| `400` | `invalid_request` | Missing or malformed `path` or `new_path` (including the root), or a body that is not JSON |
+| `403` | `permission_denied` | The provider does not allow the move |
+| `404` | `not_found` | Nothing exists at `path` |
+| `409` | `conflict` | Something already exists at `new_path`, including the entry itself |
+| `422` | `invalid_operation` | A folder moved into itself, or a path the provider rejects |
+| `502` / `503` | `provider_error` / `provider_unavailable` | The provider failed or is unreachable |
+
+```bash
+curl -X PATCH 'http://127.0.0.1:8000/files?path=/Docs/report.pdf' \
+  -H 'Content-Type: application/json' -d '{"new_path": "/Archive/report.pdf"}'
+```
+
 ### `POST /files/rename`
 Rename a file or folder in place. The entry stays in the same folder; only its name changes. Existing entries are never overwritten.
 

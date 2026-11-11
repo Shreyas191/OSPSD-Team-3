@@ -107,3 +107,9 @@ class MoveRequest(BaseModel):
 
     from_path: EntryPath
     to_path: EntryPath = Field(examples=["/Archive/report.pdf"])
+
+
+class PatchRequest(BaseModel):
+    """Move or rename the entry at the ``path`` query parameter to ``new_path``."""
+
+    new_path: EntryPath = Field(examples=["/Archive/report.pdf"])

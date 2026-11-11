@@ -22,6 +22,7 @@ from cloud_storage_service.models import (
     FolderPath,
     ListEntry,
     MoveRequest,
+    PatchRequest,
     RenameRequest,
     clean_path,
 )
@@ -210,6 +211,16 @@ def rename_file(request: RenameRequest, client: StorageClient) -> FileResponse:
 def move_file(request: MoveRequest, client: StorageClient) -> FileResponse:
     """Move a file or folder to a new path and return its updated metadata."""
     return FileResponse.from_file(client.move(request.from_path, request.to_path))
+
+
+@router.patch("/files", responses=_UPDATE_ERRORS)
+def update_entry(path: EntryPath, request: PatchRequest, client: StorageClient) -> FileResponse:
+    """Move or rename the file or folder at ``path`` to ``new_path``; return its new metadata.
+
+    A rename is a move within the same folder. The entry keeps its ``id``, and nothing
+    already at ``new_path`` is overwritten.
+    """
+    return FileResponse.from_file(client.move(path, request.new_path))
 
 
 # ----- Delete -----
