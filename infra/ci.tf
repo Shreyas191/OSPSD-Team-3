@@ -25,7 +25,9 @@ resource "google_iam_workload_identity_pool_provider" "circleci" {
   }
 
   attribute_mapping = {
-    "google.subject"       = "assertion.sub"
+    # Google limits the subject to 127 bytes, and CircleCI's own `sub` claim is longer, so
+    # the subject is the project ID and branch (about 55 bytes).
+    "google.subject"       = "assertion['oidc.circleci.com/project-id'] + ':' + assertion['oidc.circleci.com/vcs-ref']"
     "attribute.project_id" = "assertion['oidc.circleci.com/project-id']"
     "attribute.vcs_ref"    = "assertion['oidc.circleci.com/vcs-ref']"
   }
