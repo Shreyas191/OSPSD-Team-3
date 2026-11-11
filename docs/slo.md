@@ -24,7 +24,7 @@ At **Cloud Run's request log** (`run.googleapis.com/requests`): one entry for ev
 
 **Demo**, the persistent environment consumers use. Test is where the team breaks the service on purpose: the overload test (Nov 11, 20:34 UTC: 301 `503 service_busy` in about a minute), the rollback drill, the provider-failure walkthrough. The SLOs never covered test, which was decided here, not after a bad result.
 
-Demo doesn't run the service yet: `main` hasn't been deployed since HW2's infrastructure was created, so the report for demo says "no data". The recorded run below therefore ran on **test**, with the same image, settings and limits. Once demo serves the service (item 3.8), the same command reports on it.
+When the run below was recorded, demo didn't run the service yet (it was deployed only from `main`), so the report for demo said "no data". The recorded run therefore ran on **test**, with the same image, settings and limits. Pushes to `hw2` now deploy demo too, after test passes its smoke check, and the same command reports on it.
 
 ## Availability SLI
 

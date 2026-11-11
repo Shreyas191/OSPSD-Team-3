@@ -402,7 +402,8 @@ workflows:
                 - main
                 - dev
 
-      # Release: every push to hw2 that passed the checks above ships to the test service.
+      # Release: every push to hw2 that passed the checks above ships to test, and to demo
+      # only if test passed its smoke check (hw2 is the team's release branch for HW2).
       - release_image:
           requires: [lint, unit_test, circleci_test, conformance, infra_validate]
           context: gcp-deploy
@@ -413,6 +414,14 @@ workflows:
           name: deploy_test
           environment: test
           requires: [release_image]
+          context: gcp-deploy
+          filters:
+            branches:
+              only: hw2
+      - deploy:
+          name: deploy_demo
+          environment: demo
+          requires: [deploy_test]
           context: gcp-deploy
           filters:
             branches:

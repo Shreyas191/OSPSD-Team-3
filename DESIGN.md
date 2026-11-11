@@ -55,7 +55,7 @@ The Nov 4 version of this document was a plan. This table records each place whe
 | 7 | Telemetry: OpenTelemetry to Grafana Cloud; alerts to Slack | Google Cloud Logging, Trace and Monitoring in the same project, with one dashboard and one alert, emailed to the team. | Item 3.1 sent the data to Google Cloud's own services. Grafana would need a second account and a Google service-account key to read them, plus one more thing to own and tear down, for the same charts. The handout leaves the backend to the team. | [Dashboard](docs/dashboard.md) |
 | 8 | Conformance suite owned by Team 6, run before each release | It isn't merged in the contract repository yet, so CI pins Team 6's commit `b77617c` and runs it on every push against our real app on an in-memory client. Every deploy also runs the shared consumer workflow against the new revision, with real Dropbox, before it gets traffic. | It was the only available version of the suite. | [Testing](docs/testing.md) |
 | 9 | Not planned | Fault injection (`FAULT_INJECTION`) wraps the client on the test service only. The service refuses to start if it is set on demo. | Levels 3.3 and 3.6 need repeatable provider failures. | [Fault Injection](docs/fault-injection.md) |
-| 10 | Deploy to test and demo | Test is deployed from every push to `hw2`. **Demo is not deployed yet**: it still serves Google's placeholder container, because it deploys only from `main`, and `main` has not been updated since the pipeline was added. | The team ships to `hw2` until the HW2 merge into `main`. | [Operations](docs/operations.md) |
+| 10 | Deploy to test and demo | Every push to `hw2` deploys test, then demo, and demo only after the same release passed its smoke check on test. `main` keeps the same pipeline but isn't updated for HW2. | `hw2` is the branch the team submits for HW2, so it ships to both environments. | [Release Pipeline](docs/release-pipeline.md) |
 | 11 | Open questions 2, 3, 5, 9, 10 and 11 | Settled: see [Open questions](#open-questions). Stale replace and occupied destinations are `409 conflict`. Codes follow the contract's table. A partial folder delete is `502 provider_error`. Dropbox's stale-rev error was observed live. | Contract `0.3.1` and a live test (Nov 8). | — |
 
 ## Architecture as built
@@ -70,7 +70,7 @@ The Nov 4 version of this document was a plan. This table records each place whe
                                  ▼
                     ┌──────────────────────────┐
                     │ Cloud Run (us-central1)  │  test: every push to hw2
-                    │ ≤ 20 requests/instance,  │  demo: every push to main
+                    │ ≤ 20 requests/instance,  │  demo: after test passes
                     │ ≤ 2 instances            │
                     └────────────┬─────────────┘
                                  ▼

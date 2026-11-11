@@ -6,8 +6,8 @@ This page covers HW2 Milestone 3, Level 2, item 2.6: how a merged change reaches
 
 | Branch | Pipeline |
 |---|---|
-| `hw2` | lint → unit tests → CI tests → conformance suite → infrastructure checks → **build image → deploy to `test` → smoke check** |
-| `main` | lint → unit tests → CI tests → real-Dropbox integration tests → conformance suite → infrastructure checks → **build image → deploy to `test` → smoke check → deploy to `demo` → smoke check** |
+| `hw2` (the HW2 release branch) | lint → unit tests → CI tests → conformance suite → infrastructure checks → **build image → deploy to `test` → smoke check → deploy to `demo` → smoke check** |
+| `main` (not updated for HW2) | lint → unit tests → CI tests → real-Dropbox integration tests → conformance suite → infrastructure checks → **build image → deploy to `test` → smoke check → deploy to `demo` → smoke check** |
 | any other branch or pull request | lint, tests, conformance suite and infrastructure checks; no Google credentials at all |
 
 A change can only be deployed after every check before it passed: CircleCI runs the release jobs with `requires:` on the checks.
@@ -27,7 +27,7 @@ A change can only be deployed after every check before it passed: CircleCI runs 
    - `scripts/consumer_workflow.py` runs the vertical's shared workflow unchanged: upload, metadata, download and compare bytes, list, move, metadata, delete, 404. It works inside a new `/workflow-<random>` folder and deletes it at the end, even if a step fails.
 3. Only if all three passed, sends 100% of traffic to the new revision.
 
-If any check fails, the script exits before step 3, the CircleCI job fails, and the release is **not** recorded as successful: the previous revision is still serving, untouched. For `main`, a failure in `test` also stops `demo` from being deployed.
+If any check fails, the script exits before step 3, the CircleCI job fails, and the release is **not** recorded as successful: the previous revision is still serving, untouched. A failure in `test` also stops `demo` from being deployed, so demo only ever gets a release that already passed on test.
 
 ## Signing in without a stored key
 

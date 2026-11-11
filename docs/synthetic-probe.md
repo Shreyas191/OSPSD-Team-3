@@ -58,7 +58,7 @@ All observed on Nov 11, 2026, between 22:34 and 23:02 UTC. The probe was created
 
 ### 1. Demo answers `200`, but with the wrong thing
 
-Demo still runs Cloud Run's placeholder image (the pipeline hasn't deployed our service there yet; see [SLO, which environment](slo.md#which-environment-the-slos-cover)). It answers **every** URL with `200` and an HTML "It's running!" page.
+During the experiment demo still ran Cloud Run's placeholder image (the pipeline hadn't deployed our service there yet; see [SLO, which environment](slo.md#which-environment-the-slos-cover)). It answered **every** URL with `200` and an HTML "It's running!" page.
 
 - Cloud Run logged all 15 probe requests as `200`. `scripts/slo_report.py` for demo over the same window: **availability 15 / 15 = 100%, latency 100%**. By its definition (`200` or `404` is good), a service that doesn't exist is perfect.
 - The probe failed all 15 runs, from all three checkers: `200` is not `404`, and the body has no `error.code`.
