@@ -67,7 +67,7 @@ resource "google_monitoring_alert_policy" "server_errors" {
       **$${resource.label.service_name}** returned more than ${var.alert_5xx_threshold} server errors (5xx) in 5 minutes. Callers are failing.
 
       - Runbook: https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/docs/runbook.md#alert-callers-are-getting-server-errors-5xx
-      - Dashboard (Cloud Run metrics): https://console.cloud.google.com/run/detail/${var.region}/$${resource.label.service_name}/metrics?project=${var.project_id}
+      - Dashboard (golden signals; pick the service in the filter bar): ${local.dashboard_url}
       - Logs (errors only): https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_revision%22%0Aresource.labels.service_name%3D%22$${resource.label.service_name}%22%0AhttpRequest.status%3E%3D500?project=${var.project_id}
     EOT
   }

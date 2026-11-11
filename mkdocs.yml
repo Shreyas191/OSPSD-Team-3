@@ -30,6 +30,7 @@ nav:
   - 'Teardown': 'teardown.md'
   - 'Release Pipeline': 'release-pipeline.md'
   - 'Rollback Drill': 'rollback-drill.md'
+  - 'Dashboard': 'dashboard.md'
   - 'Runbook': 'runbook.md'
   - 'Telemetry Walkthrough': 'telemetry-walkthrough.md'
   - 'Fault Injection': 'fault-injection.md'
