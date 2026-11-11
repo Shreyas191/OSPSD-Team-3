@@ -1,6 +1,7 @@
 # The four golden signals for each shared operation, with the release that served the
 # requests (item 3.2, docs/dashboard.md). One Cloud Monitoring dashboard for both
-# environments; the filter bar picks the service (demo by default).
+# environments; the filter bar picks the service (test by default:
+# hw2 deploys there, so it has the traffic).
 #
 # It reads the two log-based metrics in telemetry.tf, one more below for the release, and
 # Cloud Run's own concurrency metric for saturation. Every chart groups by a bounded label:
@@ -48,7 +49,7 @@ locals {
     dashboardFilters = [{
       filterType  = "RESOURCE_LABEL"
       labelKey    = "service_name"
-      stringValue = "${local.service_name}-demo"
+      stringValue = "${local.service_name}-test"
     }]
     mosaicLayout = {
       columns = 48
@@ -62,7 +63,7 @@ locals {
             text = {
               format  = "MARKDOWN"
               content = <<-EOT
-                **Service:** pick `${local.service_name}-demo` or `-test` in the filter bar. Each chart shows one line per shared operation (route name). Times are per minute.
+                **Service:** pick `${local.service_name}-test` (the default, where `hw2` deploys) or `-demo` in the filter bar. Each chart shows one line per shared operation (route name). Times are per minute.
 
                 **Release:** the commit that served the requests, in the two release panels. Open it at `https://github.com/Shreyas191/OSPSD-Team-3/commit/<sha>`.
 

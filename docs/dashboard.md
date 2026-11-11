@@ -4,7 +4,7 @@ This page covers HW2 Milestone 3, Level 3, item 3.2: one dashboard showing the f
 
 **Where:** Cloud Monitoring → Dashboards → **Cloud storage service: golden signals**, or `tofu -chdir=infra output dashboard_url`. The 5xx alert (item 3.5) links to it.
 **Defined in:** [`infra/dashboard.tf`](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/infra/dashboard.tf), applied with the rest of the infrastructure. Change it there, not in the console: a repeated `tofu apply` would undo a console edit.
-**Service:** one dashboard for both environments. The filter bar at the top picks `cloud-storage-service-demo` (the default) or `cloud-storage-service-test`.
+**Service:** one dashboard for both environments. The filter bar at the top picks `cloud-storage-service-test` (the default: every push to `hw2` deploys there) or `cloud-storage-service-demo`.
 
 ## Why Cloud Monitoring and not Grafana Cloud
 
