@@ -63,3 +63,14 @@ variable "deploy_branches" {
   type        = list(string)
   default     = ["hw2", "main"]
 }
+
+variable "alert_email" {
+  description = "Who receives the 5xx alert. Kept in terraform.tfvars (git-ignored), not in the repository."
+  type        = string
+}
+
+variable "alert_5xx_threshold" {
+  description = "Server errors (5xx) from one service within 5 minutes above which the alert fires."
+  type        = number
+  default     = 5
+}

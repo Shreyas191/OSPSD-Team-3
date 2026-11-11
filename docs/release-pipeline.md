@@ -54,7 +54,7 @@ gcloud run services describe cloud-storage-service-demo --region=us-central1 \
   --format="value(status.traffic[0].revisionName,status.traffic[0].tag)"
 ```
 
-The tag is `rel-<first 7 characters of the commit SHA>`. Each revision also carries the label `release=<short sha>` and the environment variable `RELEASE=<full sha>`, and its image is the digest built from that commit. The CircleCI pipeline for that commit links the checks it passed.
+The tag is `rel-<first 7 characters of the commit SHA>`. Each revision also carries the label `release=<short sha>`, and its image is the digest built from that commit; the image itself sets the environment variable `RELEASE=<full sha>` at build time, so the running service can report its release. The CircleCI pipeline for that commit links the checks it passed.
 
 ## Roll back
 

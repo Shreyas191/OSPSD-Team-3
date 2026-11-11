@@ -57,7 +57,8 @@ COPY main.py ./
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     HOST=0.0.0.0 \
-    PORT=8080
+    PORT=8080 \
+    RELEASE="${RELEASE}"
 
 USER app
 EXPOSE 8080

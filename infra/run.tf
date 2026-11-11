@@ -83,6 +83,7 @@ resource "google_cloud_run_v2_service" "service" {
     # limits are in template.scaling, so that block is Google's default, not drift.
     ignore_changes = [
       scaling,
+      template[0].revision,
       template[0].containers[0].image,
       template[0].labels,
       client,

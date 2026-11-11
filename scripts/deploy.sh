@@ -10,6 +10,9 @@
 #    creates and deletes its own scratch folder.
 # 3. Only if every check passed, move 100% of traffic to the new revision.
 #
+# The image sets RELEASE=<commit> itself (Dockerfile), so the deploy removes any RELEASE a
+# revision carried from older releases; otherwise it would override the image's value.
+#
 # A failed check exits non-zero before step 3, so the pipeline marks the release failed and
 # the previous revision keeps serving. Needs gcloud signed in as the deployer and uv on PATH.
 set -euo pipefail
@@ -34,8 +37,8 @@ gcloud run deploy "${service}" \
   --project="${project}" --region="${region}" \
   --image="${image}" \
   --no-traffic --tag="${tag}" \
-  --update-env-vars="RELEASE=${sha}" \
   --update-labels="release=${sha:0:7}" \
+  --remove-env-vars=RELEASE \
   --quiet
 
 candidate="$(gcloud run services describe "${service}" --project="${project}" --region="${region}" \
