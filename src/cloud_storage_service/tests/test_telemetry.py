@@ -197,3 +197,25 @@ def test_configure_logging_picks_the_format(
         root.handlers, root.level = saved_handlers, saved_level
 
     assert capsys.readouterr().out.startswith(starts_with)
+
+
+def test_request_spans_lose_the_query_string() -> None:
+    """A path in ``?path=`` is user data, so the span keeps only the URL's path."""
+    span = (
+        TracerProvider()
+        .get_tracer("test")
+        .start_span(
+            "GET /files/metadata",
+            attributes={
+                "http.url": "https://svc.run.app/files/metadata?path=/Docs/private.pdf",
+                "http.target": "/files/metadata?path=/Docs/private.pdf",
+            },
+        )
+    )
+
+    telemetry.strip_query(span, {"path": "/files/metadata"})
+
+    attributes = dict(getattr(span, "attributes", None) or {})
+    assert attributes["http.url"] == "https://svc.run.app/files/metadata"
+    assert attributes["http.target"] == "/files/metadata"
+    assert "private" not in str(attributes)
