@@ -4,6 +4,8 @@ Usage (with the service running, e.g. ``MAX_IN_FLIGHT_REQUESTS=4 uv run uvicorn 
 
     uv run python scripts/overload_demo.py /Docs/report.pdf 4 16 32
 
+Set ``BASE_URL`` to target a deployed service instead of ``http://127.0.0.1:8000``.
+
 Each burst sends that many ``GET /files/metadata`` requests for the given path at the same
 moment and prints how many succeeded, how many were shed with ``503 service_busy``, and how
 long each kind took. Every 200 is one Dropbox call; a 503 never reaches Dropbox.
@@ -11,6 +13,7 @@ long each kind took. Every 200 is one Dropbox call; a 503 never reaches Dropbox.
 
 # ruff: noqa: T201, INP001 - a command-line script, not part of a package
 
+import os
 import statistics
 import sys
 import threading
@@ -20,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:8000")
 
 
 def _one_request(client: httpx.Client, path: str, start: threading.Barrier) -> tuple[int, float]:
