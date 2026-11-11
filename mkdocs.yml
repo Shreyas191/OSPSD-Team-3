@@ -32,6 +32,7 @@ nav:
   - 'Rollback Drill': 'rollback-drill.md'
   - 'Runbook': 'runbook.md'
   - 'Telemetry Walkthrough': 'telemetry-walkthrough.md'
+  - 'Fault Injection': 'fault-injection.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'
