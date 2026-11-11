@@ -12,6 +12,7 @@ from tests.dropbox_sdk import server_error
 
 from dropbox_client_impl.dropbox_impl import DropboxClient
 
+
 def test_check_provider_health_calls_dropbox(
     client: DropboxClient,
     dbx: MagicMock,
