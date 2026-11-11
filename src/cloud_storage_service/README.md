@@ -69,8 +69,41 @@ The log never includes credentials, and validation failures record which paramet
 
 ## Create endpoints
 
+### `POST /files`
+Create a new file. The request is `multipart/form-data` with `file` (the contents) and `path` (absolute path, including the file name). It never overwrites: use `PUT /files` to replace a file.
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `201` | | Created; body is the File |
+| `400` | `invalid_request` | Missing `file` or `path`, or a malformed `path` |
+| `403` | `permission_denied` | The provider does not allow writing at `path` |
+| `409` | `conflict` | A file or folder already exists at `path` |
+| `422` | `invalid_operation` | A path the provider rejects, or a file over 150 MB |
+| `502` / `503` | `provider_error` / `provider_unavailable` | The provider failed or is unreachable |
+
+```bash
+curl -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/Docs/report.pdf"
+```
+
+### `PUT /files`
+Replace the contents of an existing file. Same form fields as `POST /files`. It never creates a file, and the write is refused if the file changes while it is being replaced.
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| `200` | | Replaced; body is the File, which keeps its `id` |
+| `400` | `invalid_request` | Missing `file` or `path`, or a malformed `path` |
+| `403` | `permission_denied` | The provider does not allow writing at `path` |
+| `404` | `not_found` | No file exists at `path` |
+| `409` | `conflict` | The file changed during the replace; read it again and retry |
+| `422` | `invalid_operation` | `path` is a folder, or the file is over 150 MB |
+| `502` / `503` | `provider_error` / `provider_unavailable` | The provider failed or is unreachable |
+
+```bash
+curl -X PUT http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/Docs/report.pdf"
+```
+
 ### `POST /files/upload`
-Upload a file. The request is `multipart/form-data`, not JSON.
+Upload a file, optionally overwriting (kept for existing callers; prefer `POST /files` and `PUT /files`). The request is `multipart/form-data`, not JSON.
 
 - `file` (required): the file contents.
 - `remote_path` (required): absolute destination path, including the file name.
