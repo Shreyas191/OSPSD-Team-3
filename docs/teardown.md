@@ -24,7 +24,7 @@ This removes:
 - the six Dropbox secrets and all their versions;
 - the three service accounts and every IAM binding they had;
 - the CircleCI workload identity pool and its provider, so CI can no longer sign in;
-- the three log-based metrics, the golden-signals dashboard, the 5xx alert and its email channel.
+- the three log-based metrics, the golden-signals dashboard, the 5xx alert and its email channel, and the two synthetic-probe uptime checks.
 
 Check that nothing is left:
 

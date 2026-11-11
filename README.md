@@ -31,7 +31,43 @@ The repository delivers one thing: an HTTP service for storing files in Dropbox.
   2. [`client.py`](src/cloud_storage_client_api/src/cloud_storage_client_api/client.py): the provider-independent `Client` contract and the exceptions each method raises.
   3. [`dropbox_impl.py`](src/dropbox_client_impl/src/dropbox_client_impl/dropbox_impl.py): `DropboxClient`, which makes the Dropbox SDK call.
   4. [`dropbox_client_impl/errors.py`](src/dropbox_client_impl/src/dropbox_client_impl/errors.py) turns Dropbox failures into those exceptions, and [`cloud_storage_service/errors.py`](src/cloud_storage_service/src/cloud_storage_service/errors.py) turns the exceptions into HTTP error responses.
+- **Use it:** [`TUTORIAL.md`](TUTORIAL.md) runs every operation with real requests and responses.
+- **Design and what changed while building it:** [`DESIGN.md`](DESIGN.md).
+- **Operate the deployed service** (what runs, which version, health, logs, rollback): [`docs/operations.md`](docs/operations.md).
 - **Contribute:** read [`AGENTS.md`](AGENTS.md) for the code map, constraints and checks.
+
+## HTTP API
+
+The service implements the Document Storage vertical's shared contract ([Dayana20/ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage), tag `0.3.1`). Teams 1 and 6 serve the same routes with other providers. Paths go in `?path=`, and the leading `/` is optional.
+
+| Operation | Route | Success |
+|---|---|---|
+| Create a file (never overwrites) | `POST /files` (multipart `file`, `path`) | `201` file info |
+| Replace a file (never creates) | `PUT /files` (multipart `file`, `path`) | `200` file info |
+| Metadata | `GET /files/metadata?path=` | `200` file info |
+| Download | `GET /files/download?path=` | `200` bytes |
+| List a folder | `GET /files?path=` | `200` array sorted by path |
+| Move or rename a file | `PATCH /files?path=` with `{"new_path": ...}` | `200` file info |
+| Delete a file or folder | `DELETE /files?path=` | `204` |
+| Health | `GET /health`, `GET /health/provider` | `200 {"status":"ok"}` |
+
+File info is `{"id", "name", "path", "size", "modified_at", "etag"}`, and list entries add `"type"`. Every error is `{"error": {"code", "message"}}`; the codes are listed in [`TUTORIAL.md`](TUTORIAL.md#how-errors-look). Team 3 also keeps these extensions: `POST /files/upload`, `POST /files/move`, `POST /files/rename`, `POST /files/copy`, `POST /folders/create` and `GET /files/search`.
+
+```console
+$ curl -s -X POST "$B/files" -F file=@report.txt -F path=/ospsd-tutorial/Docs/report.txt
+{"id":"id:KzOOg5ouvzUAAAAAAAABlQ","name":"report.txt","path":"/ospsd-tutorial/Docs/report.txt","size":19,"modified_at":"2026-11-11T22:39:13Z","etag":"0166007dd41306800000003923a8b33"}
+$ curl -s "$B/files/metadata?path=/ospsd-tutorial/Docs/missing.txt"
+{"error":{"code":"not_found","message":"No file or folder at '/ospsd-tutorial/Docs/missing.txt'"}}
+```
+
+## Deployed service
+
+| Environment | URL | Deployed from |
+|---|---|---|
+| test | <https://cloud-storage-service-test-gyesjhieva-uc.a.run.app> (Swagger UI at `/docs`) | every push to `hw2` |
+| demo | <https://cloud-storage-service-demo-gyesjhieva-uc.a.run.app> | every push to `main`. Not deployed yet: `main` hasn't been released since the pipeline was added. |
+
+Both run on Google Cloud Run in project `ospsd-team3`, created with OpenTofu from [`infra/`](infra/). Each environment uses its own Dropbox app. The services don't authenticate callers, so treat anything stored there as public. Owner: Shreyas Kaldate. Teardown: Dec 18, 2026 ([`docs/teardown.md`](docs/teardown.md)).
 
 ## Architectural Philosophy
 
@@ -45,7 +81,7 @@ This project is built on the principle of "programming integrated over time." Th
 
 The project is a `uv` workspace containing three packages:
 
-1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, create folders, copy, download, get metadata, list, search, rename, move, and delete.
+1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, replace, create folders, copy, download, get metadata, list, search, rename, move, delete, and check health. It is still a local package; the vertical's shared Python package (`cloud_storage_api`, contract tag `0.3.1`) isn't pinned yet (see [`DESIGN.md`](DESIGN.md#what-changed-during-implementation-and-why)).
 2.  **`dropbox_client_impl`**: Provides the `DropboxClient` class, a concrete implementation that uses the Dropbox Python SDK to perform the actions defined in the `Client` abstraction.
 
 3.  **`cloud_storage_service`**: A FastAPI app that exposes the `Client` operations over HTTP. Routes depend only on the abstract `Client`. See [`src/cloud_storage_service/README.md`](src/cloud_storage_service/README.md) for the endpoint contracts.
@@ -64,6 +100,8 @@ OSPSD-Team-3/
 │   ├── integration/              # Component integration tests
 │   └── e2e/                      # End-to-end application tests
 ├── docs/                         # Documentation source files
+├── infra/                        # OpenTofu: Cloud Run, registry, secrets, telemetry
+├── scripts/                      # Image build, deploy, smoke check, SLO and fault tools
 ├── .circleci/                    # CircleCI configuration
 ├── main.py                       # Entry point: starts the HTTP service
 ├── pyproject.toml               # Project configuration (dependencies, tools)
@@ -246,8 +284,9 @@ The testing infrastructure handles different authentication scenarios:
 
 The project includes a comprehensive CircleCI configuration (`.circleci/config.yml`) with:
 
-- **All Branches**: Linting, format check, type checking, unit tests, and CI-compatible tests
+- **All Branches**: Linting, format check, type checking, unit tests, CI-compatible tests, the vertical's conformance suite, and OpenTofu checks
 - **`main` and `dev`**: Additional integration tests with real Dropbox API calls
+- **`hw2`**: Builds the container image and deploys it to the test service, smoke-checked before it gets traffic; `main` also deploys demo ([`docs/release-pipeline.md`](docs/release-pipeline.md))
 - **Artifacts**: Coverage reports, test results, and build summaries
 
 See `docs/circleci-setup.md` for detailed CI/CD setup instructions.

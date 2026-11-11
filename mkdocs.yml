@@ -20,6 +20,7 @@ theme:
 
 nav:
   - 'Overview': 'index.md'
+  - 'Operating the Service': 'operations.md'
   - 'Architecture': 'component.md'
   - 'Workflow': 'workflow.md'
   - 'Engineering Decision': 'engineering-decision.md'
@@ -36,6 +37,7 @@ nav:
   - 'Runbook': 'runbook.md'
   - 'Telemetry Walkthrough': 'telemetry-walkthrough.md'
   - 'Fault Injection': 'fault-injection.md'
+  - 'Synthetic Probe': 'synthetic-probe.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'
