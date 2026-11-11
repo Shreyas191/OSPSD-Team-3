@@ -30,9 +30,9 @@ nav:
   - 'Teardown': 'teardown.md'
   - 'Release Pipeline': 'release-pipeline.md'
   - 'Rollback Drill': 'rollback-drill.md'
-  - 'Service Level Objectives': 'slo.md'
   - 'Runbook': 'runbook.md'
   - 'Telemetry Walkthrough': 'telemetry-walkthrough.md'
+  - 'Service Level Objectives': 'slo.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'
