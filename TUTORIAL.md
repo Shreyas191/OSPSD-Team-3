@@ -1,30 +1,34 @@
-# Tutorial: The Cloud Storage Service in Swagger UI
+# Tutorial: Using the Cloud Storage Service
 
-This walks through every operation of the service against a real Dropbox account, using the interactive API docs FastAPI serves at `/docs` (Swagger UI). Each step states what we expect, shows what actually happened, and includes a screenshot of the request and the live response.
+This walks through every operation of the service against a real Dropbox app folder, using the vertical's shared routes. Each step gives the request, what we expect, and what actually came back.
 
-The steps run in order and build on each other. They work inside one scratch folder, `/ospsd-tutorial`, which the last step deletes, so your Dropbox ends up unchanged.
+The steps run in order and build on each other. They work inside one scratch folder, `/ospsd-tutorial`, which the last step deletes, so the app folder ends up unchanged.
 
 | Section | Operations | Presented by |
 |---|---|---|
-| [Create](#1-create) | upload, create folder, copy | Zesan Rahman |
+| [Create](#1-create) | create, replace, create folder, copy | Zesan Rahman |
 | [Read](#2-read) | metadata, download, list, search | Jing Qian |
-| [Update](#3-update) | rename, move | Shreyas Kaldate |
+| [Update](#3-update) | move or rename | Shreyas Kaldate |
 | [Delete](#4-delete) | delete | Ashik John |
 
-All screenshots were captured from one run on October 21, 2026, against a real Dropbox test account. IDs, sizes and timestamps will differ in your run; status codes and error bodies should match.
+The outputs below come from one run on **November 11, 2026, against the deployed test service** (release `7d6b6ff`). IDs, sizes, timestamps and `etag` values will differ in your run; status codes and error bodies should match. The October 21 version of this tutorial used the HW1 routes. Its Swagger UI screenshots showed routes that no longer exist (`/folders/list`) or are now Team 3 extensions, so this version shows commands and their actual output instead. Swagger UI at `/docs` still works for every step: expand the operation, click **Try it out**, enter the same values, and click **Execute**.
 
 ## 0. Setup
 
-1. Follow the [README setup](README.md#project-setup): install `uv`, run `uv sync --all-packages --extra dev`, create `.env`, and log in to Dropbox once:
+Run the service locally against your own Dropbox app:
+
+1. Follow the [README setup](README.md#project-setup): install `uv`, run `uv sync --all-packages --extra dev`, create `.env`, and log in to Dropbox once with `uv run python -m dropbox_client_impl login`.
+2. Start the service with `uv run python main.py`.
+3. In another terminal:
+
    ```bash
-   uv run python -m dropbox_client_impl login
+   B=http://127.0.0.1:8000
+   T=/ospsd-tutorial
+   printf 'Q3 report, draft 1\n'       > report.txt      # 19 bytes
+   printf 'Q3 report, final version\n' > report-v2.txt   # 25 bytes
    ```
-2. Start the service:
-   ```bash
-   uv run uvicorn cloud_storage_service.app:app
-   ```
-3. Open **http://127.0.0.1:8000/docs**. For each step below: expand the operation, click **Try it out**, enter the values shown, and click **Execute**. Swagger shows the equivalent `curl` command above each response, so every step can also be repeated from a terminal.
-4. Have two small text files ready to upload. We used `report.txt` (27 bytes) and a revised `report-v2.txt` (37 bytes).
+
+To use the deployed test service instead, set `B=https://cloud-storage-service-test-gyesjhieva-uc.a.run.app`. It writes to the test environment's own Dropbox app, not yours.
 
 ### How errors look
 
@@ -36,268 +40,264 @@ Every failure uses the same body, whichever operation it comes from:
 
 | Status | `code` | Meaning |
 |---|---|---|
-| `403` | `permission_denied` | Dropbox does not allow the operation on this entry |
+| `400` | `invalid_request` | The request is malformed (bad path, missing field) |
+| `403` | `permission_denied` | Dropbox doesn't allow the operation on this entry |
 | `404` | `not_found` | Nothing exists at the path |
-| `409` | `conflict` | The destination is already taken |
-| `422` | `invalid_input` | The request is invalid (bad path, folder into itself, …) |
-| `502` | `provider_failure` | Dropbox failed; details are logged, not returned |
-| `503` | `provider_unavailable` | Dropbox is unreachable or busy; try again later |
+| `404` | `route_not_found` | No such route |
+| `405` | `method_not_allowed` | The route doesn't accept this method |
+| `409` | `conflict` | The destination is taken, or the file changed during a replace |
+| `413` | `file_too_large` | The upload is over Dropbox's limit |
+| `422` | `invalid_operation` | Well-formed, but not allowed (download a folder, move a folder with `PATCH`, delete the root, …) |
+| `500` | `internal_error` | A bug in the service |
+| `502` | `provider_error` | Dropbox failed; details are logged, not returned |
+| `503` | `provider_unavailable`, `service_busy` | Dropbox is unreachable, or the service is at its limit; try again later |
 
-The full mapping is in [`src/cloud_storage_service/README.md`](src/cloud_storage_service/README.md#shared-error-format).
+Branch on the status and `code`, never on the message.
 
 ---
 
 ## 1. Create
 
-*Presented by Zesan Rahman.* Upload a file, create a folder, and copy, including what happens when the destination is already taken.
+*Presented by Zesan Rahman.* Create a file, replace it, and see that neither one ever does the other's job.
 
-### 1.1 Upload a new file → `200`
+### 1.1 Create a new file → `201`
 
-`POST /files/upload` with `file` = `report.txt`, `remote_path` = `/ospsd-tutorial/Docs/report.txt`, `overwrite` = `false`.
+```bash
+curl -s -X POST "$B/files" -F file=@report.txt -F path=$T/Docs/report.txt
+```
 
-- **Expected:** `200` and the new file's metadata. The missing folders `/ospsd-tutorial/Docs` are created automatically.
-- **Actual:** `200`, `"path": "/ospsd-tutorial/Docs/report.txt"`, `"size": 27`, `"id": "id:OqsTuff5gbwAAAAAAAAEvw"`.
+- **Expected:** `201` and the new file's info. The missing folders `/ospsd-tutorial/Docs` are created automatically.
+- **Actual:** `201`
 
-![Upload a new file](docs/images/tutorial/create-1-upload.png)
+  ```json
+  {"id":"id:KzOOg5ouvzUAAAAAAAABlQ","name":"report.txt","path":"/ospsd-tutorial/Docs/report.txt","size":19,"modified_at":"2026-11-11T22:39:13Z","etag":"0166007dd41306800000003923a8b33"}
+  ```
 
-### 1.2 Upload to a taken path without `overwrite` → `409`
+### 1.2 Create it again → `409`
 
-Same request, but with `file` = `report-v2.txt` and `overwrite` still `false`.
+Same request with `report-v2.txt`.
 
-- **Expected:** `409 conflict`; the file in Dropbox is not replaced.
-- **Actual:** `409`, `{"error": {"code": "conflict", "message": "Something already exists at '/ospsd-tutorial/Docs/report.txt'"}}`.
+- **Expected:** `409 conflict`. Create never overwrites.
+- **Actual:** `409`, `{"error":{"code":"conflict","message":"Something already exists at '/ospsd-tutorial/Docs/report.txt'"}}`
 
-![Upload conflict](docs/images/tutorial/create-2-upload-conflict.png)
+### 1.3 Replace it → `200`
 
-### 1.3 Upload again with `overwrite` = `true` → `200`
+```bash
+curl -s -X PUT "$B/files" -F file=@report-v2.txt -F path=$T/Docs/report.txt
+```
 
-- **Expected:** `200`; the file is replaced but keeps the same `id`.
-- **Actual:** `200`, `"size": 37` (the revised file), and the same `"id": "id:OqsTuff5gbwAAAAAAAAEvw"` as in 1.1.
+- **Expected:** `200`. The content is new (25 bytes), the `id` is the same, and the `etag` changes.
+- **Actual:** `200`, `"size":25`, the same `"id":"id:KzOOg5ouvzUAAAAAAAABlQ"`, and `"etag":"0166007dd5f13c300000003923a8b33"`.
 
-![Upload with overwrite](docs/images/tutorial/create-3-upload-overwrite.png)
+If someone else changes the file while it is being replaced, the service answers `409 conflict` and keeps their version. Read the file again and retry.
 
-### 1.4 Create a folder → `200`
+### 1.4 Replace a file that doesn't exist → `404`
 
-`POST /folders/create` with `{"remote_path": "/ospsd-tutorial/Archive"}`.
+```bash
+curl -s -X PUT "$B/files" -F file=@report-v2.txt -F path=$T/Docs/missing.txt
+```
 
-- **Expected:** `200`; a folder has `size` and `modified` set to `null`.
-- **Actual:** `200`, `"is_folder": true`, `"size": null`, `"modified": null`.
+- **Expected:** `404 not_found`. Replace never creates a file.
+- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Docs/missing.txt'"`
 
-![Create a folder](docs/images/tutorial/create-4-create-folder.png)
+### 1.5 Create a folder → `200` (Team 3 extension)
 
-### 1.5 Create the same folder again → `409`
+```bash
+curl -s -X POST "$B/folders/create" -H 'content-type: application/json' -d "{\"remote_path\":\"$T/Archive\"}"
+```
 
-- **Expected:** `409 conflict`.
-- **Actual:** `409`, `"Something already exists at '/ospsd-tutorial/Archive'"`.
+- **Expected:** `200`. A folder has `size`, `modified_at` and `etag` set to `null`.
+- **Actual:** `200`, `{"id":"id:KzOOg5ouvzUAAAAAAAABmA","name":"Archive","path":"/ospsd-tutorial/Archive","size":null,"modified_at":null,"etag":null}`
 
-![Create folder conflict](docs/images/tutorial/create-5-create-folder-conflict.png)
+### 1.6 Copy a file → `200` (Team 3 extension)
 
-### 1.6 Copy a file → `200`
+```bash
+curl -s -X POST "$B/files/copy" -H 'content-type: application/json' \
+  -d "{\"from_path\":\"$T/Docs/report.txt\",\"to_path\":\"$T/Archive/report-copy.txt\"}"
+```
 
-`POST /files/copy` with `{"from_path": "/ospsd-tutorial/Docs/report.txt", "to_path": "/ospsd-tutorial/Archive/report-copy.txt"}`.
-
-- **Expected:** `200`; the copy is a new entry with its own `id`, and the source stays in place.
-- **Actual:** `200`, `"path": "/ospsd-tutorial/Archive/report-copy.txt"`, `"id": "id:OqsTuff5gbwAAAAAAAAEww"` (different from the source's).
-
-![Copy a file](docs/images/tutorial/create-6-copy.png)
-
-### 1.7 Copy a folder into itself → `422`
-
-`POST /files/copy` with `{"from_path": "/ospsd-tutorial/Docs", "to_path": "/ospsd-tutorial/Docs/Backup"}`.
-
-- **Expected:** `422 invalid_input`; nothing is copied. Dropbox reports this case with the same error as "destination is the source itself", so the service checks it before calling Dropbox (see [`docs/engineering-decision.md`](docs/engineering-decision.md)).
-- **Actual:** `422`, `"Cannot copy '/ospsd-tutorial/Docs' into itself: '/ospsd-tutorial/Docs/Backup' is inside the source"`.
-
-![Copy a folder into itself](docs/images/tutorial/create-7-copy-into-itself.png)
+- **Expected:** `200`. The copy is a new entry with its own `id`, and the source stays in place.
+- **Actual:** `200`, `"path":"/ospsd-tutorial/Archive/report-copy.txt"`, `"id":"id:KzOOg5ouvzUAAAAAAAABmQ"`, which differs from the source's.
 
 ---
 
 ## 2. Read
 
-*Presented by Jing Qian.* Read the files created in section 1. Nothing here changes Dropbox. At this point `/ospsd-tutorial/Docs/report.txt` (37 bytes, the revised upload) and `/ospsd-tutorial/Archive/report-copy.txt` exist.
+*Presented by Jing Qian.* Nothing here changes Dropbox. At this point `/ospsd-tutorial/Docs/report.txt` (25 bytes) and `/ospsd-tutorial/Archive/report-copy.txt` exist.
 
 ### 2.1 Get a file's metadata → `200`
 
-`GET /files/metadata` with `path` = `/ospsd-tutorial/Docs/report.txt`.
+```bash
+curl -s "$B/files/metadata?path=$T/Docs/report.txt"
+```
 
-- **Expected:** `200` with the same `id` and size as the upload in 1.3.
-- **Actual:** `200`, `"id": "id:OqsTuff5gbwAAAAAAAAEvw"`, `"size": 37`.
-
-![Get metadata](docs/images/tutorial/read-1-metadata.png)
+- **Expected:** `200`, with the same `id`, size and `etag` as after the replace in 1.3.
+- **Actual:** `200`, `{"id":"id:KzOOg5ouvzUAAAAAAAABlQ","name":"report.txt","path":"/ospsd-tutorial/Docs/report.txt","size":25,"modified_at":"2026-11-11T22:39:15Z","etag":"0166007dd5f13c300000003923a8b33"}`
 
 ### 2.2 Metadata for a path that doesn't exist → `404`
 
-`GET /files/metadata` with `path` = `/ospsd-tutorial/Docs/missing.txt`.
-
 - **Expected:** `404 not_found`.
-- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Docs/missing.txt'"`.
+- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Docs/missing.txt'"`
 
-![Metadata for a missing path](docs/images/tutorial/read-2-metadata-missing.png)
+### 2.3 Download a file and compare its bytes → `200`
 
-### 2.3 Download a file → `200`
+```bash
+curl -s -o downloaded.txt "$B/files/download?path=$T/Docs/report.txt"
+cmp report-v2.txt downloaded.txt && echo identical
+```
 
-`GET /files/download` with `path` = `/ospsd-tutorial/Docs/report.txt`.
-
-- **Expected:** `200` with the file's raw bytes, identical to `report-v2.txt` (the last version uploaded).
-- **Actual:** `200`. Swagger offers the body as **Download file**. Downloading the same path with curl and comparing it with the local file shows identical bytes:
-  ```bash
-  curl -s -o downloaded.txt "http://127.0.0.1:8000/files/download?path=/ospsd-tutorial/Docs/report.txt"
-  cmp report-v2.txt downloaded.txt && echo identical
-  ```
-  Output: `identical`.
-
-![Download a file](docs/images/tutorial/read-3-download.png)
+- **Expected:** `200`, with exactly the bytes of `report-v2.txt`.
+- **Actual:** `200`, `identical`.
 
 ### 2.4 Download a folder → `422`
 
-`GET /files/download` with `path` = `/ospsd-tutorial/Docs`.
-
-- **Expected:** `422 invalid_input`, because only files can be downloaded.
-- **Actual:** `422`, `"Path is a folder: '/ospsd-tutorial/Docs'"`.
-
-![Download a folder](docs/images/tutorial/read-4-download-folder.png)
+- **Expected:** `422 invalid_operation`. Only files can be downloaded.
+- **Actual:** `422`, `"Path is a folder: '/ospsd-tutorial/Docs'"`
 
 ### 2.5 List a folder → `200`
 
-`GET /folders/list` with `path` = `/ospsd-tutorial/Archive`.
+```bash
+curl -s "$B/files?path=$T"
+```
 
-- **Expected:** `200` with the folder's direct children: just `report-copy.txt` from step 1.6.
-- **Actual:** `200`, a one-item array with `"path": "/ospsd-tutorial/Archive/report-copy.txt"`, `"id": "id:OqsTuff5gbwAAAAAAAAEww"`.
+- **Expected:** `200`, with the direct children sorted by path. Each entry has a `type`.
+- **Actual:** `200`
 
-![List a folder](docs/images/tutorial/read-5-list.png)
+  ```json
+  [{"id":"id:KzOOg5ouvzUAAAAAAAABmA","name":"Archive","path":"/ospsd-tutorial/Archive","size":null,"modified_at":null,"etag":null,"type":"folder"},
+   {"id":"id:KzOOg5ouvzUAAAAAAAABlw","name":"Docs","path":"/ospsd-tutorial/Docs","size":null,"modified_at":null,"etag":null,"type":"folder"}]
+  ```
 
 ### 2.6 List a file → `422`
 
-`GET /folders/list` with `path` = `/ospsd-tutorial/Docs/report.txt`.
+- **Expected:** `422 invalid_operation`. Only folders can be listed.
+- **Actual:** `422`, `"Path is a file: '/ospsd-tutorial/Docs/report.txt'"`
 
-- **Expected:** `422 invalid_input`, because only folders can be listed.
-- **Actual:** `422`, `"Path is a file: '/ospsd-tutorial/Docs/report.txt'"`.
+### 2.7 Search by name → `200` (Team 3 extension)
 
-![List a file](docs/images/tutorial/read-6-list-file.png)
+```bash
+curl -s "$B/files/search?q=report-copy&max_results=5"
+```
 
-### 2.7 Search by name → `200`
-
-`GET /files/search` with `q` = `report-copy`, `max_results` = `5`.
-
-- **Expected:** `200` with matching files and folders, at most 5. Search matches names across the whole account; `report-copy` keeps it to the file from step 1.6.
-- **Actual:** `200`, one result: `"path": "/ospsd-tutorial/Archive/report-copy.txt"`.
-
-![Search by name](docs/images/tutorial/read-7-search.png)
+- **Expected:** `200`, with at most 5 matches from the whole app folder.
+- **Actual:** `200`, one result: `"path":"/ospsd-tutorial/Archive/report-copy.txt"`.
 
 ---
 
 ## 3. Update
 
-*Presented by Shreyas Kaldate.* Rename and move change an existing entry; they never create one or overwrite another.
+*Presented by Shreyas Kaldate.* `PATCH /files` moves or renames a file. It never creates an entry or overwrites one.
 
-### 3.1 Rename a file → `200`
+### 3.1 Move and rename a file → `200`
 
-`POST /files/rename` with `{"path": "/ospsd-tutorial/Docs/report.txt", "new_name": "summary.txt"}`.
+```bash
+curl -s -X PATCH "$B/files?path=$T/Docs/report.txt" -H 'content-type: application/json' \
+  -d "{\"new_path\":\"$T/Archive/summary.txt\"}"
+```
 
-- **Expected:** `200`; the file stays in `Docs` and keeps its `id`.
-- **Actual:** `200`, `"path": "/ospsd-tutorial/Docs/summary.txt"`, same `"id": "id:OqsTuff5gbwAAAAAAAAEvw"` as the uploaded file.
+- **Expected:** `200`. It is the same file with the same `id`, at a new path.
+- **Actual:** `200`, `"path":"/ospsd-tutorial/Archive/summary.txt"`, the same `"id":"id:KzOOg5ouvzUAAAAAAAABlQ"`. The `etag` changed as well (`0166007ddc12d4e00000003923a8b33`): Dropbox gives a moved file a new revision.
 
-![Rename a file](docs/images/tutorial/update-1-rename.png)
+### 3.2 Repeat the same move → `404`
 
-### 3.2 Move it into another folder → `200`
+- **Expected:** `404 not_found`, since nothing is left at the source. This is why retrying a move is safe: a repeat never moves anything twice.
+- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Docs/report.txt'"`
 
-`POST /files/move` with `{"from_path": "/ospsd-tutorial/Docs/summary.txt", "to_path": "/ospsd-tutorial/Archive/summary.txt"}`.
+### 3.3 Move onto a name that is taken → `409`
 
-- **Expected:** `200`; same entry, new path.
-- **Actual:** `200`, `"path": "/ospsd-tutorial/Archive/summary.txt"`, same `id`.
+`PATCH /files?path=/ospsd-tutorial/Archive/summary.txt` with `{"new_path": "/ospsd-tutorial/Archive/report-copy.txt"}`.
 
-![Move a file](docs/images/tutorial/update-2-move.png)
+- **Expected:** `409 conflict`. Neither file changes.
+- **Actual:** `409`, `"Something already exists at '/ospsd-tutorial/Archive/report-copy.txt'"`
 
-### 3.3 Repeat the same move → `404`
+### 3.4 Move a folder → `422`
 
-- **Expected:** `404 not_found`, since nothing is left at the source. This is also why retrying a move is safe: a repeat never moves anything twice.
-- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Docs/summary.txt'"`.
+`PATCH /files?path=/ospsd-tutorial/Archive` with `{"new_path": "/ospsd-tutorial/Old"}`.
 
-![Repeat the move](docs/images/tutorial/update-3-move-again.png)
+- **Expected:** `422 invalid_operation`. The shared contract's `PATCH` moves files only.
+- **Actual:** `422`, `"Cannot move '/ospsd-tutorial/Archive': it is a folder, and only files can be moved"`
 
-### 3.4 Rename onto a name that is taken → `409`
+To move a folder on our service, use the Team 3 extension `POST /files/move` with `{"from_path", "to_path"}`.
 
-`POST /files/rename` with `{"path": "/ospsd-tutorial/Archive/summary.txt", "new_name": "report-copy.txt"}`. `report-copy.txt` already exists in `Archive` from step 1.6.
+### 3.5 Change only the letter case → `422`
 
-- **Expected:** `409 conflict`; neither file changes.
-- **Actual:** `409`, `"Something already exists at '/ospsd-tutorial/Archive/report-copy.txt'"`.
+`PATCH /files?path=/ospsd-tutorial/Archive/summary.txt` with `{"new_path": "/ospsd-tutorial/Archive/Summary.txt"}`.
 
-![Rename conflict](docs/images/tutorial/update-4-rename-conflict.png)
-
-### 3.5 Move a folder into itself → `422`
-
-`POST /files/move` with `{"from_path": "/ospsd-tutorial/Archive", "to_path": "/ospsd-tutorial/Archive/Old"}`.
-
-- **Expected:** `422 invalid_input`; nothing moves.
-- **Actual:** `422`, `"Cannot move '/ospsd-tutorial/Archive' into itself: '/ospsd-tutorial/Archive/Old' is inside the source"`.
-
-![Move a folder into itself](docs/images/tutorial/update-5-move-into-itself.png)
+- **Expected:** `422 invalid_operation`. Dropbox paths ignore case, so this is the same path.
+- **Actual:** `422`, `"Cannot move '/ospsd-tutorial/Archive/summary.txt' to '/ospsd-tutorial/Archive/Summary.txt': it is the same path (ignoring case)"`
 
 ---
 
 ## 4. Delete
 
-*Presented by Ashik John.* Deleted entries go to the Dropbox account's trash.
+*Presented by Ashik John.* Deleted entries go to the Dropbox app's deleted files, where Dropbox keeps them restorable for 30 days.
 
 ### 4.1 Delete a file → `204`
 
-`DELETE /files` with `path` = `/ospsd-tutorial/Archive/report-copy.txt`.
+```bash
+curl -s -i -X DELETE "$B/files?path=$T/Archive/report-copy.txt"
+```
 
 - **Expected:** `204` with no body.
 - **Actual:** `204`.
 
-![Delete a file](docs/images/tutorial/delete-1-delete.png)
-
 ### 4.2 Delete it again → `404`
 
-- **Expected:** `404 not_found`; delete is not idempotent.
-- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Archive/report-copy.txt'"`.
+- **Expected:** `404 not_found`. Delete is not idempotent.
+- **Actual:** `404`, `"No file or folder at '/ospsd-tutorial/Archive/report-copy.txt'"`
 
-![Delete again](docs/images/tutorial/delete-2-delete-again.png)
-
-### 4.3 Delete with a relative path → `422` (curl)
-
-Swagger UI checks the `path` pattern in the browser and won't send this request, so this step uses curl to show the server's own answer:
+### 4.3 Delete the root → `422`
 
 ```bash
-curl -X DELETE "http://127.0.0.1:8000/files?path=relative/report.txt"
+curl -s -X DELETE "$B/files?path=/"
 ```
 
-- **Expected:** `422 invalid_input`; Dropbox is not contacted.
-- **Actual:**
-  ```json
-  {"error": {"code": "invalid_input", "message": "query.path: String should match pattern '^(/[^/]+)+$'"}}
-  ```
+- **Expected:** `422 invalid_operation`. The root is a valid path, but it is never deleted, and Dropbox isn't called.
+- **Actual:** `422`, `"Refusing to delete the root folder (path '/')"`
+
+### 4.4 A path with `..` → `400`
+
+```bash
+curl -s -X DELETE "$B/files?path=$T/../Docs"
+```
+
+- **Expected:** `400 invalid_request`. Empty, `.` and `..` segments are malformed, and Dropbox isn't called.
+- **Actual:** `400`, `"query.path: Value error, path must not contain empty, '.' or '..' segments"`
+
+A path without the leading `/` is accepted: `GET /files/metadata?path=ospsd-tutorial/Archive/summary.txt` returned `200` with `"path":"/ospsd-tutorial/Archive/summary.txt"`.
 
 ---
 
-## 5. Failure logs
+## 5. Mistakes that never reach a route
 
-Every failed request is logged once as a structured warning on the `cloud_storage_service.errors` logger, which you can see in the terminal running `uvicorn`. These are the actual lines from the run above:
+These come from the app's own error handlers, in the same body as every other error:
 
-```text
-Request failed: operation='upload_file' status=409 code='conflict' provider_failure=False reason="Something already exists at '/ospsd-tutorial/Docs/report.txt'"
-Request failed: operation='create_folder' status=409 code='conflict' provider_failure=False reason="Something already exists at '/ospsd-tutorial/Archive'"
-Request failed: operation='copy_entry' status=422 code='invalid_input' provider_failure=False reason="Cannot copy '/ospsd-tutorial/Docs' into itself: '/ospsd-tutorial/Docs/Backup' is inside the source"
-Request failed: operation='get_file_metadata' status=404 code='not_found' provider_failure=False reason="No file or folder at '/ospsd-tutorial/Docs/missing.txt'"
-Request failed: operation='download_file' status=422 code='invalid_input' provider_failure=False reason="Path is a folder: '/ospsd-tutorial/Docs'"
-Request failed: operation='list_folder' status=422 code='invalid_input' provider_failure=False reason="Path is a file: '/ospsd-tutorial/Docs/report.txt'"
-Request failed: operation='move_file' status=404 code='not_found' provider_failure=False reason="No file or folder at '/ospsd-tutorial/Docs/summary.txt'"
-Request failed: operation='rename_file' status=409 code='conflict' provider_failure=False reason="Something already exists at '/ospsd-tutorial/Archive/report-copy.txt'"
-Request failed: operation='move_file' status=422 code='invalid_input' provider_failure=False reason="Cannot move '/ospsd-tutorial/Archive' into itself: '/ospsd-tutorial/Archive/Old' is inside the source"
-Request failed: operation='delete_entry' status=404 code='not_found' provider_failure=False reason="No file or folder at '/ospsd-tutorial/Archive/report-copy.txt'"
-Request failed: operation='delete_entry' status=422 code='invalid_input' provider_failure=False reason="query.path: String should match pattern '^(/[^/]+)+$'"
+| Request | Status | Body |
+|---|---|---|
+| `GET /folders/list?path=/ospsd-tutorial` (the HW1 list route, now removed) | `404` | `{"error":{"code":"route_not_found","message":"No route /folders/list"}}` |
+| `POST /files/metadata?path=/ospsd-tutorial` | `405` | `{"error":{"code":"method_not_allowed","message":"POST is not allowed on /files/metadata"}}` |
+
+## 6. Health and logs
+
+`GET /health` answered `{"status":"ok"}` without calling Dropbox. `GET /health/provider` answered `{"status":"ok"}`, so Dropbox accepted the service's credentials.
+
+The service writes one JSON log line per request. Locally they print in the terminal running `main.py`; on Cloud Run they are in Cloud Logging (see [Operations](docs/operations.md#4-where-are-its-logs)). These are the deployed service's actual lines for steps 1.1 and 2.2, with some fields left out (`logger`, `message`, `route`, `service`, `span_id`):
+
+```json
+{"event": "request", "operation": "create_file", "method": "POST", "status": 201, "outcome": "ok", "duration_ms": 1006, "release": "7d6b6ff356e3fba5189392643d409c8b257563d6", "trace_id": "fe3250027cdcd8f37ed5b99ff8b6387a"}
+{"event": "request", "operation": "get_file_metadata", "method": "GET", "status": 404, "outcome": "not_found", "code": "not_found", "provider_failure": false, "reason": "No file or folder at '…'", "duration_ms": 118.1, "release": "7d6b6ff356e3fba5189392643d409c8b257563d6", "trace_id": "e7f6780d6cffa668413f019c9ba46823"}
 ```
 
-Each line names the operation, status, error code, and whether Dropbox caused the failure (`provider_failure`). Logs never include tokens, and validation failures don't echo the rejected value.
+Each line names the operation, status, outcome, whether Dropbox caused a failure (`provider_failure`), and the release that served it. File paths are replaced with `…`, and logs never include tokens, file contents or the values a caller sent that failed validation.
 
-## 6. Clean up
+## 7. Clean up
 
-`DELETE /files` with `path` = `/ospsd-tutorial` removes the scratch folder and everything left in it.
+```bash
+curl -s -i -X DELETE "$B/files?path=$T"
+curl -s "$B/files?path=$T"
+```
 
-- **Expected:** `204`.
-- **Actual:** `204`.
-
-![Delete the scratch folder](docs/images/tutorial/cleanup-delete-folder.png)
+- **Expected:** `204`, then `404`.
+- **Actual:** `204`, then `{"error":{"code":"not_found","message":"No file or folder at '/ospsd-tutorial'"}}`.
 
 To disconnect this machine from Dropbox afterwards, run `uv run python -m dropbox_client_impl logout`.

@@ -20,6 +20,7 @@ theme:
 
 nav:
   - 'Overview': 'index.md'
+  - 'Operating the Service': 'operations.md'
   - 'Architecture': 'component.md'
   - 'Workflow': 'workflow.md'
   - 'Engineering Decision': 'engineering-decision.md'
