@@ -9,7 +9,8 @@
 locals {
   request_lines = join(" AND ", [
     "resource.type=\"cloud_run_revision\"",
-    "resource.labels.service_name=starts_with(\"${local.service_name}-\")",
+    # The logging query language has no starts_with(); a regular expression does the same.
+    "resource.labels.service_name=~\"^${local.service_name}-\"",
     "jsonPayload.event=\"request\"",
   ])
 }
