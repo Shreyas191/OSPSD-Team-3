@@ -3,8 +3,8 @@
 **By:** John Ashik, Shreyas Kaldate, Zesan Rahman, Jing Qian, Victor Wang
 **Vertical:** Document Storage (provider: Dropbox)
 **Reviewers:** Victor Wang (Team 3, whole design), Darsh (Team 6, contract-facing parts)
-**Last updated:** 11/11/2026
-**Status:** Implemented on `hw2` and deployed to the test service (release `7d6b6ff`). The design review in [Review](#review) is not complete. Sections written on Nov 4 as a plan now describe what was built. [What changed during implementation, and why](#what-changed-during-implementation-and-why) lists every place where the build differs from the Nov 4 plan.
+**Last updated:** 11/12/2026
+**Status:** Implemented on `hw2` and released as [`v0.2.0`](https://github.com/Shreyas191/OSPSD-Team-3/releases/tag/v0.2.0), deployed to both the test and demo services by the pipeline. The design review in [Review](#review) is not complete. Sections written on Nov 4 as a plan now describe what was built. [What changed during implementation, and why](#what-changed-during-implementation-and-why) lists every place where the build differs from the Nov 4 plan.
 
 **Links:**
 
@@ -42,7 +42,7 @@ Non-goals, which a reader might expect but we are not pursuing:
 
 ## What changed during implementation, and why
 
-The Nov 4 version of this document was a plan. This table records each place where the implementation differs from it, as of release `7d6b6ff` (Nov 11). Every other section has been updated to match the code.
+The Nov 4 version of this document was a plan. This table records each place where the implementation differs from it, as of release `v0.2.0` (Nov 12). Every other section has been updated to match the code.
 
 | # | Nov 4 plan | What was built | Why | Where |
 |---|---|---|---|---|
