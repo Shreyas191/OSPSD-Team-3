@@ -108,7 +108,7 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
 
 A teammate who did not write the instrumentation explains each request using only the dashboard, the logs and the traces above, and records any question they had to ask. Each question is a gap in this page; fix it in the same pull request.
 
-Each dashboard point was followed to its matching log entry and trace. The dashboard showed the operation and outcome; the log gave the status, duration, release and trace ID; and the trace showed whether the request reached Dropbox.
+Victor followed each dashboard point to its matching log entry and trace. The dashboard showed the operation and outcome; the log gave the status, duration, release and trace ID; and the trace showed whether the request reached Dropbox.
 
 | Request | Explained by | Their explanation | Matches what happened? | Questions they had to ask |
 |---|---|---|---|---|
