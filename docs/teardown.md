@@ -8,7 +8,7 @@ This page covers HW2 Milestone 3, item 2.4: removing everything the team created
 
 ## 1. Destroy what OpenTofu created
 
-Run from a terminal signed in as the project owner (see "One-time setup by hand" in [Infrastructure](infrastructure.md)). `infra/terraform.tfvars` needs the same three values as the apply did: `project_id`, `circleci_org_id` and `circleci_project_id`. From a clean checkout of the commit that was applied:
+Run from a terminal signed in as the project owner (see "One-time setup by hand" in [Infrastructure](infrastructure.md)). `infra/terraform.tfvars` needs the same four values as the apply did: `project_id`, `circleci_org_id`, `circleci_project_id` and `alert_email`. From a clean checkout of the commit that was applied:
 
 ```bash
 cd infra
