@@ -108,12 +108,8 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
 
 A teammate who did not write the instrumentation explains each request using only the dashboard, the logs and the traces above, and records any question they had to ask. Each question is a gap in this page; fix it in the same pull request.
 
-I followed each dashboard point to its matching log entry and trace. The dashboard showed the operation and outcome; the log gave the status, duration, release and trace ID; and the trace showed whether the request reached Dropbox.
-
 | Request | Explained by | Their explanation | Matches what happened? | Questions they had to ask |
 |---|---|---|---|---|
-| Success | Victor Wang, Nov 12, 2026 | `GET /files?path=/` returned `200`. The dashboard showed `list_folder` / `ok`. Its log showed a 198 ms request, and the trace showed Dropbox's `list_folder` call succeeding in 194 ms. Most of the request time was spent waiting on Dropbox. | Yes | None |
-| Invalid request | Victor Wang, Nov 12, 2026 | `GET /files/metadata?path=/a/../b` returned `400 invalid_request`. The dashboard showed `get_file_metadata` / `invalid_request`. The log said the path failed validation and marked it as not a provider failure. The trace showed the service rejecting it in about 1.6 ms, with no Dropbox span. So the request was rejected before it reached Dropbox. | Yes | None |
-| Provider failure | Victor Wang, Nov 12, 2026 | `GET /files/metadata?path=/drill/report.txt` returned `502 provider_error`. The dashboard showed `get_file_metadata` / `provider_error`, and the log marked `provider_failure: true`. The trace showed Dropbox's token endpoint returning `400` and taking about 94 ms of the 97 ms request. That points to Dropbox rejecting the credentials. | Yes | None |
-
-**Conclusion:** the telemetry distinguished a successful provider call, a caller error rejected before reaching the provider, and a provider-side credential failure.
+| Success | | | | |
+| Invalid request | | | | |
+| Provider failure | | | | |
