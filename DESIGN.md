@@ -54,9 +54,10 @@ The Nov 4 version of this document was a plan. This table records each place whe
 | 6 | Python 3.11 → 3.12 once the contract is tagged | Done: Python 3.12 everywhere, including the container image and CI. | The contract package needs 3.12. | `pyproject.toml`, `.python-version` |
 | 7 | Telemetry: OpenTelemetry to Grafana Cloud; alerts to Slack | Google Cloud Logging, Trace and Monitoring in the same project, with one dashboard and one alert, emailed to the team. | Item 3.1 sent the data to Google Cloud's own services. Grafana would need a second account and a Google service-account key to read them, plus one more thing to own and tear down, for the same charts. The handout leaves the backend to the team. | [Dashboard](docs/dashboard.md) |
 | 8 | Conformance suite owned by Team 6, run before each release | It isn't merged in the contract repository yet, so CI pins Team 6's commit `b77617c` and runs it on every push against our real app on an in-memory client. Every deploy also runs the shared consumer workflow against the new revision, with real Dropbox, before it gets traffic. | It was the only available version of the suite. | [Testing](docs/testing.md) |
-| 9 | Not planned | Fault injection (`FAULT_INJECTION`) wraps the client on the test service only. The service refuses to start if it is set on demo. | Levels 3.3 and 3.6 need repeatable provider failures. | [Fault Injection](docs/fault-injection.md) |
-| 10 | Deploy to test and demo | Every push to `hw2` deploys test, then demo, and demo only after the same release passed its smoke check on test. `main` keeps the same pipeline but isn't updated for HW2. | `hw2` is the branch the team submits for HW2, so it ships to both environments. | [Release Pipeline](docs/release-pipeline.md) |
-| 11 | Open questions 2, 3, 5, 9, 10 and 11 | Settled: see [Open questions](#open-questions). Stale replace and occupied destinations are `409 conflict`. Codes follow the contract's table. A partial folder delete is `502 provider_error`. Dropbox's stale-rev error was observed live. | Contract `0.3.1` and a live test (Nov 8). | — |
+| 9 | Not planned | Fault injection (`FAULT_INJECTION`): off by default, it wraps the client so the provider is slow, failing, timing out or losing replies. The service refuses to start if it is set on demo. | The HW2 extension "Fault injection": the shared conformance suite was run under each fault to see which guarantees hold. | [Fault Injection](docs/fault-injection.md) |
+| 10 | Not planned | An external synthetic probe: Cloud Monitoring uptime checks call `GET /files/metadata` on test and demo every 5 minutes from three regions, reported as an SLI of its own. | The HW2 extension "External synthetic probe": the server-side SLI can't see requests that never reach the service, or wrong answers with a good status. Both were observed. | [Synthetic Probe](docs/synthetic-probe.md) |
+| 11 | Deploy to test and demo | Every push to `hw2` deploys test, then demo, and demo only after the same release passed its smoke check on test. `main` keeps the same pipeline but isn't updated for HW2. | `hw2` is the branch the team submits for HW2, so it ships to both environments. | [Release Pipeline](docs/release-pipeline.md) |
+| 12 | Open questions 2, 3, 5, 9, 10 and 11 | Settled: see [Open questions](#open-questions). Stale replace and occupied destinations are `409 conflict`. Codes follow the contract's table. A partial folder delete is `502 provider_error`. Dropbox's stale-rev error was observed live. | Contract `0.3.1` and a live test (Nov 8). | — |
 
 ## Architecture as built
 
@@ -358,7 +359,7 @@ The Nov 4 plan proposed these tools; all were built as planned except telemetry 
 | Secrets | Secret Manager: `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN` per environment | Each runtime service account can read only its own environment's three secrets. |
 | Infrastructure as code | OpenTofu with the Google provider; state in a versioned Cloud Storage bucket | Applied Nov 11 by the project owner. CI runs `tofu fmt -check` and `tofu validate` on every push. |
 | Pipeline | CircleCI, signing in to Google Cloud through workload identity federation (OIDC) | No Google key is stored anywhere. Only pipelines on `hw2` and `main` can get the deployer identity. Each release is deployed with no traffic, smoke-checked against real Dropbox, then given 100% of traffic. |
-| Telemetry | Cloud Logging, Cloud Trace, Cloud Monitoring | One JSON log line per request; traces with Dropbox spans; three log-based metrics; one dashboard; one 5xx alert emailed to the team. |
+| Telemetry | Cloud Logging, Cloud Trace, Cloud Monitoring | One JSON log line per request; traces with Dropbox spans; three log-based metrics; one dashboard; one 5xx alert emailed to the team; an uptime check per environment (the synthetic probe). |
 
 **Identities.** CircleCI's `storage-deployer` service account can push images and deploy the two services. It can't read secret values, change IAM, or create or delete resources. Each service runs as its own runtime account.
 
@@ -366,7 +367,7 @@ The Nov 4 plan proposed these tools; all were built as planned except telemetry 
 
 ### Cost, ownership and teardown
 
-Measured from the project's own usage, Nov 5–11, 2026 (test was deployed from Nov 11; demo serves only the placeholder). Free tiers are from Google Cloud's pricing pages.
+Measured from the project's own usage, Nov 5–11, 2026 (test was deployed from Nov 11; demo served only the placeholder until its first deploy, late on Nov 11). Free tiers are from Google Cloud's pricing pages.
 
 | Item | Measured use | Free tier | Cost |
 |---|---|---|---|
@@ -375,6 +376,7 @@ Measured from the project's own usage, Nov 5–11, 2026 (test was deployed from 
 | Cloud Monitoring: Cloud Run's own metrics | — | Google Cloud metrics aren't charged | $0 |
 | Cloud Trace | 297 spans in 7 days | 2.5 million spans per month; then $0.20/million | $0 |
 | Alerting (1 policy) | — | Charges for alerting policies start Sept 1, 2027, after teardown | $0 |
+| Uptime checks (the synthetic probe, 2) | about 52,000 runs a month for both (3 checkers every 5 minutes on each) | 1 million runs per project per month; then $0.30 per 1,000 | $0 |
 | Cloud Run | 492 s of billable instance time on test, 24 s on demo | 180,000 vCPU-seconds, 360,000 GiB-seconds and 2 million requests per month | $0 |
 | Artifact Registry | 300 MB stored | 0.5 GB per month | $0 |
 | Secret Manager | 6 secret versions | 6 active versions per month | $0 unless a rotation leaves old versions enabled |
