@@ -227,6 +227,11 @@ wheels = [
 ]
 
 [[package]]
+name = "cloud-storage-api"
+version = "0.2.0"
+source = { git = "https://github.com/Dayana20/ospsd26-cloud-storage?subdirectory=src%2Fcloud_storage_api&tag=0.3.1#664afc92f7cc0b2ee51cde6ddfa088cc3b37206c" }
+
+[[package]]
 name = "cloud-storage-client-api"
 version = "0.1.0"
 source = { editable = "src/cloud_storage_client_api" }
@@ -428,6 +433,7 @@ name = "dropbox-client-impl"
 version = "0.1.0"
 source = { editable = "src/dropbox_client_impl" }
 dependencies = [
+    { name = "cloud-storage-api" },
     { name = "cloud-storage-client-api" },
     { name = "dropbox" },
     { name = "python-dotenv" },
@@ -442,6 +448,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cloud-storage-api", git = "https://github.com/Dayana20/ospsd26-cloud-storage?subdirectory=src%2Fcloud_storage_api&tag=0.3.1" },
     { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
     { name = "dropbox", specifier = ">=12.0.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
