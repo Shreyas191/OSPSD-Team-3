@@ -9,6 +9,7 @@ from dropbox_client_impl.auth import (
     get_current_account,
     get_dropbox_client,
 )
+from dropbox_client_impl.document_storage import DropboxDocumentStorage
 from dropbox_client_impl.dropbox_impl import (
     DropboxClient,
     get_client_impl,
@@ -21,6 +22,7 @@ __all__ = [
     "DropboxAuthError",
     "DropboxClient",
     "DropboxConnectionError",
+    "DropboxDocumentStorage",
     "DropboxError",
     "DropboxFile",
     "dropbox_request",

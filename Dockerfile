@@ -30,6 +30,12 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON=/usr/local/bin/python3.12 \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
+# git fetches the shared contract package, which uv.lock pins to a tagged commit. It is
+# installed in this build stage only; the runtime image never has it.
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/

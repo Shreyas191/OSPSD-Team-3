@@ -77,6 +77,29 @@ from cloud_storage_client_api import get_client
 client = get_client()  # -> DropboxClient
 ```
 
+## Shared Document Storage contract
+
+`DropboxDocumentStorage` implements the class's shared storage contract, `cloud_storage_api.DocumentStorage`, from [Dayana20/ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage). The dependency is pinned to tag `0.3.1` in this package's `pyproject.toml`, and `uv.lock` records the commit that tag points to. Code written against the shared contract can use it, or another team's implementation, without changes:
+
+```python
+from cloud_storage_api import DocumentStorage
+from dropbox_client_impl import DropboxDocumentStorage
+
+storage: DocumentStorage = DropboxDocumentStorage()   # Dropbox credentials from the environment
+info = storage.create("/notes/standup.md", b"# Standup")
+storage.download(info.path)                            # b"# Standup"
+```
+
+It wraps `DropboxClient`, so every Dropbox call and error translation is the same as above. On top of that it:
+
+- takes and returns bytes instead of local file paths;
+- returns the shared `FileInfo` (`etag` is the Dropbox `rev`; `type` is set on list entries only);
+- raises only the shared errors: `InvalidRequestError` for a malformed path (checked before Dropbox is called), `NotFoundError`, `ConflictError`, `PermissionDeniedError`, `FileTooLargeError`, `InvalidOperationError`, `ProviderError` and `ProviderUnavailableError`;
+- follows the conformance suite's move rules: only files move, and a destination equal to the source (ignoring case) is `InvalidOperationError`;
+- never deletes the root (`InvalidOperationError`).
+
+The HTTP service still uses `DropboxClient` directly, because it serves routes the shared contract does not define (copy, search, create folder, rename).
+
 ## Dropbox endpoints
 
 | Method | Dropbox SDK call |
