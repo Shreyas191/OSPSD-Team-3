@@ -69,6 +69,46 @@ $ curl -s "$B/files/metadata?path=/ospsd-tutorial/Docs/missing.txt"
 
 Both run on Google Cloud Run in project `ospsd-team3`, created with OpenTofu from [`infra/`](infra/). Each environment uses its own Dropbox app. The services don't authenticate callers, so treat anything stored there as public. Owner: Shreyas Kaldate. Teardown: Dec 18, 2026 ([`docs/teardown.md`](docs/teardown.md)).
 
+## Using the package from another project
+
+To call Dropbox in-process instead of over HTTP, install `dropbox_client_impl` and use `DropboxDocumentStorage`, which implements the shared `cloud_storage_api.DocumentStorage` contract (tag `0.3.1`). No tag includes it yet (`v0.2.0` predates it), so pin commit `fde60d4`.
+
+Install the three packages explicitly and pass `--no-sources`. Our `pyproject.toml` files point some dependencies at uv sources, and one of those sources is local to this repository, so the install fails without the flag.
+
+```bash
+uv pip install --no-sources \
+  "cloud-storage-api @ git+https://github.com/Dayana20/ospsd26-cloud-storage@0.3.1#subdirectory=src/cloud_storage_api" \
+  "cloud-storage-client-api @ git+https://github.com/Shreyas191/OSPSD-Team-3@fde60d4#subdirectory=src/cloud_storage_client_api" \
+  "dropbox-client-impl @ git+https://github.com/Shreyas191/OSPSD-Team-3@fde60d4#subdirectory=src/dropbox_client_impl"
+```
+
+We test on Python 3.12 (the minimum is 3.12).
+
+Use your own Dropbox app and account; we don't share ours. Create the app as in [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md#1-create--configure-the-dropbox-app-once-per-team). Then set `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` and `DROPBOX_REDIRECT_URI` in the environment or in a `.env` file in the working directory, and authorize once:
+
+```bash
+python -m dropbox_client_impl login   # saves a refresh token to .dropbox_token.json (keep it out of git)
+python -m dropbox_client_impl check   # prints the connected account
+```
+
+In a deployment, set `DROPBOX_REFRESH_TOKEN` instead of shipping the token file.
+
+```python
+from cloud_storage_api import NotFoundError
+from dropbox_client_impl import DropboxDocumentStorage
+
+storage = DropboxDocumentStorage()  # raises DropboxAuthError, naming the missing variables, if not configured
+storage.check_health()
+storage.create("/my-folder/notes.txt", b"hello")
+print([f.name for f in storage.list_files("/my-folder")])
+try:
+    storage.get_metadata("/my-folder/missing.txt")
+except NotFoundError:
+    ...
+```
+
+Errors are the contract's `cloud_storage_api` exceptions (`NotFoundError`, `ConflictError`, `InvalidRequestError` and the rest). Paths are absolute, start with `/` and never name the root. With an App folder app, `/` is that app folder.
+
 ## Architectural Philosophy
 
 This project is built on the principle of "programming integrated over time." The architecture is designed to combat complexity and ensure the system is maintainable and evolvable.
@@ -81,7 +121,7 @@ This project is built on the principle of "programming integrated over time." Th
 
 The project is a `uv` workspace containing three packages:
 
-1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, replace, create folders, copy, download, get metadata, list, search, rename, move, delete, and check health. It is still a local package; the vertical's shared Python package (`cloud_storage_api`, contract tag `0.3.1`) isn't pinned yet (see [`DESIGN.md`](DESIGN.md#what-changed-during-implementation-and-why)).
+1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, replace, create folders, copy, download, get metadata, list, search, rename, move, delete, and check health. The HTTP service still uses it. The vertical's shared Python package (`cloud_storage_api`, contract tag `0.3.1`) is pinned in `dropbox_client_impl`, which implements it as `DropboxDocumentStorage` (see [Using the package from another project](#using-the-package-from-another-project)).
 2.  **`dropbox_client_impl`**: Provides the `DropboxClient` class, a concrete implementation that uses the Dropbox Python SDK to perform the actions defined in the `Client` abstraction.
 
 3.  **`cloud_storage_service`**: A FastAPI app that exposes the `Client` operations over HTTP. Routes depend only on the abstract `Client`. See [`src/cloud_storage_service/README.md`](src/cloud_storage_service/README.md) for the endpoint contracts.
