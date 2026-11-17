@@ -82,7 +82,7 @@ uv pip install --no-sources \
   "dropbox-client-impl @ git+https://github.com/Shreyas191/OSPSD-Team-3@fde60d4#subdirectory=src/dropbox_client_impl"
 ```
 
-We test on Python 3.12 (the minimum is 3.12).
+The packages declare Python 3.12 or newer, but CI and the deployed service run 3.14, so only 3.14 is tested.
 
 Use your own Dropbox app and account; we don't share ours. Create the app as in [`src/dropbox_client_impl/README.md`](src/dropbox_client_impl/README.md#1-create--configure-the-dropbox-app-once-per-team). Then set `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` and `DROPBOX_REDIRECT_URI` in the environment or in a `.env` file in the working directory, and authorize once:
 
