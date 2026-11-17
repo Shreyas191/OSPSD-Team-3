@@ -13,13 +13,19 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from calendar_contract import CalendarError, CreateEvent, Event
 from calendar_contract import ErrorCode as CalendarErrorCode
+from cloud_storage_api import FileInfo
+from dropbox_client_impl import DropboxDocumentStorage
 from fastapi.testclient import TestClient
 from issue_tracker_contract import ErrorCode as IssueErrorCode
 from issue_tracker_contract import Issue, ServiceError
 from tests.fakes import FakeStorageClient
 
 from cloud_storage_service.app import app
-from cloud_storage_service.dependencies import get_calendar, get_issue_tracker, get_storage_client
+from cloud_storage_service.dependencies import (
+    get_calendar,
+    get_document_storage,
+    get_issue_tracker,
+)
 from cloud_storage_service.fake_verticals import (
     FailingCalendar,
     FailingIssueTracker,
@@ -40,8 +46,13 @@ class Verticals:
     """The three controlled implementations a test runs against; replaceable per test."""
 
     def __init__(self) -> None:
-        """Start with working, empty implementations."""
-        self.storage = FakeStorageClient()
+        """Start with working, empty implementations.
+
+        Storage is our real ``DropboxDocumentStorage`` (the shared-contract layer) over the
+        in-memory ``FakeStorageClient`` in place of Dropbox; tests reach the fake as ``client``.
+        """
+        self.client = FakeStorageClient()
+        self.storage = DropboxDocumentStorage(self.client)
         self.issues: InMemoryIssueTracker | FailingIssueTracker = InMemoryIssueTracker()
         self.calendar: InMemoryCalendar | FailingCalendar = InMemoryCalendar()
 
@@ -50,7 +61,7 @@ class Verticals:
 def verticals() -> Iterator[Verticals]:
     """Point the app's three dependencies at controlled implementations."""
     v = Verticals()
-    app.dependency_overrides[get_storage_client] = lambda: v.storage
+    app.dependency_overrides[get_document_storage] = lambda: v.storage
     app.dependency_overrides[get_issue_tracker] = lambda: v.issues
     app.dependency_overrides[get_calendar] = lambda: v.calendar
     yield v
@@ -65,7 +76,7 @@ def http() -> TestClient:
 
 def reports(v: Verticals) -> list[str]:
     """Paths of the bug reports in storage."""
-    return [p for p in v.storage.entries if p.startswith(f"{REPORT_FOLDER}/")]
+    return [p for p in v.client.entries if p.startswith(f"{REPORT_FOLDER}/")]
 
 
 def issues(v: Verticals) -> list[Issue]:
@@ -116,7 +127,7 @@ def test_report_file_holds_the_report(verticals: Verticals, http: TestClient) ->
 
     expected_min = len(REPORT["title"]) + len(REPORT["description"]) + len(REPORT["reporter"])
     assert body["file"]["size"] > expected_min
-    assert verticals.storage.entries[body["file"]["path"]].size == body["file"]["size"]
+    assert verticals.client.entries[body["file"]["path"]].size == body["file"]["size"]
 
 
 # --- A failure at each step: error names the step, earlier steps are undone ----------------
@@ -133,7 +144,7 @@ def test_storage_unavailable_fails_the_storage_step_and_creates_nothing(
         msg = "Dropbox is unreachable"
         raise ConnectionError(msg)
 
-    monkeypatch.setattr(verticals.storage, "upload_file", unreachable)
+    monkeypatch.setattr(verticals.client, "upload_file", unreachable)
 
     response = http.post(URL, json=REPORT)
 
@@ -152,19 +163,19 @@ def test_storage_conflict_is_reported_and_the_existing_file_is_kept(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A client error (409 conflict) never deletes the file that was already there."""
-    existing = verticals.storage.add(f"{REPORT_FOLDER}/taken.md", size=3)
+    existing = verticals.client.add(f"{REPORT_FOLDER}/taken.md", size=3)
 
     def conflict(*_args: object, **_kwargs: object) -> None:
         msg = "Something already exists"
         raise FileExistsError(msg)
 
-    monkeypatch.setattr(verticals.storage, "upload_file", conflict)
+    monkeypatch.setattr(verticals.client, "upload_file", conflict)
 
     response = http.post(URL, json=REPORT)
 
     assert response.status_code == 409
     assert response.json()["error"]["step"] == "storage"
-    assert verticals.storage.entries[existing.path] is existing
+    assert verticals.client.entries[existing.path] is existing
 
 
 def test_issue_tracker_failure_undoes_the_file(verticals: Verticals, http: TestClient) -> None:
@@ -253,14 +264,14 @@ def test_storage_provider_failure_removes_a_file_the_lost_reply_hid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The upload reached storage but the reply was lost: the file is found and removed."""
-    original = verticals.storage.upload_file
+    original = verticals.client.upload_file
 
     def saved_then_lost(local_path: str, remote_path: str, *, overwrite: bool = False) -> None:
         original(local_path, remote_path, overwrite=overwrite)
         msg = "reply lost"
         raise ConnectionError(msg)
 
-    monkeypatch.setattr(verticals.storage, "upload_file", saved_then_lost)
+    monkeypatch.setattr(verticals.client, "upload_file", saved_then_lost)
 
     error = http.post(URL, json=REPORT).json()["error"]
 
@@ -280,8 +291,8 @@ def test_storage_cleanup_that_fails_is_reported(
         msg = "unreachable"
         raise ConnectionError(msg)
 
-    monkeypatch.setattr(verticals.storage, "upload_file", unreachable)
-    monkeypatch.setattr(verticals.storage, "delete", unreachable)
+    monkeypatch.setattr(verticals.client, "upload_file", unreachable)
+    monkeypatch.setattr(verticals.client, "delete", unreachable)
 
     error = http.post(URL, json=REPORT).json()["error"]
 
@@ -424,3 +435,27 @@ def test_calendar_error_message_hides_provider_details(
     error = http.post(URL, json=REPORT).json()["error"]
 
     assert "googleapis" not in error["message"]
+
+
+def test_storage_step_goes_through_the_shared_document_storage_contract(
+    verticals: Verticals,
+    http: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The report is saved with ``DocumentStorage.create(path, bytes)``, the shared contract."""
+    calls: list[tuple[str, bytes]] = []
+    original = verticals.storage.create
+
+    def record(path: str, content: bytes) -> FileInfo:
+        calls.append((path, content))
+        return original(path, content)
+
+    monkeypatch.setattr(verticals.storage, "create", record)
+
+    body = http.post(URL, json=REPORT).json()
+
+    assert [path for path, _ in calls] == [body["file"]["path"]]
+    content = calls[0][1].decode()
+    assert content.startswith(f"# {REPORT['title']}")
+    assert REPORT["description"] in content
+    assert f"Report: {body['report_id']}" in content
