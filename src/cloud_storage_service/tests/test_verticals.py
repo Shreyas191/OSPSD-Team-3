@@ -14,7 +14,11 @@ from issue_tracker_contract import IssueProvider, ServiceError
 
 from cloud_storage_service.app import check_configuration
 from cloud_storage_service.configuration import ConfigurationError
-from cloud_storage_service.dependencies import get_calendar, get_issue_tracker
+from cloud_storage_service.dependencies import (
+    get_calendar,
+    get_document_storage,
+    get_issue_tracker,
+)
 from cloud_storage_service.fake_verticals import (
     FailingCalendar,
     FailingIssueTracker,
@@ -214,7 +218,9 @@ def test_routes_get_the_implementations_built_at_startup() -> None:
     app = FastAPI()
     app.state.issue_tracker = InMemoryIssueTracker()
     app.state.calendar = InMemoryCalendar()
+    app.state.document_storage = object()
     request = Request({"type": "http", "app": app})
 
     assert get_issue_tracker(request) is app.state.issue_tracker
     assert get_calendar(request) is app.state.calendar
+    assert get_document_storage(request) is app.state.document_storage

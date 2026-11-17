@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import cloud_storage_client_api
-from dropbox_client_impl import DropboxAuthError, DropboxClient
+from dropbox_client_impl import DropboxAuthError, DropboxClient, DropboxDocumentStorage
 from fastapi import FastAPI
 
 from cloud_storage_service.configuration import ConfigurationError
@@ -78,6 +78,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # with_faults returns the client unchanged unless FAULT_INJECTION asks for faults
     # (test deployments only; see faults.py).
     app.state.storage_client = with_faults(build_storage_client())
+    # The same client seen through the shared storage contract (cloud_storage_api), which
+    # the composed workflow uses, like every other vertical's shared contract.
+    app.state.document_storage = DropboxDocumentStorage(app.state.storage_client)
     app.state.issue_tracker = build_issue_tracker()
     app.state.calendar = build_calendar()
     yield
