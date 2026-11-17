@@ -71,15 +71,15 @@ Both run on Google Cloud Run in project `ospsd-team3`, created with OpenTofu fro
 
 ## Using the package from another project
 
-To call Dropbox in-process instead of over HTTP, install `dropbox_client_impl` and use `DropboxDocumentStorage`, which implements the shared `cloud_storage_api.DocumentStorage` contract (tag `0.3.1`). No tag includes it yet (`v0.2.0` predates it), so pin commit `fde60d4`.
+To call Dropbox in-process instead of over HTTP, install `dropbox_client_impl` and use `DropboxDocumentStorage`, which implements the shared `cloud_storage_api.DocumentStorage` contract (tag `0.3.1`). Pin tag `v0.3.0`, the first release that includes it (`v0.2.0` predates it).
 
 Install the three packages explicitly and pass `--no-sources`. Our `pyproject.toml` files point some dependencies at uv sources, and one of those sources is local to this repository, so the install fails without the flag.
 
 ```bash
 uv pip install --no-sources \
   "cloud-storage-api @ git+https://github.com/Dayana20/ospsd26-cloud-storage@0.3.1#subdirectory=src/cloud_storage_api" \
-  "cloud-storage-client-api @ git+https://github.com/Shreyas191/OSPSD-Team-3@fde60d4#subdirectory=src/cloud_storage_client_api" \
-  "dropbox-client-impl @ git+https://github.com/Shreyas191/OSPSD-Team-3@fde60d4#subdirectory=src/dropbox_client_impl"
+  "cloud-storage-client-api @ git+https://github.com/Shreyas191/OSPSD-Team-3@v0.3.0#subdirectory=src/cloud_storage_client_api" \
+  "dropbox-client-impl @ git+https://github.com/Shreyas191/OSPSD-Team-3@v0.3.0#subdirectory=src/dropbox_client_impl"
 ```
 
 The packages declare Python 3.12 or newer, but CI and the deployed service run 3.14, so only 3.14 is tested.
