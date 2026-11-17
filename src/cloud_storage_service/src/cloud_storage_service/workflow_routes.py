@@ -20,7 +20,7 @@ from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from cloud_storage_service.dependencies import Calendar, IssueTracker, StorageClient
+from cloud_storage_service.dependencies import Calendar, IssueTracker, SharedStorage
 from cloud_storage_service.errors import ErrorDetail, SharedErrorRoute
 from cloud_storage_service.models import FileResponse
 from cloud_storage_service.telemetry import record_failure
@@ -103,7 +103,7 @@ _FAILURE = {"model": WorkflowErrorResponse}
 )
 def create_bug_report(
     request: BugReportRequest,
-    storage: StorageClient,
+    storage: SharedStorage,
     issues: IssueTracker,
     calendar: Calendar,
 ) -> BugReportResponse | JSONResponse:
@@ -136,7 +136,7 @@ def create_bug_report(
         )
     return BugReportResponse(
         report_id=result.report_id,
-        file=FileResponse.from_file(result.file),
+        file=FileResponse.from_info(result.file),
         issue=IssueResponse(id=result.issue.id, title=result.issue.title),
         event=EventResponse(**result.event.model_dump()),
     )

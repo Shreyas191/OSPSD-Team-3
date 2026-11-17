@@ -31,6 +31,7 @@ the exception's own message is kept in the warning log.
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Any
 
+from cloud_storage_api import ProviderUnavailableError, StorageError
 from cloud_storage_client_api import FileTooLargeError
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -126,16 +127,31 @@ _CLIENT_ERRORS: tuple[tuple[type[Exception] | tuple[type[Exception], ...], int, 
 )
 
 
+_UNAVAILABLE_MESSAGE = "The storage provider is unreachable or busy; try again later"
+_FAILED_MESSAGE = "The storage provider failed to complete the request"
+
+
 def classify_storage_error(error: ValueError | OSError) -> tuple[int, str, str]:
     """Return the status code, error code and caller-facing message for a contract exception."""
     for kinds, status_code, code in _CLIENT_ERRORS:
         if isinstance(error, kinds):
             return status_code, code, str(error)
     if isinstance(error, ConnectionError):
-        message = "The storage provider is unreachable or busy; try again later"
-        return status.HTTP_503_SERVICE_UNAVAILABLE, "provider_unavailable", message
-    message = "The storage provider failed to complete the request"
-    return status.HTTP_502_BAD_GATEWAY, "provider_error", message
+        return status.HTTP_503_SERVICE_UNAVAILABLE, "provider_unavailable", _UNAVAILABLE_MESSAGE
+    return status.HTTP_502_BAD_GATEWAY, "provider_error", _FAILED_MESSAGE
+
+
+def classify_shared_storage_error(error: StorageError) -> tuple[int, str, str]:
+    """Return the status code, error code and caller-facing message for a shared error.
+
+    Each shared error already carries the vertical's status and code. Client errors keep
+    their message; provider failures get the same fixed messages as the ``/files`` routes.
+    """
+    if error.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+        return error.status_code, error.code, error.message
+    if isinstance(error, ProviderUnavailableError):
+        return status.HTTP_503_SERVICE_UNAVAILABLE, "provider_unavailable", _UNAVAILABLE_MESSAGE
+    return status.HTTP_502_BAD_GATEWAY, "provider_error", _FAILED_MESSAGE
 
 
 def _describe(error: RequestValidationError) -> str:

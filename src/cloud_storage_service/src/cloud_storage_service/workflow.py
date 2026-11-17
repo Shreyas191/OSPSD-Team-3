@@ -2,7 +2,8 @@
 
 One operation, fixed steps, no language model:
 
-1. ``storage``: save the report as ``/bug-reports/<report_id>.md`` (our Dropbox client).
+1. ``storage``: save the report as ``/bug-reports/<report_id>.md`` (``DocumentStorage``,
+   the vertical's shared ``cloud_storage_api`` contract, tag ``0.3.1``).
 2. ``issue_tracker``: create an issue titled ``[bug <short id>] <title>`` (``IssueProvider``).
 3. ``calendar``: book a 30-minute triage event the next day at 15:00 UTC that names the
    issue (``CalendarService``).
@@ -20,20 +21,18 @@ may have reached the provider although no answer came back). Every record carrie
 ``report_id``, so a stray one can be found by it.
 """
 
-import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
-from pathlib import Path
 from typing import Literal, NoReturn
 
 from calendar_contract import CalendarError, CalendarService, CreateEvent, Event
 from calendar_contract import ErrorCode as CalendarErrorCode
-from cloud_storage_client_api import Client, File
+from cloud_storage_api import DocumentStorage, FileInfo, NotFoundError, StorageError
 from issue_tracker_contract import Issue, IssueProvider, ServiceError
 
-from cloud_storage_service.errors import classify_storage_error
+from cloud_storage_service.errors import classify_shared_storage_error
 
 __all__ = [
     "REPORT_FOLDER",
@@ -68,7 +67,7 @@ class BugReportResult:
     """The three records one successful run created."""
 
     report_id: str
-    file: File
+    file: FileInfo
     issue: Issue
     event: Event
 
@@ -99,7 +98,7 @@ class StepFailed(Exception):  # noqa: N818 (named for what happened, like FileNo
 def run_bug_report(
     report: BugReport,
     *,
-    storage: Client,
+    storage: DocumentStorage,
     issues: IssueProvider,
     calendar: CalendarService,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -122,15 +121,15 @@ def run_bug_report(
             try:
                 action()
                 failure.undone.append(description)
-            except (ServiceError, CalendarError, ValueError, OSError):
+            except (ServiceError, CalendarError, StorageError):
                 failure.left_behind.append(description)
         raise failure
 
     # 1. Storage: the report itself.
     try:
         file = _save_report(storage, path, report_id, report, now())
-    except (ValueError, OSError) as error:
-        status, code, message = classify_storage_error(error)
+    except StorageError as error:
+        status, code, message = classify_shared_storage_error(error)
         # A provider failure (5xx) may hide a saved file behind a lost reply. Its path is
         # known, so remove it. Never on a client error: a conflict means the file is not ours.
         uncertain = ""
@@ -190,12 +189,12 @@ def run_bug_report(
 
 
 def _save_report(
-    storage: Client,
+    storage: DocumentStorage,
     path: str,
     report_id: str,
     report: BugReport,
     created: datetime,
-) -> File:
+) -> FileInfo:
     body = (
         f"# {report.title}\n\n"
         f"- Report: {report_id}\n"
@@ -203,18 +202,16 @@ def _save_report(
         f"- Created: {created.astimezone(UTC).isoformat()}\n\n"
         f"{report.description}\n"
     )
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        local = Path(tmp_dir) / "report.md"
-        local.write_text(body, encoding="utf-8")
-        return storage.upload_file(str(local), path, overwrite=False)
+    # create never overwrites: a file already at the path is a ConflictError.
+    return storage.create(path, body.encode())
 
 
-def _remove_quietly(storage: Client, path: str) -> bool:
+def _remove_quietly(storage: DocumentStorage, path: str) -> bool:
     """Delete ``path`` if it exists; True when nothing is left there (or never was)."""
     try:
         storage.delete(path)
-    except FileNotFoundError:
+    except NotFoundError:
         return True
-    except (ValueError, OSError):
+    except StorageError:
         return False
     return True

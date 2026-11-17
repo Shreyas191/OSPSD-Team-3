@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.14"
 
 [manifest]
@@ -196,6 +196,7 @@ version = "0.1.0"
 source = { editable = "src/cloud_storage_service" }
 dependencies = [
     { name = "calendar-contract" },
+    { name = "cloud-storage-api" },
     { name = "cloud-storage-client-api" },
     { name = "dropbox-client-impl" },
     { name = "fastapi" },
@@ -215,6 +216,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "calendar-contract", git = "https://github.com/Airbus-A330/OSPSD-Calendar.git?rev=v0.1.0" },
+    { name = "cloud-storage-api", git = "https://github.com/Dayana20/ospsd26-cloud-storage?subdirectory=src%2Fcloud_storage_api&tag=0.3.1" },
     { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
     { name = "dropbox-client-impl", editable = "src/dropbox_client_impl" },
     { name = "fastapi", specifier = ">=0.115.0" },

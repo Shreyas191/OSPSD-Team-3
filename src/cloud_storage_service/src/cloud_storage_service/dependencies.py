@@ -2,14 +2,15 @@
 
 The app builds one client per vertical at startup (see ``app.py``) and keeps them on
 ``app.state``. Routes receive them through the functions below, so they only ever see the
-shared contract types (``Client``, ``IssueProvider``, ``CalendarService``), and tests
-replace them with ``app.dependency_overrides[...]``.
+contract types (``Client``, ``DocumentStorage``, ``IssueProvider``, ``CalendarService``),
+and tests replace them with ``app.dependency_overrides[...]``.
 """
 
 from typing import Annotated
 
 import cloud_storage_client_api
 from calendar_contract import CalendarService
+from cloud_storage_api import DocumentStorage
 from fastapi import Depends, Request
 from issue_tracker_contract import IssueProvider
 
@@ -18,6 +19,12 @@ def get_storage_client(request: Request) -> cloud_storage_client_api.Client:
     """Return the storage client created at startup."""
     client: cloud_storage_client_api.Client = request.app.state.storage_client
     return client
+
+
+def get_document_storage(request: Request) -> DocumentStorage:
+    """Return the shared ``cloud_storage_api`` storage created at startup (the workflow uses it)."""
+    storage: DocumentStorage = request.app.state.document_storage
+    return storage
 
 
 def get_issue_tracker(request: Request) -> IssueProvider:
@@ -33,5 +40,6 @@ def get_calendar(request: Request) -> CalendarService:
 
 
 StorageClient = Annotated[cloud_storage_client_api.Client, Depends(get_storage_client)]
+SharedStorage = Annotated[DocumentStorage, Depends(get_document_storage)]
 IssueTracker = Annotated[IssueProvider, Depends(get_issue_tracker)]
 Calendar = Annotated[CalendarService, Depends(get_calendar)]

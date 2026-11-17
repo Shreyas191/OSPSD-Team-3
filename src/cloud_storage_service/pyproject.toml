@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"  # team5-calendar requires 3.14
 dependencies = [
     "calendar-contract",
+    "cloud-storage-api",
     "cloud-storage-client-api",
     "dropbox-client-impl",
     "fastapi>=0.115.0",
@@ -46,6 +47,8 @@ dropbox-client-impl = { workspace = true }
 # HW3: other teams' implementations and the shared contracts they implement, each pinned to
 # a tag. `rev` matches the direct Git references inside Team 4's and Team 5's packages.
 calendar-contract = { git = "https://github.com/Airbus-A330/OSPSD-Calendar.git", rev = "v0.1.0" }
+# The vertical's shared storage contract, at the same tag dropbox-client-impl implements.
+cloud-storage-api = { git = "https://github.com/Dayana20/ospsd26-cloud-storage", tag = "0.3.1", subdirectory = "src/cloud_storage_api" }
 issue-tracker-contract = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git", rev = "issue-tracker-contract-v1.1.0", subdirectory = "contract" }
 team-4-issue-tracker-trello = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git", tag = "team-4-issue-tracker-trello-v1.0.0", subdirectory = "team-4-trello-impl" }
 team5-calendar = { git = "https://github.com/juno-junhyuk-lee/OSPSD-Team-5.git", tag = "team5-calendar-v0.1.0", subdirectory = "packages/team5-calendar" }
