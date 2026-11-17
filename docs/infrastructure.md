@@ -17,6 +17,7 @@ The service keeps no state of its own; every file lives in Dropbox. So it needs 
 | Runtime service account per environment (`storage-run-test`, `storage-run-demo`) | 2 | Identity each service runs as; reads only its own 3 secrets | The services would share one identity, so test could read demo's Dropbox credentials |
 | Deployer service account (`storage-deployer`) | 1 | Identity CI deploys with: push images, deploy revisions of these two services, nothing else | CI would need a person's or the owner's credentials |
 | Secrets (`dropbox-app-key-<env>`, `dropbox-app-secret-<env>`, `dropbox-refresh-token-<env>`) | 6 | Dropbox credentials, read by Cloud Run when an instance starts | The service stops at startup ("Startup failed: ... missing DROPBOX_...") |
+| HW3 secrets on test (`trello-api-key-test`, `trello-token-test`, `trello-list-id-test`, `calendar-token-test`) | 4 | Credentials for Team 4's Trello and Team 5's Google Calendar implementations, for our own test board and test account ([composition](#hw3-other-teams-implementations)) | Only when test runs `team4`/`team5`: the service stops at startup |
 | Public invoker binding (`allUsers` → `run.invoker`) | 2 | Graders and the conformance suite can call the API | Every caller needs a Google identity |
 
 Settings that matter (all in [`infra/variables.tf`](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/infra/variables.tf)):
@@ -137,6 +138,47 @@ tofu plan                               # must report: No changes.
 A second `plan` with unchanged inputs must show **no changes**. If it shows any, something outside OpenTofu changed a managed setting; read the diff before applying.
 
 Until the pipeline (item 2.6) deploys a release, the services run Google's `hello` image, which answers every path with a placeholder page. The pipeline deploys on every push to `hw2`, and it is set up for the team's project (`GCP_PROJECT_ID` in `.circleci/config.yml`), so a copy in another project gets no release from it. See [Release Pipeline](release-pipeline.md).
+
+## HW3: other teams' implementations
+
+The composed workflow (`POST /workflows/bug-report`) runs Team 4's Trello implementation and Team 5's Google Calendar implementation inside our service, against **our own** Trello board and Google test account. Which one runs is `vertical_implementations` per environment (default: `fake` for both, everywhere); the credentials are in [`infra/composition.tf`](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/infra/composition.tf), and only environments in `composition_environments` (default: `test`) get them. Secrets are mounted only on an environment that runs `team4` or `team5`, so the order below keeps every revision startable:
+
+1. **Create the empty secrets.** Apply with the defaults. The only change to the services is `ISSUE_TRACKER_IMPL=fake` and `CALENDAR_IMPL=fake`, which is what they already run.
+
+   ```bash
+   tofu plan -out=composition.tfplan   # 8 to add, 2 to change, 0 to destroy
+   tofu apply composition.tfplan
+   ```
+
+2. **Add the values**, from the machine that has them. Nothing is printed or saved in shell history.
+
+   - Trello (the project owner, from the repository's `.env`: the API key of a Trello app on the test account, a token authorized with `expiration=never&scope=read,write`, and the ID of the board list new issues go in):
+
+     ```bash
+     set -a; . ./.env; set +a
+     printf '%s' "$TRELLO_API_KEY" | gcloud secrets versions add trello-api-key-test --data-file=-
+     printf '%s' "$TRELLO_TOKEN"   | gcloud secrets versions add trello-token-test   --data-file=-
+     printf '%s' "$TRELLO_LIST_ID" | gcloud secrets versions add trello-list-id-test --data-file=-
+     ```
+
+   - Google token (whoever ran `python -m team5_calendar.authorize`; see [#72](https://github.com/Shreyas191/OSPSD-Team-3/issues/72)). To let someone other than the owner add it, put their account in `calendar_token_uploaders` in `terraform.tfvars` and apply: they can then add versions but never read the secret.
+
+     ```bash
+     gcloud secrets versions add calendar-token-test --project ospsd-team3 \
+       --data-file="$HOME/.config/ospsd-team3/token.json"
+     ```
+
+3. **Switch test to the real implementations.** In `terraform.tfvars`:
+
+   ```hcl
+   vertical_implementations = { test = { issue_tracker = "team4", calendar = "team5" } }
+   ```
+
+   `tofu plan` must show only the test service changing: the two settings, three `TRELLO_*` secret references, `CALENDAR_TOKEN_FILE`, and the token volume. Apply it. The new revision starts with the real providers; if it cannot start (a missing value), Cloud Run keeps serving the previous revision.
+
+**Renewing the Google token.** Google expires it after 7 days while the OAuth app is in Testing. Re-run `team5_calendar.authorize` and step 2's `gcloud secrets versions add`; new instances read `latest`. To pick it up at once, deploy a new revision (or let instances scale to zero).
+
+**Demonstrating a failure.** Set `calendar = "failing"` (or `issue_tracker = "failing"`) for test and apply; the endpoint then returns the error naming the failed step. `failing` is refused on demo.
 
 ## Roll back a release
 

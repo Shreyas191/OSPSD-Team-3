@@ -4,3 +4,7 @@ project_id = "your-team-project-id"
 circleci_org_id     = "<CircleCI organization ID>"
 circleci_project_id = "<CircleCI project ID>"
 alert_email         = "<who receives the 5xx alert>"
+
+# HW3 (composition.tf). Leave both out until the secrets have values; then, for example:
+# vertical_implementations = { test = { issue_tracker = "team4", calendar = "team5" } }
+# calendar_token_uploaders = ["user:<account that holds the Google token>"]
