@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
+import cloud_storage_api
 import cloud_storage_client_api
 from pydantic import AfterValidator, BaseModel, Field
 
@@ -70,6 +71,20 @@ class FileResponse(BaseModel):
             size=file.size,
             modified_at=utc_timestamp(file.modified),
             etag=file.etag,
+        )
+
+    @classmethod
+    def from_info(cls, info: cloud_storage_api.FileInfo) -> "FileResponse":
+        """Build a response from the shared contract's ``FileInfo`` (its fields already match)."""
+        return cls(
+            # The shared model allows no ID only for providers without one (S3); Dropbox
+            # always sets it.
+            id=info.id or "",
+            name=info.name,
+            path=info.path,
+            size=info.size,
+            modified_at=info.modified_at,
+            etag=info.etag,
         )
 
 

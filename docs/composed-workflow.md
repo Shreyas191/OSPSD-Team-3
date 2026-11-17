@@ -4,7 +4,7 @@
 
 | Step | Vertical | Contract | Implementation (chosen by configuration) | What it does |
 |---|---|---|---|---|
-| 1 `storage` | Cloud storage | `cloud_storage_client_api.Client` | Ours: Dropbox | Saves the report as `/bug-reports/<report_id>.md` |
+| 1 `storage` | Cloud storage | `cloud_storage_api` 0.3.1 `DocumentStorage` | Ours: `DropboxDocumentStorage` (`dropbox-client-impl`, tag `v0.3.0`), over the same client the `/files` routes use | Saves the report as `/bug-reports/<report_id>.md` |
 | 2 `issue_tracker` | Issue tracker | `issue-tracker-contract` v1.1.0 `IssueProvider` | `ISSUE_TRACKER_IMPL`: `team4` (Team 4, Trello), `fake`, `failing` | Creates the issue `[bug <first 8 of report_id>] <title>` |
 | 3 `calendar` | Calendar | `calendar-contract` v0.1.0 `CalendarService` | `CALENDAR_IMPL`: `team5` (Team 5, Google Calendar), `fake`, `failing` | Books `Triage: <title> (issue <issue id>)`, tomorrow 15:00–15:30 UTC |
 
@@ -61,7 +61,7 @@ A failed step returns the service's usual error body with four extra fields:
 | Failed step | Cause | Status | `code` |
 |---|---|---|---|
 | any | missing or invalid field | 400 | `invalid_request` |
-| `storage` | the storage contract's exceptions | same as the `/files` routes (e.g. 409 `conflict`, 503 `provider_unavailable`, 502 `provider_error`) | |
+| `storage` | the shared `cloud_storage_api` errors | each error's own status, the same as the `/files` routes (e.g. 409 `conflict`, 503 `provider_unavailable`, 502 `provider_error`) | |
 | `issue_tracker` | any `ServiceError` | 502 | `provider_error` |
 | `calendar` | `provider_unavailable` | 503 | `provider_unavailable` |
 | `calendar` | any other `CalendarError` | 502 | `provider_error` |

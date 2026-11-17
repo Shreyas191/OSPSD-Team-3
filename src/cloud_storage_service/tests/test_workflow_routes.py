@@ -2,24 +2,34 @@
 
 All three verticals are replaced through ``app.dependency_overrides`` with controlled
 implementations (the in-memory storage fake and the issue-tracker and calendar fakes), so
-these tests need no credentials and no network. They check the combined result, and for a
+these tests need no credentials and no network. Storage is the real shared-contract
+wrapper (``DropboxDocumentStorage``) over the in-memory ``Client`` fake, the same layering
+the app builds at startup, so storage failures injected into the fake reach the workflow
+as the shared ``cloud_storage_api`` errors. They check the combined result, and for a
 failure at each step: the status, the error body naming the step, what was undone, and
 what each vertical holds afterwards.
 """
 
+import importlib
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from calendar_contract import CalendarError, CreateEvent, Event
 from calendar_contract import ErrorCode as CalendarErrorCode
+from cloud_storage_api import DocumentStorage
+from dropbox_client_impl import DropboxDocumentStorage
 from fastapi.testclient import TestClient
 from issue_tracker_contract import ErrorCode as IssueErrorCode
 from issue_tracker_contract import Issue, ServiceError
 from tests.fakes import FakeStorageClient
 
 from cloud_storage_service.app import app
-from cloud_storage_service.dependencies import get_calendar, get_issue_tracker, get_storage_client
+from cloud_storage_service.dependencies import (
+    get_calendar,
+    get_document_storage,
+    get_issue_tracker,
+)
 from cloud_storage_service.fake_verticals import (
     FailingCalendar,
     FailingIssueTracker,
@@ -50,7 +60,7 @@ class Verticals:
 def verticals() -> Iterator[Verticals]:
     """Point the app's three dependencies at controlled implementations."""
     v = Verticals()
-    app.dependency_overrides[get_storage_client] = lambda: v.storage
+    app.dependency_overrides[get_document_storage] = lambda: DropboxDocumentStorage(v.storage)
     app.dependency_overrides[get_issue_tracker] = lambda: v.issues
     app.dependency_overrides[get_calendar] = lambda: v.calendar
     yield v
@@ -424,3 +434,59 @@ def test_calendar_error_message_hides_provider_details(
     error = http.post(URL, json=REPORT).json()["error"]
 
     assert "googleapis" not in error["message"]
+
+
+# --- Storage goes through the shared cloud_storage_api contract -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("client_error", "status", "code", "keeps_message"),
+    [
+        (PermissionError("No access to /bug-reports"), 403, "permission_denied", True),
+        (ValueError("Not a valid upload"), 422, "invalid_operation", True),
+        (OSError("dropbox internal detail"), 502, "provider_error", False),
+        (ConnectionError("dropbox internal detail"), 503, "provider_unavailable", False),
+    ],
+)
+def test_storage_errors_follow_the_shared_contract_and_hide_provider_details(  # noqa: PLR0913
+    verticals: Verticals,
+    http: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    client_error: Exception,
+    status: int,
+    code: str,
+    keeps_message: bool,  # noqa: FBT001
+) -> None:
+    """Each shared error keeps its status and code; 5xx messages are fixed, as on ``/files``."""
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise client_error
+
+    monkeypatch.setattr(verticals.storage, "upload_file", fail)
+
+    response = http.post(URL, json=REPORT)
+
+    assert response.status_code == status
+    error = response.json()["error"]
+    assert (error["code"], error["step"]) == (code, "storage")
+    assert (str(client_error) in error["message"]) is keeps_message
+    assert issues(verticals) == []
+
+
+def test_the_app_wraps_its_storage_client_in_the_shared_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At startup the workflow's storage is a ``DocumentStorage`` over the app's own client."""
+    fake = FakeStorageClient()
+    app_module = importlib.import_module("cloud_storage_service.app")
+    monkeypatch.setattr(app_module, "build_storage_client", lambda: fake)
+    for name in ("FAULT_INJECTION", "ISSUE_TRACKER_IMPL", "CALENDAR_IMPL", "K_SERVICE"):
+        monkeypatch.delenv(name, raising=False)
+
+    with TestClient(app) as client:  # runs the lifespan
+        storage = app.state.document_storage
+        response = client.post(URL, json=REPORT)
+
+    assert isinstance(storage, DocumentStorage)
+    assert response.status_code == 201
+    assert response.json()["file"]["path"] in fake.entries
