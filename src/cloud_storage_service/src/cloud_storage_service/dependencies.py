@@ -1,14 +1,17 @@
-"""How routes get the storage client.
+"""How routes get the client for each vertical.
 
-The app builds one client at startup (see ``app.py``) and keeps it on ``app.state``.
-Routes receive it through :func:`get_storage_client`, so they only ever see the abstract
-``Client``, and tests replace it with ``app.dependency_overrides[get_storage_client]``.
+The app builds one client per vertical at startup (see ``app.py``) and keeps them on
+``app.state``. Routes receive them through the functions below, so they only ever see the
+shared contract types (``Client``, ``IssueProvider``, ``CalendarService``), and tests
+replace them with ``app.dependency_overrides[...]``.
 """
 
 from typing import Annotated
 
 import cloud_storage_client_api
+from calendar_contract import CalendarService
 from fastapi import Depends, Request
+from issue_tracker_contract import IssueProvider
 
 
 def get_storage_client(request: Request) -> cloud_storage_client_api.Client:
@@ -17,4 +20,18 @@ def get_storage_client(request: Request) -> cloud_storage_client_api.Client:
     return client
 
 
+def get_issue_tracker(request: Request) -> IssueProvider:
+    """Return the issue tracker created at startup (chosen by ``ISSUE_TRACKER_IMPL``)."""
+    issue_tracker: IssueProvider = request.app.state.issue_tracker
+    return issue_tracker
+
+
+def get_calendar(request: Request) -> CalendarService:
+    """Return the calendar created at startup (chosen by ``CALENDAR_IMPL``)."""
+    calendar: CalendarService = request.app.state.calendar
+    return calendar
+
+
 StorageClient = Annotated[cloud_storage_client_api.Client, Depends(get_storage_client)]
+IssueTracker = Annotated[IssueProvider, Depends(get_issue_tracker)]
+Calendar = Annotated[CalendarService, Depends(get_calendar)]

@@ -53,6 +53,10 @@ Settings come only from the environment. The image contains none of them.
 | `PORT` | No (the image sets `8080`; Cloud Run sets its own) | No | Port the server listens on |
 | `HOST` | No (the image sets `0.0.0.0`) | No | Address the server binds to |
 | `MAX_IN_FLIGHT_REQUESTS` | No (default 10) | No | See [Overload Protection](overload-protection.md) |
+| `ISSUE_TRACKER_IMPL` | No (default `fake`) | No | Which issue-tracker implementation to use: `team4` (Team 4's Trello package), `fake` (in memory) or `failing` (every call fails; refused on demo). See `verticals.py` |
+| `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_LIST_ID` | With `ISSUE_TRACKER_IMPL=team4` | Key and token: yes | Our own Trello test account and the list new issues go in; read by Team 4's package |
+| `CALENDAR_IMPL` | No (default `fake`) | No | Which calendar implementation to use: `team5` (Team 5's Google Calendar package), `fake` or `failing` (refused on demo) |
+| `CALENDAR_TOKEN_FILE` | With `CALENDAR_IMPL=team5` | The file is | Path of the OAuth token file for our own Google test account (`python -m team5_calendar.authorize`) |
 
 ### The startup check
 
