@@ -18,13 +18,17 @@
 
 This chapter describes the HW3 Milestone 1 composition. One API operation, `POST /workflows/bug-report`, completes a concrete workflow across our cloud storage and other teams' issue tracker and calendar. It runs fixed steps, uses no language model, and works with one test account per provider. The chapters after this one describe the HW2 storage service it extends. Usage, request and response examples are in [docs/composed-workflow.md](docs/composed-workflow.md).
 
-**Status:**
-- Implemented on `hw2` ([#71](https://github.com/Shreyas191/OSPSD-Team-3/pull/71), [#73](https://github.com/Shreyas191/OSPSD-Team-3/pull/73), [#74](https://github.com/Shreyas191/OSPSD-Team-3/pull/74) and the shared-storage fix), tested with controlled implementations, and deployed through the HW2 pipeline. On the deployed services both other verticals still run `fake`.
-- Run locally against real Dropbox and Team 4's Trello implementation on Nov 17.
+**Status (Nov 17):**
+- Implemented on `hw2` ([#71](https://github.com/Shreyas191/OSPSD-Team-3/pull/71), [#73](https://github.com/Shreyas191/OSPSD-Team-3/pull/73), [#74](https://github.com/Shreyas191/OSPSD-Team-3/pull/74), [#76](https://github.com/Shreyas191/OSPSD-Team-3/pull/76)), tested with controlled implementations, and deployed through the HW2 pipeline as release `rel-3d16d2f`.
+- **The test service runs the real implementations:** `ISSUE_TRACKER_IMPL=team4` and `CALENDAR_IMPL=team5`, with their credentials in Secret Manager. The demo service runs the same release with `fake` for both.
+- **Deployed run against all three real providers** on Nov 17: `201` in 2.2 s. The file and the card were checked with their providers, and the event is waiting for a check in the test account's calendar (details in [how we verify it](#hw3-how-we-verify-it)):
+  - the report file `/bug-reports/f49644be535b40c8b458a688aef5f666.md` in Dropbox;
+  - Trello card `6afce1b0f7149de4bd44659e`;
+  - Google Calendar event `f2c9v7313ton9afoq0blku2b4k`, Nov 18 10:00–10:30 ET.
 - Pending:
-  - the deployed run with real providers (it waits for the Google token secret, [#72](https://github.com/Shreyas191/OSPSD-Team-3/issues/72));
-  - the swap to a second team's implementation (no compatible package yet; see [open questions](#hw3-open-questions));
-  - the cross-team review.
+  - the failure run on the deployed service (`CALENDAR_IMPL=failing`);
+  - the swap to a second team's implementation (see [open questions](#hw3-open-questions));
+  - this chapter's review, within the team and by another team.
 
 ### HW3: how the system fits together
 
@@ -158,7 +162,11 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
   - **Composition:** on the deployed test service with `team4` and `team5`, check the file in Dropbox, the card on the Trello board and the event in the test account's calendar. Success is the `201` body matching the records each provider shows.
   - **Failure:** on test with `CALENDAR_IMPL=failing`, the caller gets the documented error naming `calendar`, and both providers show no leftover records.
   - **Swap:** change `CALENDAR_IMPL` (or `ISSUE_TRACKER_IMPL`) to a second team's package and repeat the composition check, with no code change.
-  - Evidence from each run is linked here once recorded.
+  - **Recorded so far:** composition on the deployed test service, Nov 17, revision `cloud-storage-service-test-00035-z4g` (the configuration now serving as `rel-3d16d2f`), `report_id` `f49644be535b40c8b458a688aef5f666`:
+    - Dropbox: the file's metadata and contents were read back through the API ("# Login fails after password reset", 257 bytes);
+    - Trello: the card was read directly from Trello with Team 4's provider;
+    - Google Calendar: Team 5's implementation returned event `f2c9v7313ton9afoq0blku2b4k` (Nov 18, 10:00–10:30 ET); **to be confirmed** in the test account's calendar.
+  - Screenshots, the failure run and the swap run are added here as they are recorded.
 
 ### HW3 review
 
