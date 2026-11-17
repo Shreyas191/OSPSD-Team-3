@@ -74,3 +74,37 @@ variable "alert_5xx_threshold" {
   type        = number
   default     = 5
 }
+
+variable "composition_environments" {
+  description = "Environments that get the secrets for other teams' implementations (composition.tf). Only test runs real providers for HW3; demo stays on the fakes."
+  type        = set(string)
+  default     = ["test"]
+}
+
+variable "vertical_implementations" {
+  description = <<-EOT
+    Which implementation each environment runs for the issue tracker and the calendar
+    (ISSUE_TRACKER_IMPL, CALENDAR_IMPL; see verticals.py). "team4" mounts the Trello
+    secrets and "team5" the Google token, so set them only after those secrets have values
+    (composition.tf). An environment that is not listed runs "fake" for both.
+  EOT
+  type = map(object({
+    issue_tracker = string
+    calendar      = string
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for impl in values(var.vertical_implementations) :
+      contains(["team4", "fake", "failing"], impl.issue_tracker) && contains(["team5", "fake", "failing"], impl.calendar)
+    ])
+    error_message = "issue_tracker must be team4, fake or failing; calendar must be team5, fake or failing."
+  }
+}
+
+variable "calendar_token_uploaders" {
+  description = "Members (e.g. \"user:someone@example.com\") who may add new versions of the Google token secret but not read it. Kept in terraform.tfvars."
+  type        = list(string)
+  default     = []
+}

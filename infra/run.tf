@@ -1,6 +1,13 @@
 # One Cloud Run service per environment. Each deploy creates a fixed revision, and rolling
 # back means sending traffic to the previous revision (docs/infrastructure.md).
 
+locals {
+  impl = {
+    for env in var.environments :
+    env => lookup(var.vertical_implementations, env, { issue_tracker = "fake", calendar = "fake" })
+  }
+}
+
 resource "google_cloud_run_v2_service" "service" {
   for_each = var.environments
 
@@ -18,6 +25,20 @@ resource "google_cloud_run_v2_service" "service" {
     scaling {
       min_instance_count = 0
       max_instance_count = var.max_instances
+    }
+
+    dynamic "volumes" {
+      for_each = local.impl[each.key].calendar == "team5" ? ["calendar-token"] : []
+      content {
+        name = volumes.value
+        secret {
+          secret = google_secret_manager_secret.calendar_token[each.key].secret_id
+          items {
+            version = "latest"
+            path    = local.calendar_token_file
+          }
+        }
+      }
     }
 
     containers {
@@ -54,6 +75,46 @@ resource "google_cloud_run_v2_service" "service" {
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.project_id
+      }
+
+      # HW3 composition (composition.tf): which team's implementation runs.
+      env {
+        name  = "ISSUE_TRACKER_IMPL"
+        value = local.impl[each.key].issue_tracker
+      }
+      env {
+        name  = "CALENDAR_IMPL"
+        value = local.impl[each.key].calendar
+      }
+
+      # Team 4's Trello package: mounted only when this environment runs it.
+      dynamic "env" {
+        for_each = local.impl[each.key].issue_tracker == "team4" ? local.trello_settings : toset([])
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.trello["${each.key}/${env.value}"].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      # Team 5's calendar package reads the token from a file; mounted only when it runs.
+      dynamic "env" {
+        for_each = local.impl[each.key].calendar == "team5" ? ["CALENDAR_TOKEN_FILE"] : []
+        content {
+          name  = env.value
+          value = "${local.calendar_token_dir}/${local.calendar_token_file}"
+        }
+      }
+      dynamic "volume_mounts" {
+        for_each = local.impl[each.key].calendar == "team5" ? ["calendar-token"] : []
+        content {
+          name       = volume_mounts.value
+          mount_path = local.calendar_token_dir
+        }
       }
 
       dynamic "env" {
@@ -109,6 +170,8 @@ resource "google_cloud_run_v2_service" "service" {
   depends_on = [
     google_project_service.apis,
     google_secret_manager_secret_iam_member.runtime_reads_own_secrets,
+    google_secret_manager_secret_iam_member.runtime_reads_trello,
+    google_secret_manager_secret_iam_member.runtime_reads_calendar_token,
   ]
 }
 
