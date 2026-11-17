@@ -13,6 +13,7 @@ import cloud_storage_client_api
 from dropbox_client_impl import DropboxAuthError, DropboxClient
 from fastapi import FastAPI
 
+from cloud_storage_service.configuration import ConfigurationError
 from cloud_storage_service.dependencies import get_storage_client
 from cloud_storage_service.errors import add_error_handlers
 from cloud_storage_service.faults import with_faults
@@ -20,6 +21,7 @@ from cloud_storage_service.models import FileResponse
 from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
 from cloud_storage_service.routes import router
 from cloud_storage_service.telemetry import RequestTelemetryMiddleware, configure_tracing
+from cloud_storage_service.verticals import build_calendar, build_issue_tracker
 
 __all__ = [
     "ConfigurationError",
@@ -29,14 +31,6 @@ __all__ = [
     "check_configuration",
     "get_storage_client",
 ]
-
-
-class ConfigurationError(RuntimeError):
-    """Required configuration, such as a provider credential, is missing or unusable.
-
-    The message names the settings involved and never contains their values, so it is safe
-    to log.
-    """
 
 
 def build_storage_client() -> cloud_storage_client_api.Client:
@@ -62,9 +56,10 @@ def build_storage_client() -> cloud_storage_client_api.Client:
 def check_configuration() -> None:
     """Fail fast, before the server starts, if required configuration is missing.
 
-    It builds the storage client once and discards it. Building makes no network call, so
-    this checks that the settings are present, not that the provider accepts them; that is
-    ``GET /health/provider``'s job. A provider outage therefore never stops the service
+    It builds the storage client, the issue tracker and the calendar once and discards them
+    (see ``verticals.py`` for how the last two are chosen). Building makes no network call,
+    so this checks that the settings are present, not that the providers accept them; that
+    is ``GET /health/provider``'s job. A provider outage therefore never stops the service
     from starting.
 
     Raises:
@@ -72,14 +67,18 @@ def check_configuration() -> None:
 
     """
     build_storage_client()
+    build_issue_tracker()
+    build_calendar()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Create the storage client when the app starts; it lives as long as the app."""
+    """Create one client per vertical when the app starts; each lives as long as the app."""
     # with_faults returns the client unchanged unless FAULT_INJECTION asks for faults
     # (test deployments only; see faults.py).
     app.state.storage_client = with_faults(build_storage_client())
+    app.state.issue_tracker = build_issue_tracker()
+    app.state.calendar = build_calendar()
     yield
 
 
