@@ -60,6 +60,10 @@ $ curl -s "$B/files/metadata?path=/ospsd-tutorial/Docs/missing.txt"
 {"error":{"code":"not_found","message":"No file or folder at '/ospsd-tutorial/Docs/missing.txt'"}}
 ```
 
+### Composed workflow (HW3)
+
+`POST /workflows/bug-report` with `{"title", "description", "reporter"}` saves the report in Dropbox, opens an issue (Team 4's Trello implementation) and books a triage event (Team 5's Google Calendar implementation), each through its shared contract, and returns all three records (`201`). If a step fails, the earlier steps are undone and the error names the failed `step`. Which team's implementation runs is configuration (`ISSUE_TRACKER_IMPL`, `CALENDAR_IMPL`). Usage, errors and retry behaviour: [docs/composed-workflow.md](docs/composed-workflow.md).
+
 ## Deployed service
 
 | Environment | URL | Deployed from |

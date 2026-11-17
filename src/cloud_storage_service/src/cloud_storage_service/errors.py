@@ -81,7 +81,7 @@ class SharedErrorRoute(APIRoute):
                 status_code, code = status.HTTP_400_BAD_REQUEST, "invalid_request"
                 message = reason = _describe(e)
             except (ValueError, OSError) as e:
-                status_code, code, message = _classify(e)
+                status_code, code, message = classify_storage_error(e)
                 reason = str(e)
             record_failure(operation, status_code, code, reason)
             return error_response(status_code, code, message)
@@ -126,7 +126,7 @@ _CLIENT_ERRORS: tuple[tuple[type[Exception] | tuple[type[Exception], ...], int, 
 )
 
 
-def _classify(error: ValueError | OSError) -> tuple[int, str, str]:
+def classify_storage_error(error: ValueError | OSError) -> tuple[int, str, str]:
     """Return the status code, error code and caller-facing message for a contract exception."""
     for kinds, status_code, code in _CLIENT_ERRORS:
         if isinstance(error, kinds):
