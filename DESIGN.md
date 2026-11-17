@@ -3,8 +3,8 @@
 **By:** John Ashik, Shreyas Kaldate, Zesan Rahman, Jing Qian, Victor Wang
 **Vertical:** Document Storage (provider: Dropbox)
 **Reviewers:** Victor Wang (Team 3, whole design), Darsh (Team 6, contract-facing parts)
-**Last updated:** 11/12/2026
-**Status:** Implemented on `hw2` and released as [`v0.2.0`](https://github.com/Shreyas191/OSPSD-Team-3/releases/tag/v0.2.0), deployed to both the test and demo services by the pipeline. The design review in [Review](#review) is not complete. Sections written on Nov 4 as a plan now describe what was built. [What changed during implementation, and why](#what-changed-during-implementation-and-why) lists every place where the build differs from the Nov 4 plan.
+**Last updated:** 11/17/2026
+**Status:** HW3 Milestone 1 (composing the services) is in [the first chapter](#hw3-milestone-1-composing-the-services); its review is not started. HW2: implemented on `hw2` and released as [`v0.2.0`](https://github.com/Shreyas191/OSPSD-Team-3/releases/tag/v0.2.0), deployed to both the test and demo services by the pipeline. The design review in [Review](#review) is not complete. Sections written on Nov 4 as a plan now describe what was built. [What changed during implementation, and why](#what-changed-during-implementation-and-why) lists every place where the build differs from the Nov 4 plan.
 
 **Links:**
 
@@ -13,6 +13,173 @@
 - Decision memo: <https://docs.google.com/document/d/1K9U8uO-FVbeu0PGlWpr_frJ6YQmoHXdz/edit?usp=sharing&ouid=104071874439967208816&rtpof=true&sd=true>
 - Team 3 repository: <https://github.com/Shreyas191/OSPSD-Team-3> (branch `hw2`)
 - Operating the deployed service (what runs, which version, health, logs, rollback): [docs/operations.md](docs/operations.md)
+
+## HW3 Milestone 1: Composing the services
+
+This chapter describes the HW3 Milestone 1 composition. One API operation, `POST /workflows/bug-report`, completes a concrete workflow across our cloud storage and other teams' issue tracker and calendar. It runs fixed steps, uses no language model, and works with one test account per provider. The chapters after this one describe the HW2 storage service it extends. Usage, request and response examples are in [docs/composed-workflow.md](docs/composed-workflow.md).
+
+**Status:**
+- Implemented on `hw2` ([#71](https://github.com/Shreyas191/OSPSD-Team-3/pull/71), [#73](https://github.com/Shreyas191/OSPSD-Team-3/pull/73), [#74](https://github.com/Shreyas191/OSPSD-Team-3/pull/74) and the shared-storage fix), tested with controlled implementations, and deployed through the HW2 pipeline. On the deployed services both other verticals still run `fake`.
+- Run locally against real Dropbox and Team 4's Trello implementation on Nov 17.
+- Pending:
+  - the deployed run with real providers (it waits for the Google token secret, [#72](https://github.com/Shreyas191/OSPSD-Team-3/issues/72));
+  - the swap to a second team's implementation (no compatible package yet; see [open questions](#hw3-open-questions));
+  - the cross-team review.
+
+### HW3: how the system fits together
+
+```mermaid
+flowchart LR
+  caller([Caller]) -->|"POST /workflows/bug-report<br/>{title, description, reporter}"| route
+  subgraph svc["Cloud Run: cloud-storage-service-&lt;env&gt; (stateless, no database)"]
+    route["workflow_routes.py<br/>validates input, builds the response"] --> wf["workflow.py<br/>fixed steps, undo on failure"]
+    wf -->|"1 · DocumentStorage<br/>(cloud_storage_api 0.3.1)"| ds["DropboxDocumentStorage<br/>ours, v0.3.0"]
+    wf -->|"2 · IssueProvider<br/>(issue-tracker-contract v1.1.0)"| it["ISSUE_TRACKER_IMPL<br/>team4 · fake · failing"]
+    wf -->|"3 · CalendarService<br/>(calendar-contract v0.1.0)"| cal["CALENDAR_IMPL<br/>team5 · fake · failing"]
+  end
+  ds --> dbx[("Dropbox app folder<br/>/bug-reports/")]
+  it -->|"Team 4's TrelloIssueProvider"| trello[("Trello test board")]
+  cal -->|"Team 5's team5-calendar"| gcal[("Google Calendar<br/>shared test account")]
+  sm[["Secret Manager"]] -.->|"read when an instance starts"| svc
+```
+
+The three verticals run in one process. Each box on the right is a package. The workflow sees only the three contract types, and `verticals.py` is the only module that names another team's package.
+
+| Vertical | Shared contract (tag) | Implementation we run | Chosen by | Test account and where its credentials live |
+|---|---|---|---|---|
+| Cloud storage | `cloud_storage_api` [`0.3.1`](https://github.com/Dayana20/ospsd26-cloud-storage/tree/0.3.1) (Dayana20/ospsd26-cloud-storage) | Ours: `DropboxDocumentStorage` (`v0.3.0`) | Always ours (`app.py`) | One Dropbox app per environment; `dropbox-*-<env>` in Secret Manager; locally `.env` and `.dropbox_token.json` |
+| Issue tracker | `issue-tracker-contract` `issue-tracker-contract-v1.1.0` (Tyler-Arciniaga/OSPSD-Team-4, `contract/`) | Team 4: `team-4-issue-tracker-trello` `team-4-issue-tracker-trello-v1.0.0` | `ISSUE_TRACKER_IMPL` | Our Trello test board; `trello-{api-key,token,list-id}-test` in Secret Manager; locally `.env` |
+| Calendar | `calendar-contract` `v0.1.0` (Airbus-A330/OSPSD-Calendar) | Team 5: `team5-calendar` `team5-calendar-v0.1.0` | `CALENDAR_IMPL` | Google account `shareddrive1515@gmail.com`, as a test user of our OAuth app; `calendar-token-test` in Secret Manager, mounted as a file; locally `~/.config/ospsd-team3/token.json` |
+
+Every package is pinned to a tag in `src/cloud_storage_service/pyproject.toml`, and `uv.lock` records each tag's exact commit. Secrets are created empty by OpenTofu (`infra/composition.tf`), filled by a person with `gcloud secrets versions add`, and mounted only on an environment that runs the implementation needing them. Nothing secret is in the repository, the image, the OpenTofu state or the logs.
+
+**Storage the workflow uses.** None of its own: the service stays stateless. The records live in the three providers, linked by IDs. The file name is the `report_id`, the issue title carries its first 8 characters, and the event title carries the issue ID.
+
+#### A request, traced
+
+Observed locally on Nov 17 with real Dropbox and Team 4's Trello implementation on our test board. The calendar was the in-memory fake, until the Google token is deployed.
+
+1. **Input.** `POST /workflows/bug-report` with `{"title": "Login fails after password reset", "description": "Reset the password, log in with the new one: 500.", "reporter": "victor"}`.
+   - `BugReportRequest` checks the lengths, that no field is blank, and that there are no extra fields. Any failure is `400 invalid_request` before any provider is called.
+   - The workflow draws `report_id = c34bddd9271c4919b0d120ccb9184e64`.
+2. **Storage.** `DocumentStorage.create("/bug-reports/c34bddd9….md", b"# Login fails after password reset\n\n- Report: c34bddd9…\n- Reporter: victor\n- Created: 2026-11-17T…Z\n\n…")` returns a `FileInfo`.
+   - Intermediate state: the file exists. The undo list is `[delete file]`.
+3. **Issue tracker.** `IssueProvider.create_issue("[bug c34bddd9] Login fails after password reset")` returns `Issue(id="<card id>", …)`, the ID Trello assigned.
+   - Intermediate state: the file and the card exist. The undo list is `[delete file, delete issue]`.
+4. **Calendar.** `CalendarService.create(CreateEvent(title="Triage: Login fails after password reset (issue <card id>)", start="2026-11-18T15:00:00+00:00", end="2026-11-18T15:30:00+00:00"))` returns an `Event`. The contract model validates the times and the title.
+5. **Result.** `201` with `{report_id, file, issue, event}`. The file and the card were then confirmed with each provider.
+
+The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarError(provider_unavailable)`:
+- The workflow deletes the issue, then the file.
+- It returns `503 {"error": {"code": "provider_unavailable", "message": "The calendar is unreachable; try again later", "step": "calendar", "report_id": "2e91d2fa…", "undone": ["issue 6afbbdfb…", "file /bug-reports/2e91d2fa….md"], "left_behind": []}}`.
+- Afterwards Trello answered `not_found` for the card and Dropbox had no file.
+
+### HW3: what decisions make it work
+
+#### Decision H1: on a partial failure, undo the finished steps, then report
+
+- **Constraint.**
+  - The service is stateless, and Milestone 1 has no database.
+  - None of the three contracts offers an idempotent create:
+    - the calendar contract says "creation is not idempotent";
+    - `IssueProvider.create_issue(title)` has no key;
+    - `DocumentStorage.create` refuses an existing path.
+  - The handout asks that a retry not duplicate finished work, and that unfinished work never be reported as done.
+- **Approach.** The steps that succeeded are undone newest first: the issue, then the file. The error names the failed `step` and lists what was `undone` and anything possibly `left_behind`. A retry starts over with a new `report_id`. Undoing is possible because each contract has a delete for what we created.
+- **Alternative.** Keep the finished steps and resume. The caller would send an idempotency key, and the service would store which steps finished for that key, then skip them on retry.
+- **Tradeoff we accept.** A retry redoes the earlier steps: three provider writes instead of one. A short window exists where the records exist before they're undone. In return we need no database and no key protocol, and a failed run leaves a clean state. Resuming would need durable state (a database, or a store keyed by request) and a way to find a record created by a previous attempt. The issue-tracker contract can't do the latter: Team 4's `find_tagged_issue` exists only on their package, outside the contract.
+- **Ordering.** Storage comes first because it's the only step whose record we can find without its ID: the path comes from the `report_id`. So an uncertain upload can be cleaned up.
+- **Revisit when:**
+  - Milestone 2 adds the persisted database the product needs anyway, so step state can be stored;
+  - a step has a side effect that can't be undone (for example, invitations sent to people);
+  - the contracts add idempotency keys or a find-by-tag operation.
+
+#### Decision H2: other teams' implementations run in our process as tagged packages, chosen per environment by configuration
+
+- **Constraint.**
+  - The spec requires tagged shared contracts, another team's implementation for two verticals, "one test account" with credentials outside the repository, and swapping teams with no code change.
+  - Team 4's README says other teams should use their package, not their deployed service.
+  - Team 5 publishes `team5-calendar` for the same purpose.
+- **Approach.**
+  - `verticals.py` builds each vertical from one setting (`ISSUE_TRACKER_IMPL`, `CALENDAR_IMPL`), with `fake` and `failing` controlled implementations alongside the real ones.
+  - OpenTofu sets the value per environment (`vertical_implementations`) and mounts only the credentials of the chosen implementation.
+  - A wrong value or a missing credential stops startup with a message naming the setting. The previous revision keeps serving.
+- **Alternative.** Call each team's deployed HTTP service with a key they issue.
+- **Tradeoff we accept.**
+  - We own the test accounts and their upkeep. The Google token of an OAuth app in Testing expires every 7 days and must be renewed (see [failures](#hw3-what-could-go-wrong)).
+  - Every implementation must install alongside ours. `team5-calendar` requires Python 3.14, so the service moved to 3.14 ([#70](https://github.com/Shreyas191/OSPSD-Team-3/pull/70)). Our published packages still support 3.12.
+  - A swap candidate that caps Python below 3.14 (Teams 2 and 7 today) can't be used until it lifts the cap.
+
+  In return, records land in accounts we can inspect, nobody else's quota or availability is involved, and the swap is one setting.
+- **Revisit when:** a team offers only a deployed service, or a later level needs per-user provider accounts. Then implementations must take credentials per request rather than from the environment.
+
+#### Boundaries and rules that hold when a dependency fails
+
+- **Inputs.**
+  - The HTTP layer validates the request: lengths, no blank fields, no extra fields.
+  - The contract models validate what crosses each boundary: `CreateEvent` checks the RFC 3339 times and the title.
+  - The issue title is cut to the issue-tracker contract's 256 characters.
+- **Selection.**
+  - `app.py` is the only place naming Dropbox.
+  - `verticals.py` is the only place naming Team 4's or Team 5's package.
+  - Routes get each vertical through a FastAPI dependency, which tests override.
+- **Credentials.** They come from the environment or a mounted file, filled from Secret Manager. Startup errors name the missing setting, never its value.
+- **Rules:**
+  1. `201` only when all three records exist.
+  2. Never delete a record this run didn't create. A storage `409 conflict` deletes nothing.
+  3. Never retry a write automatically. Each contract warns that a failed write may have been applied.
+  4. Report every record that may remain (`left_behind`), never hide it.
+  5. Provider messages go to the log, not to the caller. 5xx messages are fixed.
+  6. `failing` implementations are refused on the demo service.
+
+### HW3: what could go wrong
+
+| Failure | Trigger | State left behind | What the caller sees | Recovery | Test |
+|---|---|---|---|---|---|
+| **Calendar fails after the issue is created (partial failure)** | Google Calendar down, or the token expired | None: the issue, then the file, are deleted | `503 provider_unavailable` (or `502`), `step: calendar`, `undone: [issue, file]` | Retry; it creates new records once the calendar works | `test_calendar_unavailable_undoes_the_issue_then_the_file`, `test_retry_after_a_calendar_failure_leaves_exactly_one_of_each`; live with `CALENDAR_IMPL=failing` |
+| Google token expired (7 days in Testing) | Token not renewed | As above, on every request | As above | Run `team5_calendar.authorize` again, then `gcloud secrets versions add calendar-token-test` (docs/infrastructure.md) | Covered by the row above; renewal is in the runbook |
+| Issue tracker fails | Trello down, or credentials rejected | None: the file is deleted | `502 provider_error`, `step: issue_tracker`, `undone: [file]` | Retry | `test_issue_tracker_failure_undoes_the_file` |
+| Uncertain write (issue or event) | The request reached the provider but the reply was lost | Possibly one card or event | The step's error, with `left_behind: ["possibly an issue titled '[bug <id8>] …'"]` | Find it by the `report_id` prefix and delete it, then retry | `test_uncertain_issue_write_…`, `test_uncertain_calendar_write_…` |
+| An undo fails | The provider is down when we delete | The record named in `left_behind` | The original step's error; `left_behind: ["issue <id>"]` | Delete it by ID | `test_an_undo_that_fails_is_listed_as_left_behind` |
+| Storage reply lost | The upload reached Dropbox, but no reply came | None: the file is deleted by its known path. If that delete fails too, `left_behind` names the path | `503`, `step: storage` | Retry | `test_storage_provider_failure_removes_a_file_the_lost_reply_hid`, `test_storage_cleanup_that_fails_is_reported` |
+| Storage path taken | A file already exists at the path | Nothing changed; the existing file is kept | `409 conflict`, `step: storage` | Retry; it draws a new `report_id` | `test_storage_conflict_is_reported_and_the_existing_file_is_kept` |
+| Misconfiguration | Unknown `*_IMPL` value, a missing Trello setting or token file, or `failing` on demo | The new revision doesn't start; the previous one keeps serving | Nothing: the previous release answers | Fix the setting and apply again | `test_verticals.py` |
+| Another team's implementation diverges from its contract | A behaviour the contract doesn't pin down | Depends on the case | Our error format, mapped from the contract error | File an issue with a reproduction on the owner's repo (none needed so far) | Calendar fakes pass the contract's own conformance suite; real implementations are checked live |
+
+**The handout's example, in our order:** "if an event is created but saving its summary fails". Our workflow saves first, so the matching case is a later step failing after earlier ones succeeded. Nothing finished is kept, so a retry can't duplicate it, and a failed run can't be mistaken for a finished one: the response is an error that lists what was undone.
+
+#### HW3: how we verify it
+
+- **With controlled implementations** (CI, every commit):
+  - 23 HTTP tests run the endpoint against the in-memory storage behind our real `DropboxDocumentStorage`, and the fake and failing issue tracker and calendar. They cover success, a failure at each step, uncertain writes, a failed undo, retry, and validation.
+  - The calendar fakes pass `calendar_contract`'s conformance suite.
+  - `test_verticals.py` covers selection and startup.
+- **With real providers:**
+  - **Composition:** on the deployed test service with `team4` and `team5`, check the file in Dropbox, the card on the Trello board and the event in the test account's calendar. Success is the `201` body matching the records each provider shows.
+  - **Failure:** on test with `CALENDAR_IMPL=failing`, the caller gets the documented error naming `calendar`, and both providers show no leftover records.
+  - **Swap:** change `CALENDAR_IMPL` (or `ISSUE_TRACKER_IMPL`) to a second team's package and repeat the composition check, with no code change.
+  - Evidence from each run is linked here once recorded.
+
+### HW3 review
+
+| Review | Reviewer | Scope | Status |
+|---|---|---|---|
+| Within the team | _to be assigned_ | This chapter and docs/composed-workflow.md | Not started |
+| Another team | _to be assigned_ | Integration design: contracts, decisions, failure behaviour | Not started |
+
+| # | Comment and reviewer | Disposition | Link |
+|---|---|---|---|
+| — | No comments recorded yet | — | — |
+
+### HW3 open questions
+
+| # | Question | Status | Owner |
+|---|---|---|---|
+| H1 | Which second team's implementation do we swap to? | **Open.** Team 7 (`baskd`) and Team 2 implement `calendar-contract` but cap Python below 3.13; we've asked them to allow 3.14. If neither does, we demonstrate the swap between `team5` and the controlled `fake`, and record that no second team's package was installable. | Shreyas |
+| H2 | Which steps will need judgment later, and which stay fixed? | **Proposed:** an agent would choose the issue title and summary, the triage time (from free calendar time) and whether a meeting is needed at all. Saving the report, linking the IDs, the undo and the error reporting stay fixed code. | Team |
+| H3 | What if Team 4 or Team 5 is unavailable? | **Proposed:** switch the vertical to `fake` (one setting) so the rest of the workflow keeps working, and report the outage to the owning team. The swap candidate in H1 is the real fallback. | Team |
+| H4 | Contract mismatches found | None so far. Each will be filed on the owner's repository with a reproduction, not worked around. | Team |
+| H5 | Renewing the Google token every 7 days | **Accepted operational task** until the OAuth app is verified or per-user accounts arrive (Milestone 2). The steps are in docs/infrastructure.md. | John |
 
 ## Introduction
 
@@ -450,7 +617,7 @@ The Nov 4 work breakdown, with its outcomes.
 
 | # | Question | Status on Nov 11 | Owner |
 |---|---|---|---|
-| 1 | Depend on the shared contract package (memo Q11) | **Open.** Tag `0.3.1` has the storage contract (`cloud_storage_api`), but its `DocumentStorage` interface differs from our `Client`, and we haven't pinned it. Our HTTP behaviour matches it. | Shreyas |
+| 1 | Depend on the shared contract package (memo Q11) | **Done in HW3.** `cloud_storage_api` `0.3.1` is pinned, `DropboxDocumentStorage` implements it (release `v0.3.0`), and the composed workflow saves through it. The HTTP routes still use our `Client`. | Shreyas |
 | 2 | 409 or 422 for an occupied destination or a stale replace (memo Q3) | **Settled: `409 conflict`**, as in contract `0.3.1` | Darsh (Team 6) |
 | 3 | One code name per status | **Settled:** contract `0.3.1`'s error table, which `errors.py` follows | Darsh; John and Victor implemented |
 | 4 | 404 means only a missing file; a 502/503 after a write means the outcome is unknown (memo Q8) | **Implemented** (`route_not_found`; no retries) | Darsh |
