@@ -114,7 +114,7 @@ OSPSD-Team-3/
 
 ### 1. Prerequisites
 
--   Python 3.12 or higher
+-   Python 3.14 for development and the service (`uv` installs it from `.python-version`). The packages other teams install, `cloud-storage-client-api` and `dropbox-client-impl`, still support Python 3.12 or higher.
 -   `uv` – A fast, all-in-one Python package manager.
 
 ### 2. Initial Setup

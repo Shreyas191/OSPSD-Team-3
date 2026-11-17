@@ -2,7 +2,7 @@
 
 Guide for contributors (people and coding agents) working in this repository. Read this first, then follow the links; this file does not repeat what other docs already cover.
 
-**Vertical:** Document Storage · **Provider:** Dropbox · **Language:** Python 3.12 (`uv` workspace)
+**Vertical:** Document Storage · **Provider:** Dropbox · **Language:** Python 3.14 (`uv` workspace; packages other teams install support 3.12+)
 
 ## Code map
 

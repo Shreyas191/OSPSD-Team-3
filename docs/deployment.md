@@ -20,7 +20,7 @@ The `Dockerfile` has two stages:
 1. **Builder.** It installs the service and its dependencies into `/app/.venv` with `uv sync --locked --no-dev --no-editable --package cloud-storage-service`. `--locked` stops the build if `uv.lock` does not match the `pyproject.toml` files, so the image contains exactly the locked versions.
 2. **Runtime.** It copies only that virtual environment and `main.py`, and runs as an unprivileged user (`app`, uid 10001).
 
-Both base images are pinned by digest: `python:3.12-slim-trixie` and `ghcr.io/astral-sh/uv:0.12.10`. To update one, change its tag and digest together in a reviewed pull request; `docker buildx imagetools inspect <tag>` prints the digest.
+Both base images are pinned by digest: `python:3.14-slim-trixie` and `ghcr.io/astral-sh/uv:0.12.10`. To update one, change its tag and digest together in a reviewed pull request; `docker buildx imagetools inspect <tag>` prints the digest.
 
 `.dockerignore` is an allowlist. Only `pyproject.toml`, `uv.lock`, `README.md`, `main.py` and `src/` (without the tests) reach the build, so `.env`, `.dropbox_token.json`, `.git` and `.venv` can never end up in the image.
 

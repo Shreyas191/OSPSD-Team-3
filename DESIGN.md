@@ -353,7 +353,7 @@ The Nov 4 plan proposed these tools; all were built as planned except telemetry 
 
 | Need | Tool | As built |
 |---|---|---|
-| Artifact | Docker image from `uv.lock` (`uv sync --locked`) on Python 3.12 | Tagged with the full commit SHA, never `latest`, and deployed by digest. The image sets `RELEASE` to the commit SHA. Images are about 53–70 MB. |
+| Artifact | Docker image from `uv.lock` (`uv sync --locked`) on Python 3.14 | Tagged with the full commit SHA, never `latest`, and deployed by digest. The image sets `RELEASE` to the commit SHA. Images are about 53–70 MB. |
 | Registry | Google Artifact Registry, `us-central1` | A cleanup policy keeps the 5 most recent versions. 300 MB stored on Nov 11. |
 | Hosting | Cloud Run: `cloud-storage-service-test` and `cloud-storage-service-demo` | 1 vCPU, 512 MiB, scale to zero, at most 2 instances, 20 concurrent requests per instance against our limit of 10. Startup and liveness probes call `GET /health` only. |
 | Secrets | Secret Manager: `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN` per environment | Each runtime service account can read only its own environment's three secrets. |

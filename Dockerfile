@@ -12,14 +12,14 @@
 # To update a pin, change the tag and its digest together in a reviewed pull request
 # (`docker buildx imagetools inspect <tag>` prints the digest).
 
-ARG PYTHON_IMAGE=python:3.12-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+ARG PYTHON_IMAGE=python:3.14-slim-trixie@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500
 
 FROM ${UV_IMAGE} AS uv
 
 # ----- Stage 1: install the service and its locked dependencies into /app/.venv -----
 # This stage uses the same Python image as the runtime stage, so the virtual environment's
-# interpreter path (/usr/local/bin/python3.12) exists unchanged in the final image.
+# interpreter path (/usr/local/bin/python3.14) exists unchanged in the final image.
 FROM ${PYTHON_IMAGE} AS builder
 
 COPY --from=uv /uv /usr/local/bin/uv
@@ -27,7 +27,7 @@ COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
-    UV_PYTHON=/usr/local/bin/python3.12 \
+    UV_PYTHON=/usr/local/bin/python3.14 \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
 # git fetches the shared contract package, which uv.lock pins to a tagged commit. It is
