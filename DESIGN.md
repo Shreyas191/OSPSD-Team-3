@@ -2,7 +2,7 @@
 
 **By:** John Ashik, Shreyas Kaldate, Zesan Rahman, Jing Qian, Victor Wang
 **Vertical:** Document Storage (provider: Dropbox)
-**Reviewers:** Victor Wang (Team 3, whole design), Darsh (Team 6, contract-facing parts)
+**Reviewers:** HW3 Milestone 1: Victor Wang (Team 3, whole chapter), Chanyoung Kang (Team 4, integration design). HW2: Victor Wang (Team 3, whole design), Darsh (Team 6, contract-facing parts)
 **Last updated:** 11/18/2026
 **Status:** HW3 Milestone 1 (composing the services) is in [the first chapter](#hw3-milestone-1-composing-the-services); it was reviewed within the team and by Team 4 on Nov 18 (see [HW3 review](#hw3-review)). HW2: implemented on `hw2` and released as [`v0.2.0`](https://github.com/Shreyas191/OSPSD-Team-3/releases/tag/v0.2.0), deployed to both the test and demo services by the pipeline. The design review in [Review](#review) is not complete. Sections written on Nov 4 as a plan now describe what was built. [What changed during implementation, and why](#what-changed-during-implementation-and-why) lists every place where the build differs from the Nov 4 plan.
 
