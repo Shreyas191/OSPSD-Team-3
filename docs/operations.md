@@ -137,7 +137,7 @@ Then confirm with question 2, and check that it works with the consumer workflow
 
 - **Owner:** Shreyas Kaldate, who owns the Google Cloud project and its billing.
 - **Teardown:** Dec 18, 2026, following [Teardown](teardown.md).
-- **Cost:** see "Cost, ownership and teardown" in [`DESIGN.md`](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/DESIGN.md#cost-ownership-and-teardown). In short, it is $0 so far, all within free tiers, and a $5 budget alert emails the owner.
+- **Cost:** see "Cost, ownership and teardown" in [the HW2 design](design-hw2.md#cost-ownership-and-teardown). In short, it is $0 so far, all within free tiers, and a $5 budget alert emails the owner.
 
 ## Stranger test record
 

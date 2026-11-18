@@ -2,7 +2,7 @@
 
 This page covers HW2 Milestone 3, item 2.4: removing everything the team created for the deployed service, and confirming nothing is still costing money.
 
-**When:** after HW2 grades are returned. The proposed date is **Dec 18, 2026** (DESIGN.md, "Deployment tools").
+**When:** after HW2 grades are returned. The proposed date is **Dec 18, 2026** ([HW2 design, "Cost, ownership and teardown"](design-hw2.md#cost-ownership-and-teardown)).
 **Who:** the Google Cloud project owner, who also owns the Dropbox apps for `test` and `demo`.
 **Status:** written on Nov 9 and updated on Nov 11, 2026 for the CircleCI sign-in (item 2.6). Not run yet: the infrastructure is live and in use. A teammate who did not write it must run it from this page alone and record any question they had to ask (see the last section).
 

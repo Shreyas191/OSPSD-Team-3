@@ -34,8 +34,8 @@ Any other field, or a field that breaks a rule, is `400 invalid_request`, and no
 {
   "report_id": "c34bddd9271c4919b0d120ccb9184e64",
   "file": {"id": "id:…", "name": "c34bddd9271c4919b0d120ccb9184e64.md", "path": "/bug-reports/c34bddd9271c4919b0d120ccb9184e64.md", "size": 214, "modified_at": "2026-11-17T03:10:42Z", "etag": "…"},
-  "issue": {"id": "6afbbdfbedd543f0ddc0fd41", "title": "[bug c34bddd9] Login fails after password reset"},
-  "event": {"id": "…", "title": "Triage: Login fails after password reset (issue 6afbbdfbedd543f0ddc0fd41)", "start": "2026-11-18T15:00:00+00:00", "end": "2026-11-18T15:30:00+00:00"}
+  "issue": {"id": "<card id>", "title": "[bug c34bddd9] Login fails after password reset"},
+  "event": {"id": "…", "title": "Triage: Login fails after password reset (issue <card id>)", "start": "2026-11-18T15:00:00+00:00", "end": "2026-11-18T15:30:00+00:00"}
 }
 ```
 
