@@ -8,7 +8,7 @@ This page covers HW2 Milestone 3, Level 3, item 3.2: one dashboard showing the f
 
 ## Why Cloud Monitoring and not Grafana Cloud
 
-The action item says Grafana Cloud, which was DESIGN.md's plan. Item 3.1 sends logs, metrics and traces to Google Cloud's own Logging, Monitoring and Trace instead. A dashboard in the same place reads them directly. A Grafana Cloud dashboard would need a second account and a Google service-account key for Grafana to read our metrics, and would add another thing to own and tear down, for the same charts. The handout leaves the observability backend to the team.
+The action item says Grafana Cloud, which was the [HW2 design](design-hw2.md)'s plan. Item 3.1 sends logs, metrics and traces to Google Cloud's own Logging, Monitoring and Trace instead. A dashboard in the same place reads them directly. A Grafana Cloud dashboard would need a second account and a Google service-account key for Grafana to read our metrics, and would add another thing to own and tear down, for the same charts. The handout leaves the observability backend to the team.
 
 ## Operations
 

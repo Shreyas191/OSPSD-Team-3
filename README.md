@@ -32,7 +32,7 @@ The repository delivers one thing: an HTTP service for storing files in Dropbox.
   3. [`dropbox_impl.py`](src/dropbox_client_impl/src/dropbox_client_impl/dropbox_impl.py): `DropboxClient`, which makes the Dropbox SDK call.
   4. [`dropbox_client_impl/errors.py`](src/dropbox_client_impl/src/dropbox_client_impl/errors.py) turns Dropbox failures into those exceptions, and [`cloud_storage_service/errors.py`](src/cloud_storage_service/src/cloud_storage_service/errors.py) turns the exceptions into HTTP error responses.
 - **Use it:** [`TUTORIAL.md`](TUTORIAL.md) runs every operation with real requests and responses.
-- **Design and what changed while building it:** [`DESIGN.md`](DESIGN.md).
+- **Design:** [`DESIGN.md`](DESIGN.md) (HW3 composition) and [the HW2 storage service design](docs/design-hw2.md), including what changed while building it.
 - **Operate the deployed service** (what runs, which version, health, logs, rollback): [`docs/operations.md`](docs/operations.md).
 - **Contribute:** read [`AGENTS.md`](AGENTS.md) for the code map, constraints and checks.
 
@@ -85,7 +85,7 @@ This project is built on the principle of "programming integrated over time." Th
 
 The project is a `uv` workspace containing three packages:
 
-1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, replace, create folders, copy, download, get metadata, list, search, rename, move, delete, and check health. It is still a local package; the vertical's shared Python package (`cloud_storage_api`, contract tag `0.3.1`) isn't pinned yet (see [`DESIGN.md`](DESIGN.md#what-changed-during-implementation-and-why)).
+1.  **`cloud_storage_client_api`**: Defines the abstract `Client` and `File` base classes (ABCs). This is the contract for what a cloud storage client can do: upload, replace, create folders, copy, download, get metadata, list, search, rename, move, delete, and check health. It is still a local package; the vertical's shared Python package (`cloud_storage_api`, contract tag `0.3.1`) isn't pinned yet (see [the HW2 design](docs/design-hw2.md#what-changed-during-implementation-and-why)).
 2.  **`dropbox_client_impl`**: Provides the `DropboxClient` class, a concrete implementation that uses the Dropbox Python SDK to perform the actions defined in the `Client` abstraction.
 
 3.  **`cloud_storage_service`**: A FastAPI app that exposes the `Client` operations over HTTP. Routes depend only on the abstract `Client`. See [`src/cloud_storage_service/README.md`](src/cloud_storage_service/README.md) for the endpoint contracts.
