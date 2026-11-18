@@ -147,7 +147,7 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
 | Storage reply lost | The upload reached Dropbox, but no reply came | None: the file is deleted by its known path. If that delete fails too, `left_behind` names the path | `503`, `step: storage` | Retry | `test_storage_provider_failure_removes_a_file_the_lost_reply_hid`, `test_storage_cleanup_that_fails_is_reported` |
 | Storage path taken | A file already exists at the path | Nothing changed; the existing file is kept | `409 conflict`, `step: storage` | Retry; it draws a new `report_id` | `test_storage_conflict_is_reported_and_the_existing_file_is_kept` |
 | Misconfiguration | Unknown `*_IMPL` value, a missing Trello setting or token file, or `failing` on demo | The new revision doesn't start; the previous one keeps serving | Nothing: the previous release answers | Fix the setting and apply again | `test_verticals.py` |
-| Another team's implementation diverges from its contract | A behaviour the contract doesn't pin down | Depends on the case | Our error format, mapped from the contract error | File an issue with a reproduction on the owner's repo (none needed so far) | Calendar fakes pass the contract's own conformance suite; real implementations are checked live |
+| Another team's implementation diverges from its contract | A behaviour the contract doesn't pin down | Depends on the case | Our error format, mapped from the contract error | Report it to the owning team with a reproduction (none needed so far) | Calendar fakes pass the contract's own conformance suite; real implementations are checked live |
 
 **The handout's example, in our order:** "if an event is created but saving its summary fails". Our workflow saves first, so the matching case is a later step failing after earlier ones succeeded. Nothing finished is kept, so a retry can't duplicate it, and a failed run can't be mistaken for a finished one: the response is an error that lists what was undone.
 
@@ -185,10 +185,10 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
 
 | # | Question | Status | Owner |
 |---|---|---|---|
-| H1 | Which second team's implementation do we swap to? | **Decided for Milestone 1: the controlled `fake`.** Teams 7 (`baskd`) and 2 are the only other calendar teams. Team 7's package caps Python at `<3.13` (pip refuses it on 3.14) and pins the contract to `v0.1.0-rc.1`, which conflicts with Team 5's `v0.1.0`. Team 2's implementation isn't an installable package. Issues with reproductions are being filed on both repositories, and switch to a second team's tagged release once one installs alongside Team 5's. | Shreyas |
+| H1 | Which second team's implementation do we swap to? | **Decided for Milestone 1: the controlled `fake`.** Teams 7 (`baskd`) and 2 are the only other calendar teams. Team 7's package caps Python at `<3.13` (pip refuses it on 3.14) and pins the contract to `v0.1.0-rc.1`, which conflicts with Team 5's `v0.1.0`. Team 2's implementation isn't an installable package. We switch to a second team's tagged release once one installs alongside Team 5's. | Shreyas |
 | H2 | Which steps will need judgment later, and which stay fixed? | **Proposed:** an agent would choose the issue title and summary, the triage time (from free calendar time) and whether a meeting is needed at all. Saving the report, linking the IDs, the undo and the error reporting stay fixed code. | Team |
 | H3 | What if Team 4 or Team 5 is unavailable? | **Proposed:** switch the vertical to `fake` (one setting) so the rest of the workflow keeps working, and report the outage to the owning team. The swap candidate in H1 is the real fallback. | Team |
-| H4 | Contract mismatches found | None so far. Each will be filed on the owner's repository with a reproduction, not worked around. | Team |
+| H4 | Contract mismatches found | None so far in the implementations we use (Team 4, Team 5). A mismatch would be reported to the owning team with a reproduction, not worked around. | Team |
 | H5 | Renewing the Google token every 7 days | **Accepted operational task** until the OAuth app is verified or per-user accounts arrive (Milestone 2). The steps are in docs/infrastructure.md. | John |
 
 ## Introduction
