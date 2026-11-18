@@ -25,8 +25,8 @@ This chapter describes the HW3 Milestone 1 composition. One API operation, `POST
   - the report file `/bug-reports/f49644be535b40c8b458a688aef5f666.md` in Dropbox;
   - Trello card `6afce1b0f7149de4bd44659e`;
   - Google Calendar event `f2c9v7313ton9afoq0blku2b4k`, Nov 18 10:00–10:30 ET.
+- **Deployed failure run** on Nov 17 with `CALENDAR_IMPL=failing`: `503 provider_unavailable`, `"step": "calendar"`, with the issue and the file undone and confirmed gone from Trello and Dropbox ([evidence](docs/evidence/hw3-failure-run.md)).
 - Pending:
-  - the failure run on the deployed service (`CALENDAR_IMPL=failing`);
   - the swap to a second team's implementation (see [open questions](#hw3-open-questions));
   - this chapter's review, within the team and by another team.
 
@@ -167,7 +167,8 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
     - Trello: the card was read directly from Trello with Team 4's provider;
     - Trello: the card was also seen on the board in the **Incoming** list ([screenshot](docs/evidence/hw3-composition-trello-card.webp)).
     - Google Calendar: the event "Triage: Login fails after password reset (issue 6afce1b0f7149de4bd44659e)" is in the test account's calendar on Wed Nov 18, 10:00–10:30 (GMT-5), with the issue ID matching the Trello card ([screenshot](docs/evidence/hw3-composition-calendar-event.png)).
-  - The Dropbox screenshot, the failure run and the swap run are added here as they are recorded.
+  - **Failure, recorded Nov 17** on test (revision `cloud-storage-service-test-00037-rgn`, `CALENDAR_IMPL=failing`, issue tracker real): `503 provider_unavailable`, `"step": "calendar"`, `undone` listed the issue and the file, and `left_behind` was empty. Afterwards Dropbox answered `404` for the file and Trello `not_found` for the card. Request, response and checks: [docs/evidence/hw3-failure-run.md](docs/evidence/hw3-failure-run.md).
+  - The Dropbox screenshot and the swap run are added here as they are recorded.
 
 ### HW3 review
 
