@@ -23,7 +23,7 @@ $ curl -s -X POST "https://hw3-swap---cloud-storage-service-test-gyesjhieva-uc.a
 
 ## How the swap shows in the result
 
-| | Before (`CALENDAR_IMPL=team5`, [composition run](../../DESIGN.md#hw3-how-we-verify-it)) | After (`CALENDAR_IMPL=fake`) |
+| | Before (`CALENDAR_IMPL=team5`, [composition run](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/DESIGN.md#hw3-how-we-verify-it)) | After (`CALENDAR_IMPL=fake`) |
 |---|---|---|
 | Event ID | `f2c9v7313ton9afoq0blku2b4k`: Google Calendar's format | `b7c017cebf8f4f969ab80ba62c52b3f8`: the fake's UUID |
 | Times returned | `10:00:00-05:00`: Google answers in the calendar's time zone | `15:00:00+00:00`: the fake returns what it was given |

@@ -3,8 +3,8 @@
 **By:** John Ashik, Shreyas Kaldate, Zesan Rahman, Jing Qian, Victor Wang
 **Vertical:** Document Storage (provider: Dropbox)
 **Reviewers:** Victor Wang (Team 3, whole design), Darsh (Team 6, contract-facing parts)
-**Last updated:** 11/17/2026
-**Status:** HW3 Milestone 1 (composing the services) is in [the first chapter](#hw3-milestone-1-composing-the-services); its review is not started. HW2: implemented on `hw2` and released as [`v0.2.0`](https://github.com/Shreyas191/OSPSD-Team-3/releases/tag/v0.2.0), deployed to both the test and demo services by the pipeline. The design review in [Review](#review) is not complete. Sections written on Nov 4 as a plan now describe what was built. [What changed during implementation, and why](#what-changed-during-implementation-and-why) lists every place where the build differs from the Nov 4 plan.
+**Last updated:** 11/18/2026
+**Status:** HW3 Milestone 1 (composing the services) is in [the first chapter](#hw3-milestone-1-composing-the-services); it was reviewed by Team 4 on Nov 18 (see [HW3 review](#hw3-review)), and the review within the team is pending. HW2: implemented on `hw2` and released as [`v0.2.0`](https://github.com/Shreyas191/OSPSD-Team-3/releases/tag/v0.2.0), deployed to both the test and demo services by the pipeline. The design review in [Review](#review) is not complete. Sections written on Nov 4 as a plan now describe what was built. [What changed during implementation, and why](#what-changed-during-implementation-and-why) lists every place where the build differs from the Nov 4 plan.
 
 **Links:**
 
@@ -27,7 +27,7 @@ This chapter describes the HW3 Milestone 1 composition. One API operation, `POST
   - Google Calendar event `f2c9v7313ton9afoq0blku2b4k`, Nov 18 10:00–10:30 ET.
 - **Deployed failure run** on Nov 17 with `CALENDAR_IMPL=failing`: `503 provider_unavailable`, `"step": "calendar"`, with the issue and the file undone and confirmed gone from Trello and Dropbox ([evidence](docs/evidence/hw3-failure-run.md)).
 - **Deployed swap run** on Nov 17: the calendar implementation was changed from `team5` to our controlled `fake` by configuration alone, and the workflow returned `201` ([evidence](docs/evidence/hw3-swap-run.md)). The swap is not to a second *team's* implementation: neither other calendar team's package installs alongside Team 5's (see [H1](#hw3-open-questions)).
-- Pending: this chapter's review, within the team and by another team.
+- Reviewed by another team (Team 4) on Nov 18; their three comments are recorded in [HW3 review](#hw3-review). Pending: the review within the team.
 
 ### HW3: how the system fits together
 
@@ -90,7 +90,7 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
   - The handout asks that a retry not duplicate finished work, and that unfinished work never be reported as done.
 - **Approach.** The steps that succeeded are undone newest first: the issue, then the file. The error names the failed `step` and lists what was `undone` and anything possibly `left_behind`. A retry starts over with a new `report_id`. Undoing is possible because each contract has a delete for what we created.
 - **Alternative.** Keep the finished steps and resume. The caller would send an idempotency key, and the service would store which steps finished for that key, then skip them on retry.
-- **Tradeoff we accept.** A retry redoes the earlier steps: three provider writes instead of one. A short window exists where the records exist before they're undone. In return we need no database and no key protocol, and a failed run leaves a clean state. Resuming would need durable state (a database, or a store keyed by request) and a way to find a record created by a previous attempt. The issue-tracker contract can't do the latter: Team 4's `find_tagged_issue` exists only on their package, outside the contract.
+- **Tradeoff we accept.** A retry redoes the earlier steps: three provider writes instead of one. A short window exists where the records exist before they're undone. In return we need no database and no key protocol, and a failed run tries to undo the completed steps and reports anything that may be left behind. Resuming would need durable state (a database, or a store keyed by request) and a way to find a record created by a previous attempt. The issue-tracker contract can't do the latter: Team 4's `find_tagged_issue` exists only on their package, outside the contract.
 - **Ordering.** Storage comes first because it's the only step whose record we can find without its ID: the path comes from the `report_id`. So an uncertain upload can be cleaned up.
 - **Revisit when:**
   - Milestone 2 adds the persisted database the product needs anyway, so step state can be stored;
@@ -107,6 +107,7 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
   - `verticals.py` builds each vertical from one setting (`ISSUE_TRACKER_IMPL`, `CALENDAR_IMPL`), with `fake` and `failing` controlled implementations alongside the real ones.
   - OpenTofu sets the value per environment (`vertical_implementations`) and mounts only the credentials of the chosen implementation.
   - A wrong value or a missing credential stops startup with a message naming the setting. The previous revision keeps serving.
+  - Our service checks this itself: Team 4's `TrelloIssueProvider()` reads its settings only when it makes a call, so without our check a missing setting would surface only at the first request. Settings that are present but rejected by Trello still surface at the first request, as `502 provider_error`.
 - **Alternative.** Call each team's deployed HTTP service with a key they issue.
 - **Tradeoff we accept.**
   - We own the test accounts and their upkeep. The Google token of an OAuth app in Testing expires every 7 days and must be renewed (see [failures](#hw3-what-could-go-wrong)).
@@ -141,7 +142,7 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
 |---|---|---|---|---|---|
 | **Calendar fails after the issue is created (partial failure)** | Google Calendar down, or the token expired | None: the issue, then the file, are deleted | `503 provider_unavailable` (or `502`), `step: calendar`, `undone: [issue, file]` | Retry; it creates new records once the calendar works | `test_calendar_unavailable_undoes_the_issue_then_the_file`, `test_retry_after_a_calendar_failure_leaves_exactly_one_of_each`; live with `CALENDAR_IMPL=failing` |
 | Google token expired (7 days in Testing) | Token not renewed | As above, on every request | As above | Run `team5_calendar.authorize` again, then `gcloud secrets versions add calendar-token-test` (docs/infrastructure.md) | Covered by the row above; renewal is in the runbook |
-| Issue tracker fails | Trello down, or credentials rejected | None: the file is deleted | `502 provider_error`, `step: issue_tracker`, `undone: [file]` | Retry | `test_issue_tracker_failure_undoes_the_file` |
+| Issue tracker fails | Trello down, or credentials rejected | None: the file is deleted | `502 provider_error`, `step: issue_tracker`, `undone: [file]` | Depends on the cause. Trello down: retry. Credentials rejected: fix the Trello secrets first, then retry. If `left_behind` names a possible card (for example after a timeout), check the board and delete it before retrying (next row) | `test_issue_tracker_failure_undoes_the_file` |
 | Uncertain write (issue or event) | The request reached the provider but the reply was lost | Possibly one card or event | The step's error, with `left_behind: ["possibly an issue titled '[bug <id8>] …'"]` | Find it by the `report_id` prefix and delete it, then retry | `test_uncertain_issue_write_…`, `test_uncertain_calendar_write_…` |
 | An undo fails | The provider is down when we delete | The record named in `left_behind` | The original step's error; `left_behind: ["issue <id>"]` | Delete it by ID | `test_an_undo_that_fails_is_listed_as_left_behind` |
 | Storage reply lost | The upload reached Dropbox, but no reply came | None: the file is deleted by its known path. If that delete fails too, `left_behind` names the path | `503`, `step: storage` | Retry | `test_storage_provider_failure_removes_a_file_the_lost_reply_hid`, `test_storage_cleanup_that_fails_is_reported` |
@@ -174,11 +175,13 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
 | Review | Reviewer | Scope | Status |
 |---|---|---|---|
 | Within the team | _to be assigned_ | This chapter and docs/composed-workflow.md | Not started |
-| Another team | _to be assigned_ | Integration design: contracts, decisions, failure behaviour | Not started |
+| Another team | Chanyoung Kang (Team 4, the issue-tracker implementation we use) | Integration design: H1, H2 and the issue-tracker error mapping, checked against the shared issue-tracker contract and Team 4's Trello package | [Done, Nov 18](https://github.com/Shreyas191/OSPSD-Team-3/pull/77#issuecomment-6968245306) |
 
 | # | Comment and reviewer | Disposition | Link |
 |---|---|---|---|
-| — | No comments recorded yet | — | — |
+| 1 | **H1 (undo):** agrees with undoing completed steps with `delete_issue(id)`, which Team 4's Trello and Linear providers both support, and with not using the Trello-only tagging helpers. Checked the calendar-failure evidence. Suggests H1's tradeoff say the workflow *tries* to undo and reports what may be left behind, instead of "leaves a clean state", to match the failure table. (Chanyoung Kang, Team 4) | Accepted: H1's tradeoff now says the run tries to undo the completed steps and reports anything that may be left behind. | [comment](https://github.com/Shreyas191/OSPSD-Team-3/pull/77#issuecomment-6968245306) |
+| 2 | **Error mapping:** confirms `may_have_applied=True` on `create_issue` means a card may exist, and that mapping every issue-step error to `502 provider_error` is reasonable. Asks that the "Retry" advice for the issue-tracker failure distinguish rejected credentials (fix first) from a timeout (check the board first, to avoid a duplicate). (Chanyoung Kang, Team 4) | Accepted: that row's recovery now depends on the cause: Trello down, credentials rejected, or a possible card named in `left_behind`. | [comment](https://github.com/Shreyas191/OSPSD-Team-3/pull/77#issuecomment-6968245306) |
+| 3 | **H2 (in-process package):** confirms installing the package against our own Trello list is the intended use. Notes `TrelloIssueProvider()` reads its settings only when it makes a call, so a startup check must live in our service. (Chanyoung Kang, Team 4) | Answered, already the case: `verticals.py` checks the three `TRELLO_*` settings before building the provider, so a missing one stops startup (`test_verticals.py`). H2 now says so, and that settings Trello rejects still surface at the first request. | [comment](https://github.com/Shreyas191/OSPSD-Team-3/pull/77#issuecomment-6968245306) |
 
 ### HW3 open questions
 
