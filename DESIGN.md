@@ -26,9 +26,8 @@ This chapter describes the HW3 Milestone 1 composition. One API operation, `POST
   - Trello card `6afce1b0f7149de4bd44659e`;
   - Google Calendar event `f2c9v7313ton9afoq0blku2b4k`, Nov 18 10:00–10:30 ET.
 - **Deployed failure run** on Nov 17 with `CALENDAR_IMPL=failing`: `503 provider_unavailable`, `"step": "calendar"`, with the issue and the file undone and confirmed gone from Trello and Dropbox ([evidence](docs/evidence/hw3-failure-run.md)).
-- Pending:
-  - the swap to a second team's implementation (see [open questions](#hw3-open-questions));
-  - this chapter's review, within the team and by another team.
+- **Deployed swap run** on Nov 17: the calendar implementation was changed from `team5` to our controlled `fake` by configuration alone, and the workflow returned `201` ([evidence](docs/evidence/hw3-swap-run.md)). The swap is not to a second *team's* implementation: neither other calendar team's package installs alongside Team 5's (see [H1](#hw3-open-questions)).
+- Pending: this chapter's review, within the team and by another team.
 
 ### HW3: how the system fits together
 
@@ -168,7 +167,8 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
     - Trello: the card was also seen on the board in the **Incoming** list ([screenshot](docs/evidence/hw3-composition-trello-card.webp)).
     - Google Calendar: the event "Triage: Login fails after password reset (issue 6afce1b0f7149de4bd44659e)" is in the test account's calendar on Wed Nov 18, 10:00–10:30 (GMT-5), with the issue ID matching the Trello card ([screenshot](docs/evidence/hw3-composition-calendar-event.png)).
   - **Failure, recorded Nov 17** on test (revision `cloud-storage-service-test-00037-rgn`, `CALENDAR_IMPL=failing`, issue tracker real): `503 provider_unavailable`, `"step": "calendar"`, `undone` listed the issue and the file, and `left_behind` was empty. Afterwards Dropbox answered `404` for the file and Trello `not_found` for the card. Request, response and checks: [docs/evidence/hw3-failure-run.md](docs/evidence/hw3-failure-run.md).
-  - The Dropbox screenshot and the swap run are added here as they are recorded.
+  - **Swap, recorded Nov 17** on test (revision `cloud-storage-service-test-00039-7kp`): only `CALENDAR_IMPL` changed, from `team5` to `fake`, giving `201` with the event now from the in-memory implementation (UUID ID, UTC times) while storage and the issue tracker stayed real. [docs/evidence/hw3-swap-run.md](docs/evidence/hw3-swap-run.md).
+  - The Dropbox screenshot is added here when recorded.
 
 ### HW3 review
 
@@ -185,7 +185,7 @@ The same request with `CALENDAR_IMPL=failing` stops at step 4 with `CalendarErro
 
 | # | Question | Status | Owner |
 |---|---|---|---|
-| H1 | Which second team's implementation do we swap to? | **Open.** Team 7 (`baskd`) and Team 2 implement `calendar-contract` but cap Python below 3.13; we've asked them to allow 3.14. If neither does, we demonstrate the swap between `team5` and the controlled `fake`, and record that no second team's package was installable. | Shreyas |
+| H1 | Which second team's implementation do we swap to? | **Decided for Milestone 1: the controlled `fake`.** Teams 7 (`baskd`) and 2 are the only other calendar teams. Team 7's package caps Python at `<3.13` (pip refuses it on 3.14) and pins the contract to `v0.1.0-rc.1`, which conflicts with Team 5's `v0.1.0`. Team 2's implementation isn't an installable package. Issues with reproductions are being filed on both repositories, and switch to a second team's tagged release once one installs alongside Team 5's. | Shreyas |
 | H2 | Which steps will need judgment later, and which stay fixed? | **Proposed:** an agent would choose the issue title and summary, the triage time (from free calendar time) and whether a meeting is needed at all. Saving the report, linking the IDs, the undo and the error reporting stay fixed code. | Team |
 | H3 | What if Team 4 or Team 5 is unavailable? | **Proposed:** switch the vertical to `fake` (one setting) so the rest of the workflow keeps working, and report the outage to the owning team. The swap candidate in H1 is the real fallback. | Team |
 | H4 | Contract mismatches found | None so far. Each will be filed on the owner's repository with a reproduction, not worked around. | Team |
