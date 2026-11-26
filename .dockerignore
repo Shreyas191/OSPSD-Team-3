@@ -5,6 +5,7 @@
 !uv.lock
 !README.md
 !main.py
+!agent_main.py
 !src/
 src/*/tests/
 **/__pycache__/

@@ -273,6 +273,12 @@ jobs:
             digest="$(gcloud artifacts docker images describe "${IMAGE_REPO}:${CIRCLE_SHA1}" \
               --format='value(image_summary.digest)')"
             scripts/deploy.sh << parameters.environment >> "${IMAGE_REPO}@${digest}" "${CIRCLE_SHA1}"
+      - run:
+          name: "Deploy the agent service for << parameters.environment >> and smoke-check it"
+          command: |
+            digest="$(gcloud artifacts docker images describe "${IMAGE_REPO}:${CIRCLE_SHA1}" \
+              --format='value(image_summary.digest)')"
+            scripts/deploy_agent.sh << parameters.environment >> "${IMAGE_REPO}@${digest}" "${CIRCLE_SHA1}"
 
   # Job 9: The vertical's shared conformance suite, against our real HTTP app running on an
   # in-memory storage client (tests/memory_client.py). No network, no credentials.

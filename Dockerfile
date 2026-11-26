@@ -42,7 +42,10 @@ COPY src/ src/
 
 # --no-editable installs the workspace packages themselves into the venv, so the runtime
 # stage needs neither the source tree nor uv.
-RUN uv sync --locked --no-dev --no-editable --package cloud-storage-service
+# One image runs both services: main.py starts the API service and agent_main.py the agent
+# service (HW3). Each Cloud Run service picks its entry point with its own start command.
+RUN uv sync --locked --no-dev --no-editable \
+      --package cloud-storage-service --package course-agent-service
 
 # ----- Stage 2: the runtime image -----
 FROM ${PYTHON_IMAGE} AS runtime
@@ -57,7 +60,7 @@ RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
-COPY main.py ./
+COPY main.py agent_main.py ./
 
 # HOST is 0.0.0.0 so the platform can reach the server; Cloud Run overrides PORT.
 ENV PATH="/app/.venv/bin:${PATH}" \

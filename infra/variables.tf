@@ -108,3 +108,18 @@ variable "calendar_token_uploaders" {
   type        = list(string)
   default     = []
 }
+
+variable "agent_model_provider" {
+  description = <<-EOT
+    MODEL_PROVIDER for each environment's agent service: gemini, scripted or disabled
+    (src/course_agent_service). Environments not listed use disabled. Set gemini only after
+    the environment's Gemini key is in Secret Manager.
+  EOT
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for v in values(var.agent_model_provider) : contains(["gemini", "scripted", "disabled"], v)])
+    error_message = "agent_model_provider values must be gemini, scripted or disabled."
+  }
+}
