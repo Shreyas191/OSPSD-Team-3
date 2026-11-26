@@ -102,6 +102,9 @@ def add_error_handlers(app: FastAPI) -> None:
                 "method_not_allowed",
                 f"{request.method} is not allowed on {request.url.path}",
             ),
+            # Product routes (HW3): no signed-in user, or no database configured.
+            status.HTTP_401_UNAUTHORIZED: ("not_signed_in", str(exc.detail)),
+            status.HTTP_503_SERVICE_UNAVAILABLE: ("database_not_configured", str(exc.detail)),
         }
         code, message = known.get(exc.status_code, ("invalid_request", str(exc.detail)))
         record_failure(f"{request.method} {request.url.path}", exc.status_code, code, message)

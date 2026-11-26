@@ -21,6 +21,7 @@ from cloud_storage_service.errors import add_error_handlers
 from cloud_storage_service.faults import with_faults
 from cloud_storage_service.models import FileResponse
 from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
+from cloud_storage_service.proposal_routes import router as proposal_router
 from cloud_storage_service.routes import router
 from cloud_storage_service.telemetry import RequestTelemetryMiddleware, configure_tracing
 from cloud_storage_service.verticals import build_calendar, build_issue_tracker
@@ -102,6 +103,7 @@ app.add_middleware(ConcurrencyLimitMiddleware, max_in_flight=max_in_flight_from_
 app.include_router(router)
 app.include_router(workflow_router)
 app.include_router(database_router)
+app.include_router(proposal_router)
 add_error_handlers(app)
 # Added last, so it wraps everything above, including requests the overload limit refuses:
 # every request gets exactly one log line (see telemetry.py).
