@@ -52,6 +52,20 @@ resource "google_cloud_run_v2_service" "agent" {
         value = lookup(var.agent_model_provider, each.key, "disabled")
       }
 
+      # The model's key, mounted only when this environment runs Gemini.
+      dynamic "env" {
+        for_each = lookup(var.agent_model_provider, each.key, "disabled") == "gemini" ? ["GEMINI_API_KEY"] : []
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.gemini_api_key[each.key].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
       # The only service the agent calls.
       env {
         name  = "API_BASE_URL"
@@ -91,7 +105,10 @@ resource "google_cloud_run_v2_service" "agent" {
     ]
   }
 
-  depends_on = [google_project_service.apis]
+  depends_on = [
+    google_project_service.apis,
+    google_secret_manager_secret_iam_member.agent_reads_gemini_api_key,
+  ]
 }
 
 # The interface calls the agent service directly. Sign-in (Level 4) adds per-user
@@ -121,4 +138,39 @@ resource "google_service_account_iam_member" "deployer_acts_as_agent_runtime" {
   service_account_id = google_service_account.agent_runtime[each.key].name
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.deployer.member
+}
+
+# The Gemini API key, one secret per environment. Same pattern as database.tf: OpenTofu
+# creates the empty secret and its access rule; a person adds the value from a hidden prompt,
+# so the key never appears on screen, in shell history, in this code, the plan or the state:
+#
+#   read -rs GEMINI_KEY && printf %s "$GEMINI_KEY" \
+#     | gcloud secrets versions add gemini-api-key-<env> --data-file=- ; unset GEMINI_KEY
+#
+# Then set agent_model_provider = { <env> = "gemini" } and apply, which mounts it.
+resource "google_secret_manager_secret" "gemini_api_key" {
+  for_each = var.environments
+
+  secret_id = "gemini-api-key-${each.key}"
+
+  replication {
+    auto {}
+  }
+
+  labels = {
+    service     = "course-agent"
+    environment = each.key
+    component   = "model"
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+# Only the agent service reads the model key; the API service never sees it.
+resource "google_secret_manager_secret_iam_member" "agent_reads_gemini_api_key" {
+  for_each = var.environments
+
+  secret_id = google_secret_manager_secret.gemini_api_key[each.key].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.agent_runtime[each.key].member
 }

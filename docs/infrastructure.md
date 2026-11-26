@@ -189,7 +189,12 @@ neon connection-string <branch> --project-id <neon project id> --pooled \
   | gcloud secrets versions add database-url-<env> --project ospsd-team3 --data-file=-
 ```
 
-**Agent service (`infra/agent.tf`).** One Cloud Run service per environment, `course-agent-<env>`, running the same image as the API service with `agent_main.py` as its entry point. OpenTofu creates it with Google's placeholder image and that image's own command; the pipeline sets both our image and `python agent_main.py` on each deploy, so OpenTofu ignores both afterwards. It has its own runtime identity (`agent-run-<env>`) that can read no provider secret: the agent reaches Dropbox, Trello and Google Calendar only through the API service, whose URL it gets as `API_BASE_URL`. `MODEL_PROVIDER` comes from `agent_model_provider` and stays `disabled` until the Gemini key is in Secret Manager.
+**Agent service (`infra/agent.tf`).** One Cloud Run service per environment, `course-agent-<env>`, running the same image as the API service with `agent_main.py` as its entry point. OpenTofu creates it with Google's placeholder image and that image's own command; the pipeline sets both our image and `python agent_main.py` on each deploy, so OpenTofu ignores both afterwards. It has its own runtime identity (`agent-run-<env>`) that can read no provider secret: the agent reaches Dropbox, Trello and Google Calendar only through the API service, whose URL it gets as `API_BASE_URL`. `MODEL_PROVIDER` comes from `agent_model_provider` and stays `disabled` until the Gemini key is in Secret Manager. The key lives in `gemini-api-key-<env>`, readable only by that environment's agent identity, and is mounted as `GEMINI_API_KEY` only when the environment runs `gemini`. Add it from a hidden prompt, never by pasting it on the command line:
+
+```bash
+read -rs GEMINI_KEY && printf %s "$GEMINI_KEY" \
+  | gcloud secrets versions add gemini-api-key-<env> --project ospsd-team3 --data-file=- ; unset GEMINI_KEY
+```
 
 The pipeline deploys the agent service right after the API service in each environment (`scripts/deploy_agent.sh`): a new revision with no traffic, `GET /health` on its own URL, then all traffic. Apply `infra/agent.tf` before the first release that includes it; until then the deploy step reports that the service doesn't exist yet and skips it.
 
