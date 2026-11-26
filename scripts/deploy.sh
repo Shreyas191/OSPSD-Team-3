@@ -6,7 +6,8 @@
 # 1. Deploy the image as a new Cloud Run revision that receives no traffic, tagged
 #    rel-<short sha> so it has its own URL. Users keep reaching the previous revision.
 # 2. Smoke-check that URL: GET /health, GET /health/provider (Dropbox accepts our
-#    credentials), then the vertical's consumer workflow against real Dropbox, which
+#    credentials), GET /health/database (the release reached and migrated its database),
+#    then the vertical's consumer workflow against real Dropbox, which
 #    creates and deletes its own scratch folder.
 # 3. Only if every check passed, move 100% of traffic to the new revision.
 #
@@ -58,6 +59,7 @@ check() {
 }
 check /health
 check /health/provider
+check /health/database
 uv run --no-project --with httpx python scripts/consumer_workflow.py "${candidate}"
 
 echo "== Smoke check passed; sending all traffic to ${tag}"

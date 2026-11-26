@@ -57,6 +57,7 @@ Settings come only from the environment. The image contains none of them.
 | `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_LIST_ID` | With `ISSUE_TRACKER_IMPL=team4` | Key and token: yes | Our own Trello test account and the list new issues go in; read by Team 4's package |
 | `CALENDAR_IMPL` | No (default `fake`) | No | Which calendar implementation to use: `team5` (Team 5's Google Calendar package), `fake` or `failing` (refused on demo) |
 | `CALENDAR_TOKEN_FILE` | With `CALENDAR_IMPL=team5` | The file is | Path of the OAuth token file for our own Google test account (`python -m team5_calendar.authorize`) |
+| `DATABASE_URL` | No (without it the service runs with no database, and `GET /health/database` answers 503) | Yes | Postgres connection string of this environment's Neon branch. Migrations run at startup; see `database.py` |
 
 ### The startup check
 
@@ -81,6 +82,7 @@ Each environment uses its own Dropbox app, so the `test` service cannot reach th
 | `dropbox-app-key-test`, `dropbox-app-key-demo` | `DROPBOX_APP_KEY` |
 | `dropbox-app-secret-test`, `dropbox-app-secret-demo` | `DROPBOX_APP_SECRET` |
 | `dropbox-refresh-token-test`, `dropbox-refresh-token-demo` | `DROPBOX_REFRESH_TOKEN` |
+| `database-url-test`, `database-url-demo` | `DATABASE_URL` |
 
 Six versions equal the Secret Manager free tier of 6 active secret versions per month. A rotation adds a version, so destroy the old one afterwards.
 

@@ -117,6 +117,17 @@ resource "google_cloud_run_v2_service" "service" {
         }
       }
 
+      # HW3 product state (database.tf): this environment's Neon branch.
+      env {
+        name = "DATABASE_URL"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.database_url[each.key].secret_id
+            version = "latest"
+          }
+        }
+      }
+
       dynamic "env" {
         for_each = local.dropbox_secrets
         content {
@@ -172,6 +183,7 @@ resource "google_cloud_run_v2_service" "service" {
     google_secret_manager_secret_iam_member.runtime_reads_own_secrets,
     google_secret_manager_secret_iam_member.runtime_reads_trello,
     google_secret_manager_secret_iam_member.runtime_reads_calendar_token,
+    google_secret_manager_secret_iam_member.runtime_reads_database_url,
   ]
 }
 

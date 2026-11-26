@@ -14,6 +14,8 @@ from dropbox_client_impl import DropboxAuthError, DropboxClient, DropboxDocument
 from fastapi import FastAPI
 
 from cloud_storage_service.configuration import ConfigurationError
+from cloud_storage_service.database import build_database, migrate
+from cloud_storage_service.database import router as database_router
 from cloud_storage_service.dependencies import get_storage_client
 from cloud_storage_service.errors import add_error_handlers
 from cloud_storage_service.faults import with_faults
@@ -83,7 +85,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.document_storage = DropboxDocumentStorage(app.state.storage_client)
     app.state.issue_tracker = build_issue_tracker()
     app.state.calendar = build_calendar()
+    # HW3 product state (database.py). Migrated here, before the first request; a failure
+    # is logged and reported by GET /health/database instead of stopping the service.
+    app.state.database = build_database()
+    if app.state.database is not None:
+        migrate(app.state.database)
     yield
+    if app.state.database is not None:
+        app.state.database.engine.dispose()
 
 
 app = FastAPI(title="Cloud Storage Service", lifespan=lifespan)
@@ -92,6 +101,7 @@ app = FastAPI(title="Cloud Storage Service", lifespan=lifespan)
 app.add_middleware(ConcurrencyLimitMiddleware, max_in_flight=max_in_flight_from_env())
 app.include_router(router)
 app.include_router(workflow_router)
+app.include_router(database_router)
 add_error_handlers(app)
 # Added last, so it wraps everything above, including requests the overload limit refuses:
 # every request gets exactly one log line (see telemetry.py).

@@ -7,6 +7,7 @@ requires-python = ">=3.14"  # team5-calendar requires 3.14
 dependencies = [
     "calendar-contract",
     "cloud-storage-client-api",
+    "course-autopilot-store",
     "dropbox-client-impl",
     "fastapi>=0.115.0",
     "issue-tracker-contract",
@@ -17,6 +18,7 @@ dependencies = [
     "opentelemetry-propagator-gcp>=1.15.0",
     "opentelemetry-sdk>=1.45.1",
     "python-multipart>=0.0.32",
+    "sqlalchemy>=2.0.36",
     "team-4-issue-tracker-trello",
     "team5-calendar",
     "uvicorn>=0.30.0",
@@ -43,6 +45,7 @@ ignore = []
 [tool.uv.sources]
 cloud-storage-client-api = { workspace = true }
 dropbox-client-impl = { workspace = true }
+course-autopilot-store = { workspace = true }
 # HW3: other teams' implementations and the shared contracts they implement, each pinned to
 # a tag. `rev` matches the direct Git references inside Team 4's and Team 5's packages.
 calendar-contract = { git = "https://github.com/Airbus-A330/OSPSD-Calendar.git", rev = "v0.1.0" }

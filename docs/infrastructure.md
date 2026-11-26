@@ -182,7 +182,7 @@ The composed workflow (`POST /workflows/bug-report`) runs Team 4's Trello implem
 
 ## HW3 Milestone 2: database and agent service
 
-**Database (`infra/database.tf`).** The product's state lives in a Neon Postgres project, `course-autopilot`. Each environment has its own Neon branch (test uses `test`, demo uses `production`) and its own secret, `database-url-<env>`, readable only by that environment's API runtime identity. The value is piped from the Neon CLI, so it never appears on screen or in a file:
+**Database (`infra/database.tf`).** The product's state lives in a Neon Postgres project, `course-autopilot`. Each environment has its own Neon branch (test uses `test`, demo uses `production`) and its own secret, `database-url-<env>`, readable only by that environment's API runtime identity. The API service reads it as `DATABASE_URL`, applies any pending migration at startup (an advisory lock lets instances that start together take turns), and reports the result at `GET /health/database`, which the deploy's smoke check calls. The value is piped from the Neon CLI, so it never appears on screen or in a file:
 
 ```bash
 neon connection-string <branch> --project-id <neon project id> --pooled \
