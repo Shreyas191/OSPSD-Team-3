@@ -14,6 +14,8 @@ from dropbox_client_impl import DropboxAuthError, DropboxClient, DropboxDocument
 from fastapi import FastAPI
 
 from cloud_storage_service.configuration import ConfigurationError
+from cloud_storage_service.conversation_routes import router as conversation_router
+from cloud_storage_service.courses import router as course_router
 from cloud_storage_service.database import build_database, migrate
 from cloud_storage_service.database import router as database_router
 from cloud_storage_service.dependencies import get_storage_client
@@ -104,6 +106,8 @@ app.include_router(router)
 app.include_router(workflow_router)
 app.include_router(database_router)
 app.include_router(proposal_router)
+app.include_router(course_router)
+app.include_router(conversation_router)
 add_error_handlers(app)
 # Added last, so it wraps everything above, including requests the overload limit refuses:
 # every request gets exactly one log line (see telemetry.py).

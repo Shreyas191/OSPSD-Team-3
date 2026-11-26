@@ -17,6 +17,7 @@ dependencies = [
     "opentelemetry-instrumentation-requests>=0.66b1",
     "opentelemetry-propagator-gcp>=1.15.0",
     "opentelemetry-sdk>=1.45.1",
+    "pypdf>=6.0",
     "python-multipart>=0.0.32",
     "sqlalchemy>=2.0.36",
     "team-4-issue-tracker-trello",

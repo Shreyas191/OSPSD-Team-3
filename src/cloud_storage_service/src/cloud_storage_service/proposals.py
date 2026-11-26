@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
 
 from calendar_contract import CreateEvent as CalendarCreateEvent
-from course_autopilot_store.models import Approval, ExternalRecord, Proposal
+from course_autopilot_store.models import Approval, Conversation, ExternalRecord, Proposal
 from issue_tracker_contract.models import IssueCreate
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 MAX_CHANGES = 100
 MAX_DOCUMENT_CHARACTERS = 100_000
 COURSE_ROOT = "/Course Autopilot"
+MAX_COURSE_CHARACTERS = 100
 
 
 class ProposalError(Exception):
@@ -44,7 +45,11 @@ class ProposalError(Exception):
         self.message = message
 
 
-def _course(value: str) -> str:
+def check_course(value: str) -> str:
+    """Return ``value`` if it's a plain course name (one path segment); else raise ValueError."""
+    if not value or len(value) > MAX_COURSE_CHARACTERS:
+        msg = f"course must be 1 to {MAX_COURSE_CHARACTERS} characters"
+        raise ValueError(msg)
     if value != value.strip() or value in {".", ".."} or "/" in value or "\\" in value:
         msg = "course must be a plain name, without slashes or surrounding spaces"
         raise ValueError(msg)
@@ -58,7 +63,11 @@ def _document_name(value: str) -> str:
     return value
 
 
-Course = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(_course)]
+Course = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_COURSE_CHARACTERS),
+    AfterValidator(check_course),
+]
 DocumentName = Annotated[str, Field(min_length=4, max_length=120), AfterValidator(_document_name)]
 RecordId = Annotated[str, Field(min_length=1, max_length=512)]
 
@@ -217,6 +226,11 @@ def create(session: Session, user_id: uuid.UUID, body: ProposalCreate) -> Propos
     """Validate ownership and store a pending proposal."""
     changes = canonical_changes(body.changes)
     check_targets(session, user_id, changes)
+    if body.conversation_id is not None:
+        conversation = session.get(Conversation, body.conversation_id)
+        if conversation is None or conversation.user_id != user_id:
+            msg = "conversation_id isn't one of this account's conversations"
+            raise ProposalError(400, "invalid_request", msg)
     proposal = Proposal(
         user_id=user_id,
         conversation_id=body.conversation_id,
