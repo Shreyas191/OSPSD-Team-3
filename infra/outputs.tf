@@ -22,3 +22,8 @@ output "runtime_service_accounts" {
   description = "Identity each environment's service runs as."
   value       = { for env, sa in google_service_account.runtime : env => sa.email }
 }
+
+output "agent_service_urls" {
+  description = "Base URL of each environment's agent service."
+  value       = { for env, svc in google_cloud_run_v2_service.agent : env => svc.uri }
+}
