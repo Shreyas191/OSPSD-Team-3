@@ -5,7 +5,8 @@
 #
 # Same steps as scripts/deploy.sh for the API service: deploy a new revision with no
 # traffic, tagged rel-<short sha>; check GET /health on its own URL; only then move all
-# traffic to it. The agent service runs agent_main.py from the same image (infra/agent.tf).
+# traffic to it. The agent service runs agent_main.py from the same image, so the deploy
+# sets that command (OpenTofu creates the service with a placeholder image; infra/agent.tf).
 #
 # OpenTofu creates the agent services, and the deployer may only deploy to services that
 # already exist. Until the infra change is applied, this script says so and exits 0, so a
@@ -35,6 +36,7 @@ echo "== Deploying ${image} to ${service} as ${tag}, with no traffic"
 gcloud run deploy "${service}" \
   --project="${project}" --region="${region}" \
   --image="${image}" \
+  --command=python --args=agent_main.py \
   --no-traffic --tag="${tag}" \
   --update-labels="release=${sha:0:7}" \
   --remove-env-vars=RELEASE \

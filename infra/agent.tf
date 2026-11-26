@@ -29,8 +29,10 @@ resource "google_cloud_run_v2_service" "agent" {
     }
 
     containers {
-      image   = var.initial_image
-      command = ["python", "agent_main.py"]
+      # The placeholder image runs its own server until the first release. The pipeline
+      # deploys our image with `python agent_main.py` as the command (deploy_agent.sh), so
+      # the command, like the image, is set by the pipeline and ignored here.
+      image = var.initial_image
 
       ports {
         container_port = 8080
@@ -75,11 +77,13 @@ resource "google_cloud_run_v2_service" "agent" {
   }
 
   lifecycle {
-    # Same as the API service (run.tf): the pipeline owns the image and release label.
+    # Same as the API service (run.tf): the pipeline owns the image, the command that starts
+    # the agent from it, and the release label.
     ignore_changes = [
       scaling,
       template[0].revision,
       template[0].containers[0].image,
+      template[0].containers[0].command,
       template[0].labels,
       client,
       client_version,
