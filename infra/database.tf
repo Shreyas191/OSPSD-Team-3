@@ -11,7 +11,7 @@
 #   neon connection-string <branch> --project-id <id> --pooled \
 #     | gcloud secrets versions add database-url-<env> --data-file=-
 #
-# Nothing reads these secrets yet; the services mount them when the database layer lands.
+# The API service reads its environment's secret as DATABASE_URL (run.tf).
 
 resource "google_secret_manager_secret" "database_url" {
   for_each = var.environments
