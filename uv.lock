@@ -246,7 +246,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.45.1" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "sqlalchemy", specifier = ">=2.0.36" },
-    { name = "team-4-issue-tracker-trello", git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.0.0" },
+    { name = "team-4-issue-tracker-trello", git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.1.0" },
     { name = "team5-calendar", git = "https://github.com/juno-junhyuk-lee/OSPSD-Team-5.git?subdirectory=packages%2Fteam5-calendar&tag=team5-calendar-v0.1.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
@@ -1643,8 +1643,8 @@ wheels = [
 
 [[package]]
 name = "team-4-issue-tracker-trello"
-version = "1.0.0"
-source = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.0.0#c88ce2fd287f2524ba09ad5d94faf3983fdac08d" }
+version = "1.1.0"
+source = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.1.0#73daee42a219c001b9c720aeed14fc0ab049b51d" }
 dependencies = [
     { name = "issue-tracker-contract" },
 ]
