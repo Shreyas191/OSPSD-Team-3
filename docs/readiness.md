@@ -33,7 +33,7 @@ Each operation is reported on its own, so fast page loads can't hide slow agent 
 | Operation | SLI | SLO (launch week) | Why this target |
 |---|---|---|---|
 | **Ordinary API requests** (course list, course plan, proposal view, connection status, progress polls) | Latency of answered requests | p95 ≤ **500 ms**, p99 ≤ **1.5 s**, warm instances; cold starts counted and reported separately | HW2's warm p95 for a Dropbox-backed read was 397 ms [measured]; these reads mostly hit Postgres, so 500 ms leaves headroom. Cold starts are 3–7 s [measured] and would dominate p99 at our traffic, so they are counted, not hidden |
-| **Time to first useful progress** (an agent turn shows its first step, e.g. "Reading CS-GY 6083 syllabus.pdf") | Time from sending the message to the first progress update | p95 ≤ **5 s** | One model call (~1–3 s [assumed]) plus one tool call (~0.5 s [measured] for Dropbox). A cold agent instance adds ~4.3 s [measured], which this target allows once |
+| **Time to first useful progress** (an agent turn shows its first step, e.g. "Reading CS-GY 6083 syllabus.pdf") | Time from sending the message to the first progress update | p95 ≤ **5 s** | One model call (median 1.33 s, slowest 8.92 s over 15 calls [measured, A1]) plus one tool call (~0.5 s [measured] for Dropbox). A cold agent instance adds ~4.3 s [measured], which this target allows once |
 | **Full agent turn** (S1 extraction to a stored proposal) | Time from message to the turn ending (proposal, question or stop) | p95 ≤ **45 s**; every turn ends by **60 s** (the loop's hard limit, `MAX_SECONDS`) | The handout's example target; 3 model calls plus the document read fit well inside it. Turns that hit a limit are counted as failed, not dropped |
 | **Execute an approved proposal** (19 writes, each read back) | Time from approve to every change having an outcome | p95 ≤ **30 s** | 38 sequential provider calls at ~0.5 s each is ~19 s [assumed from the measured Dropbox round trip; Trello and Calendar measured in #111] |
 | **Unexpected errors** | Unexpected `5xx` and timeouts ÷ eligible requests, per operation | < **1%** | Same target as HW2. Deliberate rejections (`429` over a cap, `503 service_busy`) are reported separately, with how many user tasks they stopped |
@@ -52,7 +52,7 @@ Worked like the handout's example. First the average load, then each dependency 
 - **20 active users**, each setting up one course every 10 minutes → **2 course setups per minute**.
 - **One course setup** = 2 agent turns, 1 approval, 1 execution.
 - **Model calls per setup: 6.** Turn 1: list the documents, read the syllabus, ask the question (3 calls). Turn 2: read the answer and call `propose_changes`, then write the reply (2 calls). After execution: one summary (1 call). [assumed]
-- **Tokens per setup: about 31,000.** The syllabus text is capped at 20,000 characters (≈ 5,000 tokens) and is re-sent with each later call of its turn; instructions and tool definitions ≈ 1,500 tokens per call; output ≈ 3,000 tokens in total (mostly the proposal). [assumed; recorded per run by the execution records, #92]
+- **Tokens per setup: about 17,000.** Assumption test A1 sent a whole course's documents to the model in one call: **1,727 to 4,163 tokens per call, mean 2,617** (15 calls; the largest was the Machine Learning course, two documents, about 10,000 characters) [measured, [A1](https://github.com/Shreyas191/OSPSD-Team-3/pull/118)]. A setup has about 4 calls that carry the documents (≈ 3,500 tokens each, near the largest measured) and 2 that don't (≈ 1,500), so ≈ 15,000 input and ≈ 2,000 output tokens. A document at the 20,000-character cap would make it about **30,000**. [estimated from A1; recorded per run by the execution records, #92]
 - **Average durations:** an agent turn 20 s, an execution 20 s. [assumed]
 
 ### Step 1: arrival rates
@@ -66,7 +66,7 @@ Worked like the handout's example. First the average load, then each dependency 
 | Dependency | Work per course setup | Demand at 2 setups/min | Limit | Headroom |
 |---|---|---|---|---|
 | **Gemini** (calls) | 6 calls | **12 calls/min** | Free tier: per project, shown only in AI Studio. We plan with **15 calls/min and 1,000 calls/day** [assumed: the last published free-tier figures for Flash-Lite; to be confirmed in AI Studio for the project that owns `gemini-api-key-<env>`] | **1.25×**: the tightest constraint |
-| **Gemini** (tokens) | ~31,000 | **~62,000 tokens/min** | Free tier: shown in AI Studio [assumed ≥ 250,000/min] | ~4× |
+| **Gemini** (tokens) | ~17,000 (30,000 at the document cap) | **~34,000 tokens/min** (60,000 at the cap) | Free tier: shown in AI Studio [assumed ≥ 250,000/min] | ~7× (~4× at the cap) |
 | **Google Calendar** (Team 5's package, our OAuth project) | 9 creates + 9 read-backs = 18 | **36/min** | 600/min per user, 10,000/min per project [[published](https://developers.google.com/workspace/calendar/api/guides/quota)] | > 15× per user |
 | **Trello** (Team 4's package, our API key, each user's token) | 9 creates + 9 read-backs = 18 | **36/min**; one execution sends its 18 calls in ~10 s | 100 requests / 10 s per token, 300 / 10 s per API key, shared by all users [[published](https://developer.atlassian.com/cloud/trello/guides/rest-api/rate-limits/)] | 50× per key on average; a single execution uses 18% of its token's 10-second budget |
 | **Dropbox** (ours, each user's token) | list folder, download syllabus, upload reference document, read it back, plus the syllabus upload ≈ 5 | **10/min** | No published number; limits are per user per app, signalled by `429`/`RateLimitError` ([runbook](runbook.md#dropbox-rate-limits-us-503-provider_unavailable-in-bursts)). In HW2, 64 simultaneous requests were not rate-limited [measured, [overload protection](overload-protection.md)] | Ample: each student has their own Dropbox |
@@ -89,7 +89,7 @@ On the free tier, 15 calls/min ÷ 6 calls per setup = **2.5 setups per minute**,
 
 The daily allowance is tighter still: 1,000 calls ÷ 6 = **166 course setups per day across all users**. 40 users setting up 3 courses each on the busiest day is 120 setups (720 calls), which fits, but only just, and only if test runs and evaluations don't draw on the same project's allowance.
 
-Cost on a paid tier, for comparison: ~28,000 input and ~3,000 output tokens per setup. At Flash-Lite's list price as last published (about $0.10 per million input and $0.40 per million output tokens [assumed; check the [pricing page](https://ai.google.dev/gemini-api/docs/pricing)]), that is **about $0.004 per course setup**, or roughly **$0.50 for the busiest day**. Paid-tier rate limits are much higher, so this decides open question **Q4** in favour of the paid tier for launch week: the free tier's call limit, not money, is what would turn students away. Prompts on the paid tier are also not used to improve Google's products, which removes the disclosure DESIGN.md currently needs.
+Cost on a paid tier, for comparison: ~15,000 input and ~2,000 output tokens per setup (A1). At Flash-Lite's list price as last published (about $0.10 per million input and $0.40 per million output tokens [assumed; check the [pricing page](https://ai.google.dev/gemini-api/docs/pricing)]), that is **about $0.002 per course setup**, or roughly **$0.30 for the busiest day**. Paid-tier rate limits are much higher, so this decides open question **Q4** in favour of the paid tier for launch week: the free tier's call limit, not money, is what would turn students away. Prompts on the paid tier are also not used to improve Google's products, which removes the disclosure DESIGN.md currently needs.
 
 ### Step 5: bursts and polling
 
@@ -118,7 +118,7 @@ Each implementation limit is tied to the calculation, measurement or assumption 
 | Model calls per user per day | **40** (≈ 6 course setups) | 1,000 calls/day ÷ 25 heavy users, keeping test and evaluation runs out of the shared allowance | Agent service, from the database | #102 |
 | Executions at once, per user | **1**; a second approve-and-execute waits for the first | One user's 18 Trello calls per execution against 100 per 10 s per token; avoids interleaved partial failures | API service | #90 |
 | Execution and the request slot | Execution answers `202` with a progress URL and runs in fixed code, polled by the interface, so 20 approvals can't hold the API's 20 slots | Step 5, API concurrency | API service | #90 |
-| Syllabus text per read | **20,000 characters** | ≈ 5,000 tokens; keeps a setup near 31,000 tokens | API service (`read_document`) | #88 |
+| Syllabus text per read | **20,000 characters** | ≈ 6,500 tokens at the cap; keeps a setup at or below about 30,000 tokens (≈ 17,000 for the syllabi in A1) | API service (`read_document`) | #88 |
 | Upload size | **10 MB** per document | A syllabus PDF is well under 1 MB [assumed]; bounds memory on a 512 MiB instance | API service | #88 |
 | API requests in flight | **10 per instance**, 2 instances (unchanged from HW2) | 12 requests/s peak × 0.15 s ≈ 2 in flight, with execution off the request path | API service, `infra/variables.tf` | — |
 
@@ -143,13 +143,14 @@ Each implementation limit is tied to the calculation, measurement or assumption 
 | Nov 26, 20:47 | `GET /health` on the agent service, from a laptop (includes the network) | test (`course-agent-test`) | first request **4.35 s** (cold start); the next 10: 0.12–0.19 s | 11 requests |
 | Nov 26, 20:47 | `GET /health` on the API service, from a laptop | test | 0.10–0.19 s (already warm) | 11 requests |
 | Nov 26, 20:48 | `GET /health/provider` (one Dropbox round trip through the API), from a laptop | test | 0.46–0.69 s, median 0.51 s | 11 requests |
+| Nov 26 | One Gemini call reading a whole course's documents (`gemini-3.5-flash-lite`, free tier), [assumption test A1](https://github.com/Shreyas191/OSPSD-Team-3/pull/118) | laptop → Gemini API | 1,727–4,163 tokens per call (mean 2,617); 0.95–8.92 s, median 1.33 s | 15 calls, 5 courses |
 
 These are small samples from one place. They set the starting assumptions above; they don't establish the SLOs.
 
 ## What this record does not establish yet
 
 - **Gemini's real limits for our key's project.** The numbers above are assumptions until someone with access to that project reads them in AI Studio (owner: Shreyas, who created the key; by Nov 28).
-- **Model latency and tokens per turn.** These are assumed until the agent loop records them (#92) and the S1 evaluation runs five times (#103).
+- **Model latency and tokens per turn.** A1 measured single extraction calls (above). A full turn, with its tool calls and growing context, is still estimated until the agent loop records it (#92) and the S1 evaluation runs five times (#103).
 - **Trello and Calendar write latency** through Teams 4's and 5's packages. Measured in the load test (#111).
 - **Whether the SLOs hold under load.** That is the load test (#111), which runs the workload in section 1 and links its report here.
 
