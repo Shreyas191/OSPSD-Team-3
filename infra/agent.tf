@@ -78,12 +78,13 @@ resource "google_cloud_run_v2_service" "agent" {
 
   lifecycle {
     # Same as the API service (run.tf): the pipeline owns the image, the command that starts
-    # the agent from it, and the release label.
+    # the agent from it (command and args), and the release label.
     ignore_changes = [
       scaling,
       template[0].revision,
       template[0].containers[0].image,
       template[0].containers[0].command,
+      template[0].containers[0].args,
       template[0].labels,
       client,
       client_version,
