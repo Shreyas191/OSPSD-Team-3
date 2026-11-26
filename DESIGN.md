@@ -122,8 +122,7 @@ A student has signed in, connected Dropbox, Trello and Google Calendar, and uplo
 
 #### Decision P6: each student's own provider accounts, through the same contracts
 
-- **Approach.** The API service builds each vertical per request from the user's stored connection. Two of the three implementations take per-user credentials today: ours through `DropboxClient(dbx=...)`, given a `dropbox.Dropbox` built from the user's token, and Team 5's through `create_calendar_service(token_file=...)`, given a short-lived temporary file with the user's token. Team 4's `TrelloIssueProvider` reads one account from environment variables, which can't serve several users at once; we are asking Team 4 for optional constructor arguments (`api_key`, `token`, `list_id`), tracked on our board.
-- **Fallback if Team 4's change doesn't land by Nov 28:** serialize Trello calls behind one lock and set the credentials inside it. It is correct but limits Trello to one call at a time; it would be recorded as a known limitation and removed when Team 4 tags the change.
+- **Approach.** The API service builds each vertical per request from the user's stored connection. Two of the three implementations take per-user credentials today: ours through `DropboxClient(dbx=...)`, given a `dropbox.Dropbox` built from the user's token, and Team 5's through `create_calendar_service(token_file=...)`, given a short-lived temporary file with the user's token. Team 4's `TrelloIssueProvider` read one account from environment variables in `v1.0.0`, which can't serve several users at once. At our request, Team 4 released [`team-4-issue-tracker-trello-v1.1.0`](https://github.com/Tyler-Arciniaga/OSPSD-Team-4/tree/team-4-issue-tracker-trello-v1.1.0) on Nov 25 with `TrelloIssueProvider(*, api_key, token, list_id)`; omitted arguments still fall back to the environment. We pin it, and checked it live: a card created through constructor arguments, with the environment variables removed, was read back and deleted.
 - **Implementation choice stays configurable**, as in Milestone 1 (`ISSUE_TRACKER_IMPL`, `CALENDAR_IMPL`).
 
 #### Which decisions belong to code and which to the model
@@ -252,7 +251,7 @@ Each test runs as two users, A and B, with a **valid control request** next to i
 | # | Question | Owner | Decide by |
 |---|---|---|---|
 | Q1 | Confirm P4 (web, server-rendered) and P5 (Google sign-in) | _to assign_ | Nov 27 |
-| Q2 | If Team 4's per-user Trello change isn't tagged by Nov 28: the locked workaround, or another issue-tracker option? | _to assign_ | Nov 28 |
+| Q2 | ~~If Team 4's per-user Trello change isn't tagged by Nov 28: the locked workaround, or another issue-tracker option?~~ **Resolved Nov 26:** Team 4 released `v1.1.0` with constructor credentials; no workaround needed | Shreyas | Done |
 | Q3 | Google OAuth app in Testing: add staff and launch-week users as test users, and accept the 7-day refresh-token expiry, or apply for verification? | _to assign_ | Nov 28 |
 | Q4 | Gemini free tier (prompts may be used by Google, tighter limits) or the paid tier for launch week? | _to assign_ | Nov 28 |
 | Q5 | Which file types the first version reads: text PDFs only, or also DOCX and pasted text? | _to assign_ | Nov 27 |
