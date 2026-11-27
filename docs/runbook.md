@@ -76,13 +76,15 @@ Check the storage used by that environment's Dropbox account. Free space by dele
 
 **Seen in:** `provider_error` on every operation in the Errors panel, `GET /health/provider` failing, and the synthetic probe failing. The trace shows the failing call is `POST https://api.dropboxapi.com/oauth2/token` (see [Telemetry Walkthrough](telemetry-walkthrough.md#3-a-provider-failure)).
 
-Most often the refresh token was revoked or the Dropbox app's secret changed. Log in again to that environment's Dropbox app, add the new token as a new secret version, then deploy a new revision so it is read (secrets are read when an instance starts):
+Most often the refresh token was revoked or the Dropbox app's secret changed. Log in again to that environment's Dropbox app, add the new token as a new secret version, then start a new revision and send it the traffic, so the token is read (secrets are read when an instance starts). A new revision gets no traffic until it's moved: each release pins traffic to its own tagged revision ([Rollout](rollout.md), stop action 1).
 
 ```bash
 uv run python -m dropbox_client_impl login
 uv run python -c 'import json; print(json.load(open(".dropbox_token.json"))["refresh_token"], end="")' \
   | gcloud secrets versions add dropbox-refresh-token-demo --data-file=-
-gcloud run services update cloud-storage-service-demo --region=us-central1 --update-labels=secret-rotated=$(date +%s)
+gcloud run services update cloud-storage-service-demo --region=us-central1 \
+  --update-labels=secret-rotated=$(date +%s) --tag=rotated
+gcloud run services update-traffic cloud-storage-service-demo --region=us-central1 --to-tags=rotated=100
 ```
 
 Then disable the old version (`gcloud secrets versions disable <n> --secret=dropbox-refresh-token-demo`).
