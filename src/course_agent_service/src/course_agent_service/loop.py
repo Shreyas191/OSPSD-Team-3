@@ -13,6 +13,14 @@ result matched to its call), and repeats until one of these **stop reasons**:
 | ``api_unavailable`` | Not signed in, or the API service is down | Fixed text |
 | ``cancelled`` | The caller cancelled (the browser went away) | "Stopped" |
 | ``empty_reply`` | The model returned nothing | Fixed text |
+| ``daily_limit`` | The student's daily model calls ran out partway through the turn | Fixed text |
+
+Before **every** model call the loop reserves it from the model budget (``budget``; the API
+service counts per user per day and per project per minute, #102). When this minute's calls
+are used up, the turn waits for the next minute rather than failing midway, and the wait is
+recorded as ``waited_ms``. If the student has no calls left today before the turn's first
+model call, :class:`DailyLimitReachedError` is raised, so the caller can answer ``429`` with
+nothing stored.
 
 The model decides what to read and what to propose; code decides everything else: which
 tools exist, when to stop, and every message the student sees for a stop other than
@@ -57,6 +65,35 @@ MAX_TOKENS = 200_000
 MAX_PROPOSAL_ATTEMPTS = 3  # the first try, then at most two corrections
 
 
+class BudgetDailyLimitError(Exception):
+    """The budget has no model calls left today for this student."""
+
+
+class BudgetRateLimitedError(Exception):
+    """The budget has no model calls left this minute; try again after ``retry_after``."""
+
+    def __init__(self, retry_after: float) -> None:
+        """Record how many seconds to wait."""
+        super().__init__("rate limited")
+        self.retry_after = retry_after
+
+
+class BudgetUnavailableError(Exception):
+    """The budget couldn't be asked (the API service refused or is down)."""
+
+
+class DailyLimitReachedError(Exception):
+    """The student has no model calls left today, and this turn hasn't made any."""
+
+
+# Reserves one model call, or raises one of the Budget...Error exceptions above.
+Budget = Callable[[], None]
+
+
+def _no_budget() -> None:
+    """Allow every call (tests and local runs without an API service)."""
+
+
 @dataclass(frozen=True)
 class Limits:
     """Per-turn limits. A test can lower them."""
@@ -79,6 +116,8 @@ STOP_MESSAGES = {
     "api_unavailable": "I couldn't reach your course data, so I stopped. Nothing was changed.",
     "cancelled": "Stopped. Nothing was changed.",
     "empty_reply": "I didn't get an answer from the assistant; please try again.",
+    "daily_limit": "I stopped before finishing: you've reached today's limit for the "
+    "assistant. Nothing was changed. Your course plans and approvals still work.",
 }
 
 
@@ -102,15 +141,21 @@ def run_turn(  # noqa: PLR0913 (the loop's inputs; all keyword-only)
     limits: Limits | None = None,
     cancelled: Callable[[], bool] = lambda: False,
     clock: Callable[[], float] = time.monotonic,
+    budget: Budget = _no_budget,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> Turn:
     """Run one student turn and return everything it produced.
 
     ``history`` is the conversation so far; the returned ``messages`` start with the student's
     message and end with the reply, so appending them gives the next turn's history.
+
+    Raises:
+        DailyLimitReachedError: The student has no model calls left today; nothing ran.
+
     """
     run = _Run(limits or Limits(), cancelled, clock, Message(role="user", text=text))
     while True:
-        reason = run.limit_reached()
+        reason = run.limit_reached() or _reserve(run, budget, sleep)
         if reason:
             return run.stop(reason)
         try:
@@ -141,6 +186,29 @@ def run_turn(  # noqa: PLR0913 (the loop's inputs; all keyword-only)
             return turn
 
 
+def _reserve(run: "_Run", budget: Budget, sleep: Callable[[float], None]) -> str | None:
+    """Reserve the next model call, waiting out a full minute; return a stop reason or None."""
+    while True:
+        try:
+            budget()
+        except BudgetRateLimitedError as e:
+            left = run.limits.seconds - (run.clock() - run.started)
+            if e.retry_after >= left:
+                return "limit_time"
+            sleep(e.retry_after)
+            run.record["waited_ms"] += round(e.retry_after * 1000)
+            if run.cancelled():
+                return "cancelled"
+            continue
+        except BudgetDailyLimitError:
+            if run.record["model_calls"] == 0:
+                raise DailyLimitReachedError from None
+            return "daily_limit"
+        except BudgetUnavailableError:
+            return "api_unavailable"
+        return None
+
+
 class _Run:
     """One turn's state: its new messages, the run record and the stop decisions."""
 
@@ -160,6 +228,7 @@ class _Run:
             "model_calls": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "waited_ms": 0,
             "tools": [],
         }
         self.proposal_failures = 0

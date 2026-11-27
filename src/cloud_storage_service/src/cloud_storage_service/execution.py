@@ -31,6 +31,7 @@ of completed, failed and uncertain changes.
 """
 
 import logging
+import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -57,6 +58,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RUNNABLE = ("approved", "failed")
+# The operator's switch (#102): EXECUTION=disabled stops every run before it claims anything,
+# while reads, proposals and approvals keep working.
+EXECUTION_ENV_VAR = "EXECUTION"
+
+
+def execution_enabled() -> bool:
+    """Whether proposals may run on this service (``EXECUTION`` isn't ``disabled``)."""
+    return os.environ.get(EXECUTION_ENV_VAR, "").strip() != "disabled"
+
+
 # A running proposal shows it's alive before each change. One change is one provider write
 # and one read-back, each with its own timeout well under a minute, so a run silent this long
 # has stopped (Cloud Run ends requests after 5 minutes).

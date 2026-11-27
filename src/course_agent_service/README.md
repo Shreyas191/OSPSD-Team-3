@@ -13,6 +13,13 @@ interface and the API service, where the language model enters the system.
 - **Tools** (`tools.py`): `list_courses`, `list_course_documents`, `read_document`,
   `get_course_plan` (reads) and `propose_changes` (stores a pending proposal). Each parses its
   arguments into typed objects before calling the API service.
+- **Limits** (#102): at most 3 turns run at once and 10 wait for a slot; past that a turn
+  answers `429 assistant_busy`. Before every model call the loop reserves it from the API
+  service (`POST /usage/model-calls`), which counts 25 calls per user per day and 15 per
+  minute for the project. A full minute makes the turn wait for the next one (reported as
+  `waited_ms`); no calls left today gives `429 daily_limit_reached` before anything runs, or
+  the `daily_limit` stop partway through a turn. The service runs on one instance so the
+  admission limit holds across it.
 - **Model** (`model.py`, `gemini.py`): `ModelClient`, with `GeminiModel` (the real model) and
   `ScriptedModel` (replies fixed in advance, for tests).
 

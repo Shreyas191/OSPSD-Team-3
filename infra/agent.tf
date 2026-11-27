@@ -23,9 +23,13 @@ resource "google_cloud_run_v2_service" "agent" {
   template {
     service_account = google_service_account.agent_runtime[each.key].email
 
+    # One instance, so its admission control (3 turns at once, 10 queued; app.py) holds
+    # across the service. A turn mostly waits on Gemini and the API, so one instance carries
+    # far more than 3 turns' work. The model-call limits are counted by the API service and
+    # hold however many instances run (#102).
     scaling {
       min_instance_count = 0
-      max_instance_count = var.max_instances
+      max_instance_count = var.agent_max_instances
     }
 
     containers {
