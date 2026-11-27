@@ -23,4 +23,10 @@
 <p>You have no courses yet. Each course you set up appears here, with the deadlines, tasks
 and documents Course Autopilot added for it.</p>
 {% endif %}
+{% if not prompt %}
+<form method="post" action="/chat">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <p><button type="submit">Ask the assistant</button></p>
+</form>
+{% endif %}
 {% endblock %}

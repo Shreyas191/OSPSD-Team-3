@@ -70,6 +70,13 @@ resource "google_cloud_run_v2_service" "web" {
         value = google_cloud_run_v2_service.service[each.key].uri
       }
 
+      # Conversation turns go to the agent service, with an agent token made for each turn
+      # (src/course_web/backend.py).
+      env {
+        name  = "AGENT_BASE_URL"
+        value = google_cloud_run_v2_service.agent[each.key].uri
+      }
+
       # Google sends the browser back to <PUBLIC_URL>/auth/callback, which must be listed in
       # sign_in_redirect_uris for the API service (the web_service_urls output).
       env {

@@ -18,6 +18,7 @@ import hmac
 import logging
 import os
 import secrets
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,8 +31,18 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from course_web.backend import TIMEOUT_SECONDS, Api, BackendError, TrelloList
+from course_web.backend import (
+    AGENT_TIMEOUT_SECONDS,
+    TIMEOUT_SECONDS,
+    Agent,
+    Api,
+    BackendError,
+    ChatEntry,
+    Proposal,
+    TrelloList,
+)
 from course_web.config import Settings
+from course_web.views import STATUSES, change_views
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +51,7 @@ SIGN_IN_COOKIE = "ca_sign_in"
 CSRF_COOKIE = "ca_csrf"
 SESSION_MAX_AGE = 7 * 24 * 60 * 60
 SIGN_IN_MAX_AGE = 10 * 60
+MAX_MESSAGE_CHARACTERS = 4000  # the agent service's limit on one message
 
 # Pages are personal and short-lived: never cached, never framed (no other site can overlay
 # an approve button and trick a click), and no referrer, so the sign-in callback's code never
@@ -71,17 +83,21 @@ def check_configuration() -> Settings:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Read the settings and open one HTTP client to the API service for the app's life."""
+    """Read the settings and open one HTTP client to each service for the app's life."""
     settings = check_configuration()
     app.state.settings = settings
-    http = (
-        httpx.Client(base_url=settings.api_base_url, timeout=TIMEOUT_SECONDS)
-        if settings.api_base_url
-        else None
-    )
-    app.state.api = Api(http) if http else None
+    clients = []
+    app.state.api = app.state.agent = None
+    if settings.api_base_url:
+        clients.append(httpx.Client(base_url=settings.api_base_url, timeout=TIMEOUT_SECONDS))
+        app.state.api = Api(clients[-1])
+    if settings.agent_base_url:
+        clients.append(
+            httpx.Client(base_url=settings.agent_base_url, timeout=AGENT_TIMEOUT_SECONDS),
+        )
+        app.state.agent = Agent(clients[-1])
     yield
-    if http is not None:
+    for http in clients:
         http.close()
 
 
@@ -149,6 +165,11 @@ def _settings(request: Request) -> Settings:
 def _api(request: Request) -> Api | None:
     api: Api | None = getattr(request.app.state, "api", None)
     return api
+
+
+def _agent(request: Request) -> Agent | None:
+    agent: Agent | None = getattr(request.app.state, "agent", None)
+    return agent
 
 
 def _release() -> str:
@@ -615,6 +636,308 @@ def disconnect(request: Request, provider: str, _csrf: CheckedForm) -> Response:
     except BackendError as e:
         return _connection_error(request, e, PROVIDERS[provider])
     return RedirectResponse("/connections", status_code=303)
+
+
+# ----- Conversations and proposals (#95; agent #94, proposals #89 and #90) -----
+#
+# A turn goes to the agent service with an agent token made for that one turn: it can read
+# and propose, never approve or execute (identity.py, T14). Approving, rejecting, executing
+# and settling go to the API with the person's own session, from forms on our pages only.
+
+# Shown after a redirect, chosen by key: no text from the URL ever reaches the page.
+NOTICES = {
+    "kept": "Here are the changes you kept. Nothing has been approved yet: review them and "
+    "approve.",
+    "paused": "Making changes is paused on this site right now. Your approval is kept: "
+    "try again later.",
+    "none_kept": "You unchecked every change, so the proposal was rejected. Nothing was changed.",
+    "settled": "Thanks. That change is recorded.",
+}
+
+# A turn the agent service refused: what the person sees above the message box.
+TURN_ERRORS = {
+    "assistant_busy": "The assistant is busy right now. Try again in a minute.",
+    "daily_limit_reached": "You've reached today's limit for the assistant. Your course "
+    "plans and approvals still work.",
+    "not_connected": "Connect your accounts first: the assistant reads your Dropbox.",
+    "reconnect_needed": "Reconnect your accounts: Dropbox no longer accepts Course "
+    "Autopilot's access.",
+}
+UNAVAILABLE = "The assistant isn't available right now. Your courses and approvals still work."
+
+
+def _valid_id(value: str) -> bool:
+    """Whether ``value`` is a UUID, so it can go into an API path as one segment."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _not_found(request: Request, what: str) -> HTMLResponse:
+    return error_page(request, 404, f"There's no such {what}", "Go back to your courses.")
+
+
+def _chat_page(  # noqa: PLR0913 (the page and what it shows)
+    request: Request,
+    conversation_id: str,
+    entries: list[ChatEntry],
+    notice: str = "",
+    draft: str = "",
+    status_code: int = 200,
+) -> HTMLResponse:
+    return render(
+        request,
+        "chat.html",
+        {
+            "conversation_id": conversation_id,
+            "entries": entries,
+            "notice": notice,
+            "draft": draft,
+            "assistant_open": _agent(request) is not None,
+            "max_length": MAX_MESSAGE_CHARACTERS,
+            "signed_in": True,
+        },
+        status_code=status_code,
+    )
+
+
+@app.post("/chat", response_model=None)
+def new_conversation(request: Request, _csrf: CheckedForm) -> Response:
+    """Start a conversation with the assistant."""
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        conversation_id = api.create_conversation(token)
+    except BackendError as e:
+        return backend_error_page(request, e)
+    return RedirectResponse(f"/chat/{conversation_id}", status_code=303)
+
+
+@app.get("/chat/{conversation_id}", response_model=None)
+def conversation_page(request: Request, conversation_id: str) -> Response:
+    """Show a conversation and a box for the next message."""
+    if not _valid_id(conversation_id):
+        return _not_found(request, "conversation")
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        entries = api.conversation(token, conversation_id)
+    except BackendError as e:
+        if e.status == 404:  # noqa: PLR2004 (HTTP status)
+            return _not_found(request, "conversation")
+        return backend_error_page(request, e)
+    return _chat_page(request, conversation_id, entries)
+
+
+@app.post("/chat/{conversation_id}", response_model=None)
+def send_message(  # noqa: PLR0911 (each way a turn can end)
+    request: Request,
+    conversation_id: str,
+    _csrf: CheckedForm,
+    text: Annotated[str, Form()] = "",
+) -> Response:
+    """Run one turn with what the person wrote, then show the conversation again."""
+    if not _valid_id(conversation_id):
+        return _not_found(request, "conversation")
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    agent, text = _agent(request), text.strip()
+
+    def again(notice: str, status_code: int) -> Response:
+        try:
+            entries = api.conversation(token, conversation_id)
+        except BackendError as e:
+            return backend_error_page(request, e)
+        return _chat_page(request, conversation_id, entries, notice, text, status_code)
+
+    if agent is None:
+        return again("The assistant isn't open on this site yet.", 503)
+    if not text or len(text) > MAX_MESSAGE_CHARACTERS:
+        return again(f"Write a message of 1 to {MAX_MESSAGE_CHARACTERS} characters.", 400)
+    try:
+        # A fresh agent token for this turn: it ends with the session, and in 5 minutes.
+        agent.take_turn(api.agent_token(token), conversation_id, text)
+    except BackendError as e:
+        if e.status == 401:  # noqa: PLR2004 (HTTP status)
+            return backend_error_page(request, e)
+        if e.status == 404:  # noqa: PLR2004 (HTTP status)
+            return _not_found(request, "conversation")
+        message = TURN_ERRORS.get(e.code) or (UNAVAILABLE if e.status >= 500 else e.message)  # noqa: PLR2004
+        return again(message or UNAVAILABLE, e.status)
+    # The reply is stored with the conversation; showing it from there keeps reloads safe.
+    return RedirectResponse(f"/chat/{conversation_id}", status_code=303)
+
+
+def _proposal_page(
+    request: Request,
+    proposal: Proposal,
+    notice: str = "",
+    status_code: int = 200,
+) -> HTMLResponse:
+    return render(
+        request,
+        "proposal.html",
+        {
+            "proposal": proposal,
+            "changes": change_views(proposal.changes, proposal.outcomes),
+            "status_text": STATUSES.get(proposal.status, proposal.status),
+            "notice": notice,
+            "signed_in": True,
+        },
+        status_code=status_code,
+    )
+
+
+def _proposal_error(request: Request, e: BackendError, proposal_id: str) -> Response:
+    """Render a refused proposal step: what to do next, pointing back to the proposal."""
+    if e.status == 401 or (e.status >= 500 and e.code != "execution_disabled"):  # noqa: PLR2004
+        return backend_error_page(request, e)
+    if e.status == 404:  # noqa: PLR2004 (HTTP status)
+        return _not_found(request, "proposal")
+    if e.code == "execution_disabled":
+        return RedirectResponse(f"/proposals/{proposal_id}?notice=paused", status_code=303)
+    return error_page(
+        request,
+        e.status,
+        e.message or "That didn't work",
+        "Nothing else was changed. Go back to the proposal, reload it and try again.",
+        back=f"/proposals/{proposal_id}",
+        back_label="Back to the proposal",
+    )
+
+
+def _proposal_session(request: Request, proposal_id: str) -> tuple[Api, str] | Response:
+    if not _valid_id(proposal_id):
+        return _not_found(request, "proposal")
+    return _session(request)
+
+
+@app.get("/proposals/{proposal_id}", response_model=None)
+def proposal_page(request: Request, proposal_id: str, notice: str = "") -> Response:
+    """Show every proposed change exactly as stored, its outcome, and what to do next."""
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        proposal = api.proposal(token, proposal_id)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return _proposal_page(request, proposal, NOTICES.get(notice, ""))
+
+
+@app.post("/proposals/{proposal_id}/approve", response_model=None)
+def approve(
+    request: Request,
+    proposal_id: str,
+    _csrf: CheckedForm,
+    changes_hash: Annotated[str, Form()] = "",
+    keep: Annotated[list[int] | None, Form()] = None,
+) -> Response:
+    """Approve exactly the changes the page showed, and make them; or drop unchecked ones.
+
+    If every change is still checked, the proposal is approved with the hash of the content
+    the page showed (the API refuses any other) and then run. If some were unchecked,
+    nothing is approved: this proposal is rejected and a new one with the kept changes is
+    shown for review, so the person approves exactly what will happen (S1, step 6).
+    """
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        proposal = api.proposal(token, proposal_id)
+        if proposal.changes_hash != changes_hash:
+            return error_page(
+                request,
+                409,
+                "These changes are different from the ones you reviewed",
+                "Nothing was approved. Go back, review the proposal again, and approve it.",
+                back=f"/proposals/{proposal_id}",
+                back_label="Back to the proposal",
+            )
+        kept = sorted({i for i in keep or [] if 0 <= i < len(proposal.changes)})
+        if len(kept) < len(proposal.changes):
+            api.reject(token, proposal_id)
+            if not kept:
+                return RedirectResponse(
+                    f"/proposals/{proposal_id}?notice=none_kept",
+                    status_code=303,
+                )
+            new = api.create_proposal(token, [proposal.changes[i] for i in kept])
+            return RedirectResponse(f"/proposals/{new.id}?notice=kept", status_code=303)
+        api.approve(token, proposal_id, changes_hash)
+        api.execute(token, proposal_id)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
+
+
+@app.post("/proposals/{proposal_id}/reject", response_model=None)
+def reject(request: Request, proposal_id: str, _csrf: CheckedForm) -> Response:
+    """Reject the whole proposal: nothing is changed."""
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.reject(token, proposal_id)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
+
+
+@app.post("/proposals/{proposal_id}/execute", response_model=None)
+def execute(request: Request, proposal_id: str, _csrf: CheckedForm) -> Response:
+    """Make an approved proposal's changes, or retry the ones that failed."""
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.execute(token, proposal_id)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
+
+
+@app.post("/proposals/{proposal_id}/changes/{change_index}/resolve", response_model=None)
+def resolve(
+    request: Request,
+    proposal_id: str,
+    change_index: int,
+    _csrf: CheckedForm,
+    happened: Annotated[str, Form()] = "",
+    record_id: Annotated[str, Form()] = "",
+) -> Response:
+    """Record what the person found when they checked an uncertain change."""
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    if happened not in {"yes", "no"}:
+        return error_page(
+            request,
+            400,
+            "Say whether the change happened",
+            "Go back and choose one.",
+            back=f"/proposals/{proposal_id}",
+            back_label="Back to the proposal",
+        )
+    status = "completed" if happened == "yes" else "failed"
+    try:
+        api.resolve(token, proposal_id, change_index, status, record_id.strip() or None)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(f"/proposals/{proposal_id}?notice=settled", status_code=303)
 
 
 @app.get("/health")

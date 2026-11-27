@@ -1,6 +1,8 @@
 """The interface's settings, read once at startup.
 
 - ``API_BASE_URL``: the API service's URL. Without it, the start page says sign-in isn't open.
+- ``AGENT_BASE_URL``: the agent service's URL. Without it, the conversation page says the
+  assistant isn't open; everything else still works.
 - ``PUBLIC_URL``: the interface's one public address (scheme and host, no path). Page requests
   on any other address are sent there, so cookies and the sign-in callback share one host.
   Unset on a laptop.
@@ -24,6 +26,7 @@ class Settings:
     """What the interface needs to know about its environment."""
 
     api_base_url: str | None = None
+    agent_base_url: str | None = None
     secure_cookies: bool = True
     public_url: str | None = None
 
@@ -31,10 +34,11 @@ class Settings:
     def from_env(cls, env: Mapping[str, str] | None = None) -> Self:
         """Read the settings from the environment (or ``env``, in tests)."""
         env = os.environ if env is None else env
-        api = env.get("API_BASE_URL", "").strip()
-        if api and not api.startswith(("https://", "http://")):
-            msg = "API_BASE_URL must be an http:// or https:// URL"
-            raise ConfigurationError(msg)
+        api, agent = (env.get(name, "").strip() for name in ("API_BASE_URL", "AGENT_BASE_URL"))
+        for name, value in (("API_BASE_URL", api), ("AGENT_BASE_URL", agent)):
+            if value and not value.startswith(("https://", "http://")):
+                msg = f"{name} must be an http:// or https:// URL"
+                raise ConfigurationError(msg)
         insecure = env.get("INSECURE_COOKIES", "") == "enabled"
         if insecure and env.get("K_SERVICE"):
             # Cloud Run sets K_SERVICE: a deployed interface always uses Secure cookies.
@@ -48,6 +52,7 @@ class Settings:
             raise ConfigurationError(msg)
         return cls(
             api_base_url=api.rstrip("/") or None,
+            agent_base_url=agent.rstrip("/") or None,
             secure_cookies=not insecure,
             public_url=public or None,
         )

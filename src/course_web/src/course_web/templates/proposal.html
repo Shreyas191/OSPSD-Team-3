@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Proposed changes · Course Autopilot{% endblock %}
+{% block content %}
+<h1>Proposed changes</h1>
+<p>{{ status_text }}</p>
+{% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+
+{% if proposal.status == "pending" %}
+<form method="post" action="/proposals/{{ proposal.id }}/approve" data-busy="Making the changes… this can take a minute.">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="changes_hash" value="{{ proposal.changes_hash }}">
+  <p>Uncheck any change you don't want. If you uncheck some, you'll review the rest once more
+  before anything happens.</p>
+  <ul class="changes">
+    {% for c in changes %}
+    <li><label><input type="checkbox" name="keep" value="{{ c.index }}" checked> {% include "_change.html" %}</label></li>
+    {% endfor %}
+  </ul>
+  <p><button type="submit">Approve and make these changes</button> <span class="busy" aria-live="polite"></span></p>
+</form>
+<form method="post" action="/proposals/{{ proposal.id }}/reject">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <p><button type="submit" class="quiet">Reject all of them</button></p>
+</form>
+{% else %}
+<ul class="changes">
+  {% for c in changes %}
+  <li>{% include "_change.html" %}
+    {% if c.outcome_status == "uncertain" and proposal.status == "failed" %}
+    <form method="post" action="/proposals/{{ proposal.id }}/changes/{{ c.index }}/resolve" class="resolve">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <p>Check your {% if "calendar" in c.action %}calendar{% elif "Trello" in c.action %}Trello board{% else %}Dropbox{% endif %}, then tell us what you found.</p>
+      {% if c.creates_record %}
+      <label for="record-{{ c.index }}">If it's there: its ID</label>
+      <input id="record-{{ c.index }}" name="record_id" maxlength="255">
+      {% endif %}
+      <button type="submit" name="happened" value="yes">It happened</button>
+      <button type="submit" name="happened" value="no" class="quiet">It didn't happen</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% if proposal.status in ["approved", "failed"] %}
+<form method="post" action="/proposals/{{ proposal.id }}/execute" data-busy="Making the changes… this can take a minute.">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <p><button type="submit">{% if proposal.status == "approved" %}Make these changes{% else %}Try the changes that weren't made again{% endif %}</button>
+  <span class="busy" aria-live="polite"></span></p>
+</form>
+{% endif %}
+{% endif %}
+<p><a href="/">Back to your courses</a></p>
+<script src="/static/busy.js"></script>
+{% endblock %}

@@ -28,3 +28,18 @@ td.actions form { margin: 0; }
 fieldset { border: 1px solid var(--line); border-radius: 0.375rem; margin: 0 0 1rem; }
 fieldset label { display: block; padding: 0.25rem 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+ol.chat { list-style: none; padding: 0; }
+ol.chat li { border: 1px solid var(--line); border-radius: 0.375rem; padding: 0.5rem 0.75rem; margin: 0 0 0.75rem; }
+ol.chat li.student { margin-left: 2rem; }
+ol.chat .who { font-weight: 600; font-size: 0.875rem; }
+.said, pre.document { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.25rem 0; }
+textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.notice { border-left: 3px solid currentColor; padding-left: 0.75rem; }
+ul.changes { list-style: none; padding: 0; }
+ul.changes li { border-top: 1px solid var(--line); padding: 0.5rem 0; }
+ul.changes span { margin-right: 0.5rem; }
+.action { font-weight: 600; }
+.course, .detail, .when { color: var(--muted); }
+.outcome { display: inline-block; font-weight: 600; }
+.outcome.failed, .outcome.uncertain { text-decoration: underline; }
+form.resolve { margin: 0.5rem 0 0 1rem; }
