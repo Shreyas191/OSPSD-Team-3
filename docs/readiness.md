@@ -2,10 +2,10 @@
 
 This is the HW3 Milestone 2 launch-readiness record for **Course Autopilot** (handout, Level 5). It starts with the launch we promise to support and how we will judge it (Level 5 §1, task 7.1), followed by a capacity estimate across the whole request path (§2, task 7.2), and a summary of the failure analysis (§5, task 7.4). The later sections (load test, failure analysis, rollout, launch decision) are added by their own issues and link back here.
 
-**Status (Nov 26, 2026):** launch criteria and capacity estimate written before the agent loop, proposals and the interface are built (#89–#95). Every number below is tagged with where it comes from:
+**Status (Nov 27, 2026):** launch criteria and capacity estimate written before the agent loop, proposals and the interface are built (#89–#95); Gemini's limits and one real S1 turn added after review. Every number below is tagged with where it comes from:
 
 - **[measured]**: we measured it, and the run is listed under [Measurements so far](#measurements-so-far);
-- **[published]**: a provider's documented limit, linked;
+- **[published]**: a provider's documented limit, linked; for Gemini, the limits AI Studio shows for our key's project;
 - **[assumed]**: an assumption we state and will replace with a measurement in the load test (#111).
 
 The design these numbers apply to is the Milestone 2 chapter of DESIGN.md, in review in [PR #80](https://github.com/Shreyas191/OSPSD-Team-3/pull/80): interface → agent service → API service → Neon, Gemini, and each student's own Dropbox, Trello and Google Calendar.
@@ -41,7 +41,9 @@ Each operation is reported on its own, so fast page loads can't hide slow agent 
 | **Safety** (must hold, not a percentage) | Provider writes without an approval for that exact hash; duplicate records after a retry; one user reading another's data | **0** in every test and evaluation | DESIGN.md P1–P3 and threats T1–T6; checked by #93, #104 and #108 |
 | **Availability** | Requests answered without an unexpected error, over the launch window | **99%** over Dec 2–6 | A 15-minute load test can't establish this; it is measured over launch week itself and reported in Milestone 3 |
 
-**Sample sizes.** At 6 agent turns a minute, a 15-minute test produces about 90 turns and 30 executions: enough to check p95, not p99. #111 repeats the test and states the count next to every percentile.
+**Queued turns.** At the declared load, some turns wait for the model's per-minute allowance (§3). A queued turn counts as served; its time in the queue is reported next to each agent timing, so a long wait is visible rather than hidden or counted as an error.
+
+**Sample sizes.** At 4 agent turns a minute, a 15-minute test produces about 60 turns and 30 executions: enough to check p95, not p99. #111 repeats the test and states the count next to every percentile.
 
 ## 2. Capacity across the whole request path
 
@@ -51,8 +53,8 @@ Worked like the handout's example. First the average load, then each dependency 
 
 - **20 active users**, each setting up one course every 10 minutes → **2 course setups per minute**.
 - **One course setup** = 2 agent turns, 1 approval, 1 execution.
-- **Model calls per setup: 6.** Turn 1: list the documents, read the syllabus, ask the question (3 calls). Turn 2: read the answer and call `propose_changes`, then write the reply (2 calls). After execution: one summary (1 call). [assumed]
-- **Tokens per setup: about 17,000.** Assumption test A1 sent a whole course's documents to the model in one call: **1,727 to 4,163 tokens per call, mean 2,617** (15 calls; the largest was the Machine Learning course, two documents, about 10,000 characters) [measured, [A1](https://github.com/Shreyas191/OSPSD-Team-3/pull/118)]. A setup has about 4 calls that carry the documents (≈ 3,500 tokens each, near the largest measured) and 2 that don't (≈ 1,500), so ≈ 15,000 input and ≈ 2,000 output tokens. A document at the 20,000-character cap would make it about **30,000**. [estimated from A1; recorded per run by the execution records, #92]
+- **Model calls per setup: 8.** Turn 1: list the documents, read the syllabus, ask the question (3 calls). Turn 2: read the answer and propose (4 calls). After execution: one summary (1 call). Turn 2 is measured: in a local S1 run with the real model, the proposing turn took **4 model calls, about 11,000 tokens and 8 s**, because `propose_changes` was refused twice (extra fields, then an end equal to the start) and corrected [measured, Shreyas, Nov 26]. Without corrections it is 2 calls, so 8 per setup leaves room for them.
+- **Tokens per setup: about 21,000.** Turn 1 is estimated from assumption test A1, which sent a whole course's documents to the model in one call: **1,727 to 4,163 tokens per call, mean 2,617** (15 calls; the largest was the Machine Learning course, two documents, about 10,000 characters) [measured, [A1](https://github.com/Shreyas191/OSPSD-Team-3/pull/118)]. So turn 1 ≈ 8,500 (two calls carrying the documents at ≈ 3,500, one without at ≈ 1,500), turn 2 ≈ **11,000** [measured, above] and the summary ≈ 1,500: about 19,000 input and 2,000 output tokens. A document at the 20,000-character cap adds about 3,500 tokens to each of the 6 calls that carry it, about **42,000**. [estimated; recorded per run by the execution records, #92]
 - **Average durations:** an agent turn 20 s, an execution 20 s. [assumed]
 
 ### Step 1: arrival rates
@@ -65,8 +67,8 @@ Worked like the handout's example. First the average load, then each dependency 
 
 | Dependency | Work per course setup | Demand at 2 setups/min | Limit | Headroom |
 |---|---|---|---|---|
-| **Gemini** (calls) | 6 calls | **12 calls/min** | Free tier: per project, shown only in AI Studio. We plan with **15 calls/min and 1,000 calls/day** [assumed: the last published free-tier figures for Flash-Lite; to be confirmed in AI Studio for the project that owns `gemini-api-key-<env>`] | **1.25×**: the tightest constraint |
-| **Gemini** (tokens) | ~17,000 (30,000 at the document cap) | **~34,000 tokens/min** (60,000 at the cap) | Free tier: shown in AI Studio [assumed ≥ 250,000/min] | ~7× (~4× at the cap) |
+| **Gemini** (calls) | 8 calls | **16 calls/min** | Free tier, Gemini 3.5 Flash-Lite: **15 calls/min and 500 calls/day** per project [read in AI Studio for our key's project, Nov 26] | **0.94×: below the declared load.** The tightest constraint by far |
+| **Gemini** (tokens) | ~21,000 (42,000 at the document cap) | **~42,000 tokens/min** (84,000 at the cap) | Free tier: **250,000 tokens/min** [read in AI Studio for our key's project, Nov 26] | ~6× (~3× at the cap) |
 | **Google Calendar** (Team 5's package, our OAuth project) | 9 creates + 9 read-backs = 18 | **36/min** | 600/min per user, 10,000/min per project [[published](https://developers.google.com/workspace/calendar/api/guides/quota)] | > 15× per user |
 | **Trello** (Team 4's package, our API key, each user's token) | 9 creates + 9 read-backs = 18 | **36/min**; one execution sends its 18 calls in ~10 s | 100 requests / 10 s per token, 300 / 10 s per API key, shared by all users [[published](https://developer.atlassian.com/cloud/trello/guides/rest-api/rate-limits/)] | 50× per key on average; a single execution uses 18% of its token's 10-second budget |
 | **Dropbox** (ours, each user's token) | list folder, download syllabus, upload reference document, read it back, plus the syllabus upload ≈ 5 | **10/min** | No published number; limits are per user per app, signalled by `429`/`RateLimitError` ([runbook](runbook.md#dropbox-rate-limits-us-503-provider_unavailable-in-bursts)). In HW2, 64 simultaneous requests were not rate-limited [measured, [overload protection](overload-protection.md)] | Ample: each student has their own Dropbox |
@@ -74,7 +76,7 @@ Worked like the handout's example. First the average load, then each dependency 
 | **Neon Postgres** (connections) | — | At most **10**: 2 API instances × (pool 2 + overflow 3) in `course_autopilot_store/database.py`; the agent and interface have no database access | 112 `max_connections` on a 0.25 CU compute; the pooled endpoint accepts 10,000 clients [[published](https://neon.com/docs/connect/connection-pooling#pooler-limits)] | > 10× |
 | **Neon** (compute and storage) | — | Awake all launch week at 0.25 CU = 5 days × 24 h × 0.25 = **30 CU-hours**, worst case. Storage: ~20 KB of conversation per course × ~600 courses ≈ **12 MB** | Free plan: 100 CU-hours and 1 GB per project [[published](https://neon.com/docs/introduction/plans)]. All three environments are branches of **one** project, so they share both | 3× compute even if test and demo are equally busy |
 
-Checking each provider separately matters here. The combined provider demand (82 calls/min) looks harmless, but the model, which isn't a provider at all, has almost no headroom.
+Checking each provider separately matters here. The combined provider demand (82 calls/min) looks harmless, but the model, which isn't a provider at all, can't carry the declared load on the free tier without queuing.
 
 ### Step 3: work in progress (Little's law)
 
@@ -85,11 +87,14 @@ These are averages, not pool sizes; bursts are in step 5.
 
 ### Step 4: the model is the tightest constraint
 
-On the free tier, 15 calls/min ÷ 6 calls per setup = **2.5 setups per minute**, against the 2 we promise. That is 25% headroom before any retry, a slow response or another environment using the same key's project.
+On the free tier, 15 calls/min ÷ 8 calls per setup = **1.9 setups per minute**, just under the 2 we promise. At the sustained declared load, turns therefore queue (admission control, §3) and the SLOs count a queued turn as served, with its wait reported (§1). Real use in launch week is likely 3–4 people at once: the highest use so far is 7 calls in a minute and 9 in a day [read in AI Studio for our key's project, Nov 26].
 
-The daily allowance is tighter still: 1,000 calls ÷ 6 = **166 course setups per day across all users**. 40 users setting up 3 courses each on the busiest day is 120 setups (720 calls), which fits, but only just, and only if test runs and evaluations don't draw on the same project's allowance.
+The daily allowance is tighter still: 500 calls ÷ 8 = **62 course setups per day**, per project. Two consequences:
 
-Cost on a paid tier, for comparison: ~15,000 input and ~2,000 output tokens per setup (A1). At Flash-Lite's list price as last published (about $0.10 per million input and $0.40 per million output tokens [assumed; check the [pricing page](https://ai.google.dev/gemini-api/docs/pricing)]), that is **about $0.002 per course setup**, or roughly **$0.30 for the busiest day**. Paid-tier rate limits are much higher, so this decides open question **Q4** in favour of the paid tier for launch week: the free tier's call limit, not money, is what would turn students away. Prompts on the paid tier are also not used to improve Google's products, which removes the disclosure DESIGN.md currently needs.
+- **Test and demo need separate projects.** A 15-minute load test at 16 calls/min uses about 240 calls, half a day's allowance, and evaluation runs (#103–#105) draw on the same allowance. With the `test` and `demo` keys in separate Google Cloud projects, testing can't use up what students need.
+- **A per-user daily cap of 25 calls** (about 3 course setups). At 500 a day, that still serves 20 users at the cap; 40 calls each would serve only 12.
+
+Cost on a paid tier, for comparison: ~19,000 input and ~2,000 output tokens per setup (step 1's estimate). At Flash-Lite's list price as last published (about $0.10 per million input and $0.40 per million output tokens [assumed; check the [pricing page](https://ai.google.dev/gemini-api/docs/pricing)]), that is **about $0.003 per course setup**. **Q4 is decided: the free tier**, with the admission control, separate projects and daily cap above (DESIGN.md). It covers the use we expect; the declared 20-user load is served with queuing. If launch week shows sustained queues or the daily allowance running out, enabling billing on the `demo` project is the fallback: at this price, cost isn't the obstacle. On the free tier, prompts may be used to improve Google's products, so the disclosure in DESIGN.md stays.
 
 ### Step 5: bursts and polling
 
@@ -102,9 +107,9 @@ Cost on a paid tier, for comparison: ~15,000 input and ~2,000 output tokens per 
 
 Add page loads (20 users × one page every 15 s ≈ **1.3/s**) and the agent's own read calls to the API (4 per turn ≈ **0.3/s** average). Peak ordinary API traffic is therefore about **12 requests/s**.
 
-**API service concurrency.** It runs at most 2 instances × 10 requests in flight (`MAX_IN_FLIGHT_REQUESTS`) = **20** concurrent requests before answering `503 service_busy`. Short requests (~0.15 s) at 12/s occupy about 2 of those slots (Little's law). **Executions are the risk:** if `POST /proposals/{id}/execute` holds its request for the ~20 s it runs, 20 simultaneous approvals would hold all 20 slots and every poll and page load would get `503`. The execution therefore must not hold a request slot for its duration (see the limits below).
+**API service concurrency.** It runs at most 2 instances × 10 requests in flight (`MAX_IN_FLIGHT_REQUESTS`) = **20** concurrent requests before answering `503 service_busy`. Short requests (~0.15 s) at 12/s occupy about 2 of those slots (Little's law). **Executions are the risk:** `POST /proposals/{id}/execute` holds its request for the ~20 s it runs, so if executions counted against those 20 slots, 20 simultaneous approvals would hold all of them and every poll and page load would get `503`. Executions therefore get their own cap, outside `MAX_IN_FLIGHT_REQUESTS` (see the limits below).
 
-**Agent service.** Cloud Run's default of 80 concurrent requests per instance, 2 instances, and a 300 s request timeout are all far above 20 turns of at most 60 s each. One deployment constraint matters, though: both services run with `cpu_idle = true` (`infra/agent.tf`, `infra/run.tf`), so **an instance gets CPU only while a request is open**. A turn or an execution that keeps running after its HTTP response has been sent would be throttled. Long work must either stay inside an open request (streaming progress), or the service must use instance-based CPU.
+**Agent service.** Cloud Run's default of 80 concurrent requests per instance, 2 instances, and a 300 s request timeout are all far above 20 turns of at most 60 s each. One deployment constraint matters, though: both services run with `cpu_idle = true` (`infra/agent.tf`, `infra/run.tf`), so **an instance gets CPU only while a request is open**. A turn or an execution that keeps running after its HTTP response has been sent would be throttled. Long work must either stay inside an open request, or the service must use instance-based CPU. Execution stays inside its request (as #116 does), which is why it can't simply answer `202` and continue in the background; the interface polls the outcome rows while that request is open.
 
 ## 3. Limits we set, and why
 
@@ -112,21 +117,23 @@ Each implementation limit is tied to the calculation, measurement or assumption 
 
 | Limit | Value | Basis | Enforced in | Issue |
 |---|---|---|---|---|
-| Agent turns running at once, across all users | **3** on the free tier (3 turns × ~3 calls per 20 s ≈ 9 calls/min, under 15); **10** on a paid tier | Step 4 and the burst in step 5 | Agent service | #92 / #102 |
+| Agent turns running at once, across all users | **3** | Bounds the burst in step 5. On its own it doesn't keep us under 15 calls/min: a turn can make 4 calls in 8 s (step 2's measured turn), so 3 short turns at once can exceed it. Hence the next row | Agent service | #92 / #102 |
+| Model calls per minute, per project | **15**, shared by every agent instance (counted in the database); a call over it waits for the next minute instead of failing | Step 4; a `429` midway through a turn would waste the calls already made | Agent service | #102 |
 | Turns waiting for a slot | At most **10**, each shown "Queued (position N)"; past that, `429` "The assistant is busy; try again in a minute" with nothing changed | Burst: 20 users, 3 running, the rest queued for one or two turn-lengths | Agent service | #102 |
 | Model calls per turn / time / tokens | **8 calls, 60 s, 200,000 tokens** (`MAX_MODEL_CALLS`, `MAX_SECONDS`, `MAX_TOKENS` on `shreyas-agent-loop`) | 3 calls are expected per turn; 8 leaves room for two corrections. 60 s exceeds the 45 s p95 | Agent loop | #92 |
-| Model calls per user per day | **40** (≈ 6 course setups) | 1,000 calls/day ÷ 25 heavy users, keeping test and evaluation runs out of the shared allowance | Agent service, from the database | #102 |
+| Model calls per user per day | **25** (≈ 3 course setups) | 500 calls/day ÷ 25 = 20 users at the cap (step 4) | Agent service, from the database | #102 |
+| Gemini allowance per environment | `test` and `demo` keys in **separate Google Cloud projects** | A load test uses about half of one project's daily allowance (step 4) | Secret Manager, `gemini-api-key-<env>` | #102 |
 | Executions at once, per user | **1**; a second approve-and-execute waits for the first | One user's 18 Trello calls per execution against 100 per 10 s per token; avoids interleaved partial failures | API service | #90 |
-| Execution and the request slot | Execution answers `202` with a progress URL and runs in fixed code, polled by the interface, so 20 approvals can't hold the API's 20 slots | Step 5, API concurrency | API service | #90 |
-| Syllabus text per read | **20,000 characters** | ≈ 6,500 tokens at the cap; keeps a setup at or below about 30,000 tokens (≈ 17,000 for the syllabi in A1) | API service (`read_document`) | #88 |
+| Executions across the service | Inside their own request, **not** counted in `MAX_IN_FLIGHT_REQUESTS`; capped separately at a few across the service (value set in #90) | Step 5: keeps the 20 slots for polls and page loads, and keeps CPU while executing under `cpu_idle` | API service | #90 |
+| Syllabus text per read | **20,000 characters** | ≈ 6,500 tokens at the cap; keeps a setup at or below about 42,000 tokens (≈ 21,000 for the syllabi in A1) | API service (`read_document`) | #88 |
 | Upload size | **10 MB** per document | A syllabus PDF is well under 1 MB [assumed]; bounds memory on a 512 MiB instance | API service | #88 |
-| API requests in flight | **10 per instance**, 2 instances (unchanged from HW2) | 12 requests/s peak × 0.15 s ≈ 2 in flight, with execution off the request path | API service, `infra/variables.tf` | — |
+| API requests in flight | **10 per instance**, 2 instances (unchanged from HW2) | 12 requests/s peak × 0.15 s ≈ 2 in flight; executions are capped separately | API service, `infra/variables.tf` | — |
 
 ## 4. What happens when each limit is reached
 
 | Limit reached | What the student sees | What is left |
 |---|---|---|
-| Model calls per minute (Gemini `429`) | "The assistant is busy; try again in a minute" | The conversation is saved; nothing was proposed or written |
+| Model calls per minute (our 15/min counter, or Gemini's `429` if it is reached anyway) | "Queued (position N)" while the turn waits; "The assistant is busy; try again in a minute" if Gemini still refuses | The conversation is saved; nothing was proposed or written |
 | Turn queue full | The same message, immediately | Nothing |
 | Daily model cap | "You've reached today's limit for the assistant; your course plans and approvals still work" | Reads, approvals and executions keep working; only new turns stop |
 | Turn limit (calls, time or tokens) | The loop's stop message naming which limit; nothing was changed | The conversation and any question asked so far |
@@ -154,14 +161,15 @@ The [failure analysis](https://github.com/Shreyas191/OSPSD-Team-3/pull/119) (#11
 | Nov 26, 20:48 | `GET /health/provider` (one Dropbox round trip through the API), from a laptop | test | 0.46–0.69 s, median 0.51 s | 11 requests |
 | Nov 26 | One Gemini call reading a whole course's documents (`gemini-3.5-flash-lite`, free tier), [assumption test A1](https://github.com/Shreyas191/OSPSD-Team-3/pull/118) | laptop → Gemini API | 1,727–4,163 tokens per call (mean 2,617); 0.95–8.92 s, median 1.33 s | 15 calls, 5 courses |
 | Nov 26, 23:24 | `GET /health/database` (one Neon query through the API) after 7 idle minutes, instance already warm | test | first query **1.03 s**, then 0.25–0.29 s | 3 requests ([failure analysis](https://github.com/Shreyas191/OSPSD-Team-3/pull/119)) |
+| Nov 26 | One S1 proposing turn with the real model (`shreyas-agent-loop`, local), by Shreyas | laptop → Gemini API | **4 model calls, ~11,000 tokens, 8 s**; `propose_changes` refused twice (extra fields, then end equal to start) and corrected | 1 turn |
+| Nov 26 | Gemini free-tier limits and use for our key's project, read in AI Studio by Shreyas | — | 15 requests/min, 250,000 tokens/min, 500 requests/day; peak use 7/min, 9/day | — |
 
 These are small samples from one place. They set the starting assumptions above; they don't establish the SLOs.
 
 ## What this record does not establish yet
 
-- **Gemini's real limits for our key's project.** The numbers above are assumptions until someone with access to that project reads them in AI Studio (owner: Shreyas, who created the key; by Nov 28).
-- **Model latency and tokens per turn.** A1 measured single extraction calls (above). A full turn, with its tool calls and growing context, is still estimated until the agent loop records it (#92) and the S1 evaluation runs five times (#103).
+- **Model latency and tokens per turn.** A1 measured single extraction calls, and one proposing turn has been measured (above). Turns in general are still estimated until the agent loop records every run (#92) and the S1 evaluation runs five times (#103).
 - **Trello and Calendar write latency** through Teams 4's and 5's packages. Measured in the load test (#111).
 - **Whether the SLOs hold under load.** That is the load test (#111), which runs the workload in section 1 and links its report here.
 
-Still to come in this record: the load test (#111); the alert drill (#112, once the agent loop is deployed); rollout, game day and backup restore (#113); and the launch decision (#114).
+Still to come in this record: the load test (#111); the alert drill (#112, once the agent loop is deployed); rollout, game day and backup restore (#113, plan in [PR #120](https://github.com/Shreyas191/OSPSD-Team-3/pull/120)); and the launch decision (#114).
