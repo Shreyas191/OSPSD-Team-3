@@ -27,3 +27,8 @@ output "agent_service_urls" {
   description = "Base URL of each environment's agent service."
   value       = { for env, svc in google_cloud_run_v2_service.agent : env => svc.uri }
 }
+
+output "web_service_urls" {
+  description = "Base URL of each environment's interface."
+  value       = { for env, svc in google_cloud_run_v2_service.web : env => svc.uri }
+}
