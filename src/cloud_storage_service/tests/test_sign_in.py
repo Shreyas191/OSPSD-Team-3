@@ -345,10 +345,11 @@ def test_google_unreachable_is_503(client: TestClient, google: FakeGoogle) -> No
 def test_sign_in_is_503_when_not_configured(database: Database) -> None:
     """With no OAuth client configured, sign-in answers 503 and says why."""
     app.dependency_overrides[get_database] = lambda: database
+    # Not a context manager: that would run the lifespan, which builds the real providers
+    # and fails without their credentials. The route only reads app.state.google_sign_in.
+    app.state.google_sign_in = None
     try:
-        with TestClient(app) as http:
-            app.state.google_sign_in = None
-            response = http.post("/auth/google/start")
+        response = TestClient(app).post("/auth/google/start")
     finally:
         app.dependency_overrides.clear()
 
