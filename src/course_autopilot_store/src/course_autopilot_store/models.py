@@ -127,6 +127,9 @@ class Proposal(Base):
     changes_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # While executing: when the run last showed it was alive (claimed, or began a change).
+    # A run silent for too long has stopped, and another run may take it over (migration 0002).
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Approval(Base):
@@ -145,7 +148,11 @@ class Approval(Base):
 
 
 class ChangeOutcome(Base):
-    """What happened to one change of an approved proposal: completed, failed or uncertain."""
+    """What happened to one change of an approved proposal.
+
+    ``started`` is saved just before the provider write, so a run that stops before it can
+    save the outcome leaves a trace; the next run turns it into ``uncertain``.
+    """
 
     __tablename__ = "change_outcomes"
     __table_args__ = (UniqueConstraint("proposal_id", "change_index"),)
@@ -153,7 +160,7 @@ class ChangeOutcome(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id", ondelete="CASCADE"))
     change_index: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String(16))  # completed | failed | uncertain
+    status: Mapped[str] = mapped_column(String(16))  # started | completed | failed | uncertain
     detail: Mapped[str] = mapped_column(Text, default="")
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

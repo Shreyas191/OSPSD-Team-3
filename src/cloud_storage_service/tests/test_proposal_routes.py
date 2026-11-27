@@ -4,19 +4,25 @@ Two users, ``alice`` and ``bob``. Each rule from DESIGN.md (P1-P3) and the threa
 (T2-T4, T6, T14) has a test with a valid control request, so rejecting everything can't pass.
 """
 
+import logging
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
+from calendar_contract import CreateEvent, Event
 from calendar_contract import ErrorCode as CalendarErrorCode
+from cloud_storage_api import FileInfo
+from cloud_storage_api.errors import ProviderError
 from course_autopilot_store import Database
-from course_autopilot_store.models import ExternalRecord
+from course_autopilot_store.models import ExternalRecord, Proposal
 from dropbox_client_impl import DropboxDocumentStorage
 from fastapi.testclient import TestClient
 from issue_tracker_contract.errors import ErrorCode as IssueErrorCode
 from issue_tracker_contract.errors import ServiceError
 from issue_tracker_contract.models import Issue
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.pool import StaticPool
 from tests.fakes import FakeStorageClient
 
@@ -538,3 +544,303 @@ def test_a_document_we_wrote_is_replaced_and_a_foreign_one_is_left_alone(
     assert "already exists" in body["outcomes"][0]["detail"]
     notes = f"/Course Autopilot/{COURSE}/notes.md"
     assert v.storage.get_metadata(notes).size == len(b"the student's own notes")
+
+
+# ----- #116 review: a run that stops partway, and settling uncertain changes -----
+
+
+class CalendarThatStopsAfterWriting(InMemoryCalendar):
+    """Creates the event, then the instance stops before the outcome can be saved."""
+
+    def create(self, request: CreateEvent) -> Event:
+        """Store the event, then fail as a crash or redeploy would."""
+        super().create(request)
+        msg = "instance stopped"
+        raise RuntimeError(msg)
+
+
+def interrupt(v: Verticals, database: Database, *changes: dict[str, Any]) -> dict[str, Any]:
+    """Approve ``changes`` and run them on a calendar that stops mid-change; return the proposal."""
+    http = TestClient(app, raise_server_exceptions=False)
+    v.calendar = CalendarThatStopsAfterWriting()
+    proposal = propose(http, *changes)
+    approve(http, proposal)
+    assert http.post(f"/proposals/{proposal['id']}/execute", headers=ALICE).status_code == 500
+    v.calendar.__class__ = InMemoryCalendar  # the provider works again; the event stays
+    assert database  # the stopped run left its state in this database
+    return proposal
+
+
+def silence(database: Database, minutes: int) -> None:
+    """Make every running proposal's last sign of life ``minutes`` old."""
+    with database.session() as session:
+        session.execute(
+            update(Proposal).values(heartbeat_at=datetime.now(UTC) - timedelta(minutes=minutes)),
+        )
+
+
+def test_a_run_that_stops_mid_change_is_taken_over_and_never_repeats_the_write(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """A stopped run leaves ``started``; once silent, a retry makes it uncertain, not again."""
+    proposal = interrupt(v, database, EVENT, ISSUE)
+    stuck = http.get(f"/proposals/{proposal['id']}", headers=ALICE).json()
+
+    too_soon = http.post(f"/proposals/{proposal['id']}/execute", headers=ALICE)
+    silence(database, minutes=11)
+    retried = execute(http, proposal)
+
+    assert stuck["status"] == "executing"
+    assert statuses(stuck) == ["started"]
+    assert too_soon.status_code == 409  # control: a run that may still be alive keeps its claim
+    assert retried["status"] == "failed"
+    assert statuses(retried) == ["uncertain", "completed"]  # the card after it ran
+    assert "run stopped during this change" in retried["outcomes"][0]["detail"]
+    assert len(v.calendar._events) == 1  # the event was written once
+
+
+def test_a_recently_alive_run_is_not_taken_over(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """Nine minutes of silence isn't enough: the run might still be writing."""
+    proposal = interrupt(v, database, EVENT)
+    silence(database, minutes=9)
+
+    assert http.post(f"/proposals/{proposal['id']}/execute", headers=ALICE).status_code == 409
+
+
+def resolve(
+    http: TestClient,
+    proposal: dict[str, Any],
+    body: dict[str, Any],
+    index: int = 0,
+    who: dict[str, str] = ALICE,
+) -> Any:
+    """Settle one change of the proposal."""
+    return http.post(
+        f"/proposals/{proposal['id']}/changes/{index}/resolve",
+        json=body,
+        headers=who,
+    )
+
+
+def test_a_created_event_confirmed_with_its_id_becomes_ours(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """The person finds the event and gives its ID: recorded as ours, proposal done."""
+    proposal = interrupt(v, database, EVENT)
+    silence(database, minutes=11)
+    execute(http, proposal)
+    event_id = next(iter(v.calendar._events))
+
+    settled = resolve(http, proposal, {"status": "completed", "record_id": event_id})
+
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["status"] == "done"
+    assert statuses(settled.json()) == ["completed"]
+    with database.session() as session:
+        assert session.scalars(select(ExternalRecord.provider_record_id)).all() == [event_id]
+    # Control: because it's ours now, a later proposal may delete it.
+    removal = propose(http, {"op": "delete_event", "course": COURSE, "event_id": event_id})
+    approve(http, removal)
+    assert execute(http, removal)["status"] == "done"
+
+
+@pytest.mark.parametrize("record_id", [None, "not-an-event"])
+def test_a_created_record_needs_a_real_matching_id(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+    record_id: str | None,
+) -> None:
+    """No ID, or one that isn't an event with the change's title, is 400 and changes nothing."""
+    proposal = interrupt(v, database, EVENT)
+    silence(database, minutes=11)
+    execute(http, proposal)
+    other = v.calendar.create(
+        CreateEvent(title="Office hours", start=EVENT["start"], end=EVENT["end"]),
+    )
+
+    missing = resolve(http, proposal, {"status": "completed", "record_id": record_id})
+    wrong_title = resolve(http, proposal, {"status": "completed", "record_id": other.id})
+
+    assert missing.status_code == wrong_title.status_code == 400
+    after = http.get(f"/proposals/{proposal['id']}", headers=ALICE).json()
+    assert statuses(after) == ["uncertain"]
+
+
+def test_a_change_found_not_to_have_happened_runs_again(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """``failed`` after checking: the next run does it, and the proposal finishes."""
+    v.issues = IssuesWithLostReply()
+    proposal = propose(http, ISSUE)
+    approve(http, proposal)
+    assert statuses(execute(http, proposal)) == ["uncertain"]
+    v.issues = InMemoryIssueTracker()
+
+    settled = resolve(http, proposal, {"status": "failed"})
+    retried = execute(http, proposal)
+
+    assert statuses(settled.json()) == ["failed"]
+    assert retried["status"] == "done"
+    assert [i.title for i in v.issues.list_issues(limit=10)] == [ISSUE["title"]]
+
+
+class IssuesWithLostReply(InMemoryIssueTracker):
+    """Every create loses its reply: the card may or may not exist."""
+
+    def create_issue(self, title: str) -> Issue:
+        """Fail as a lost reply does."""
+        raise ServiceError(IssueErrorCode.PROVIDER_ERROR, "lost", may_have_applied=True)
+
+
+def test_a_document_confirmed_is_recorded_by_its_path(
+    v: Verticals,
+    http: TestClient,
+) -> None:
+    """A created document needs no ID: its path is known."""
+    v.storage = StorageWithLostReply(v.client)
+    proposal = propose(http, DOC)
+    approve(http, proposal)
+    assert statuses(execute(http, proposal)) == ["uncertain"]
+
+    settled = resolve(http, proposal, {"status": "completed"})
+
+    assert settled.json()["status"] == "done"
+
+
+class StorageWithLostReply(DropboxDocumentStorage):
+    """Every create loses its reply."""
+
+    def create(self, path: str, content: bytes) -> FileInfo:
+        """Fail as a lost upload reply does."""
+        msg = "lost"
+        raise ProviderError(msg)
+
+
+def test_settling_is_only_for_an_uncertain_change_of_your_own(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """Completed → 409; another user → 404; no such change → 404; while running → 409."""
+    done = propose(http, ISSUE)
+    approve(http, done)
+    execute(http, done)
+
+    assert resolve(http, done, {"status": "failed"}).status_code == 409
+    assert resolve(http, done, {"status": "failed"}, who=BOB).status_code == 404
+    assert resolve(http, done, {"status": "failed"}, index=5).status_code == 404
+    running = interrupt(v, database, EVENT)
+    assert resolve(http, running, {"status": "failed"}).status_code == 409
+    assert resolve(http, done, {"status": "maybe"}).status_code == 400
+
+
+def test_a_confirmed_delete_marks_the_record_removed(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """A delete the person confirms leaves the record marked deleted."""
+    created = propose(http, ISSUE)
+    approve(http, created)
+    execute(http, created)
+    card = v.issues.list_issues(limit=1)[0].id
+    v.issues = IssuesThatLoseDeleteReplies(v.issues)
+    removal = propose(http, {"op": "delete_issue", "course": COURSE, "issue_id": card})
+    approve(http, removal)
+    assert statuses(execute(http, removal)) == ["uncertain"]
+
+    settled = resolve(http, removal, {"status": "completed"})
+
+    assert settled.json()["status"] == "done"
+    with database.session() as session:
+        assert session.scalars(select(ExternalRecord.deleted_at)).one() is not None
+
+
+class IssuesThatLoseDeleteReplies:
+    """Wraps a tracker; every delete loses its reply."""
+
+    def __init__(self, inner: InMemoryIssueTracker) -> None:
+        """Keep the real tracker for everything else."""
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        """Pass any other call through."""
+        return getattr(self._inner, name)
+
+    def delete_issue(self, issue_id: str) -> None:
+        """Fail as a lost reply does."""
+        raise ServiceError(IssueErrorCode.PROVIDER_ERROR, "lost", may_have_applied=True)
+
+
+def test_each_run_logs_its_outcome(
+    v: Verticals,
+    http: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One ``proposal_execution`` line per run, with the final status and the counts."""
+    v.issues = IssuesWithLostReply()
+    proposal = propose(http, EVENT, ISSUE)
+    approve(http, proposal)
+
+    with caplog.at_level(logging.INFO, logger="cloud_storage_service.execution"):
+        execute(http, proposal)
+
+    [line] = [r for r in caplog.records if getattr(r, "event", "") == "proposal_execution"]
+    assert line.levelname == "WARNING"
+    assert (line.final_status, line.changes) == ("failed", 2)  # type: ignore[attr-defined]
+    assert (line.changes_completed, line.changes_uncertain) == (1, 1)  # type: ignore[attr-defined]
+
+
+def test_a_trello_rate_limit_says_try_again_soon(v: Verticals, http: TestClient) -> None:
+    """Trello's 429 isn't an outage: the person is told it will work in a minute."""
+    v.issues = IssuesRateLimited()
+    proposal = propose(http, ISSUE)
+    approve(http, proposal)
+
+    body = execute(http, proposal)
+
+    assert (
+        body["outcomes"][0]["detail"]
+        == "Too many changes at once for Trello; try again in a minute"
+    )
+
+
+class IssuesRateLimited(InMemoryIssueTracker):
+    """Trello answers 429, as Team 4 reports it."""
+
+    def create_issue(self, title: str) -> Issue:
+        """Fail as a rate limit does."""
+        raise ServiceError(
+            IssueErrorCode.PROVIDER_ERROR,
+            "The issue tracker is rate limiting requests",
+            cause="provider_status=429",
+            may_have_applied=False,
+        )
+
+
+def test_an_unreachable_database_is_503_not_500(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Neon down: product routes say ``database_unavailable``, so callers wait, not give up."""
+    monkeypatch.setenv(DEV_SIGN_IN_ENV_VAR, "enabled")
+    unreachable = Database(create_engine(f"sqlite:///{tmp_path}/missing/dir/db.sqlite"))
+    app.dependency_overrides[get_database] = lambda: unreachable
+    try:
+        response = TestClient(app).post("/proposals", json={"changes": [ISSUE]}, headers=ALICE)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "database_unavailable"

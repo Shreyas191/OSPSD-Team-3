@@ -1,12 +1,16 @@
 """HTTP routes for proposals: create, read, approve, reject, execute (issues #89, #90).
 
+``POST /proposals/{id}/changes/{index}/resolve`` settles an ``uncertain`` change once the
+person has checked the provider: it happened (``completed``, with the created record's ID
+for a new event or card) or it didn't (``failed``, so the next run does it).
+
 Every route acts as the user ``identity.get_current_user`` returns, and only on that user's
 proposals: another user's proposal is 404. Errors use the shared error body.
 """
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from course_autopilot_store.models import ChangeOutcome, Proposal
 from fastapi import APIRouter, status
@@ -49,6 +53,15 @@ class ApproveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     changes_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ResolveRequest(BaseModel):
+    """What the person found when they checked an uncertain change."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed", "failed"]
+    record_id: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 ERRORS: dict[int | str, dict[str, Any]] = {
@@ -167,6 +180,37 @@ def execute_proposal(  # noqa: PLR0913 (each argument is a FastAPI dependency)
             database,
             user,
             proposal_id,
+            execution.Verticals(storage, issues, calendar),
+        )
+        with database.session() as session:
+            return _response(session, proposals.get_owned(session, user, proposal_id))
+    except proposals.ProposalError as e:
+        return _error(e)
+
+
+@router.post(
+    "/{proposal_id}/changes/{change_index}/resolve",
+    responses=ERRORS,
+    response_model=ProposalResponse,
+)
+def resolve_change(  # noqa: PLR0913 (each argument is a FastAPI dependency)
+    proposal_id: uuid.UUID,
+    change_index: int,
+    body: ResolveRequest,
+    user: CurrentUser,
+    database: RequiredDatabase,
+    storage: DocumentStore,
+    issues: IssueTracker,
+    calendar: Calendar,
+) -> ProposalResponse | JSONResponse:
+    """Settle an uncertain change after checking it; return the proposal."""
+    try:
+        execution.resolve(
+            database,
+            user,
+            proposal_id,
+            change_index,
+            execution.Resolution(body.status, body.record_id),
             execution.Verticals(storage, issues, calendar),
         )
         with database.session() as session:
