@@ -56,8 +56,9 @@ MAX_RUNNING_TURNS = 3
 MAX_QUEUED_TURNS = 10
 MAX_QUEUE_SECONDS = 60.0
 BUSY = "The assistant is busy; try again in a minute"
+# Yours or the whole project's (usage.py): the API says which, but either way it's for today.
 DAILY_LIMIT = (
-    "You've reached today's limit for the assistant; your course plans and approvals still work"
+    "Today's limit for the assistant has been reached; your course plans and approvals still work"
 )
 
 

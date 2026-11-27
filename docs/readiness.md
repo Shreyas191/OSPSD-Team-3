@@ -135,7 +135,7 @@ Each implementation limit is tied to the calculation, measurement or assumption 
 |---|---|---|
 | Model calls per minute (our 15/min counter, or Gemini's `429` if it is reached anyway) | "Queued (position N)" while the turn waits; "The assistant is busy; try again in a minute" if Gemini still refuses | The conversation is saved; nothing was proposed or written |
 | Turn queue full | The same message, immediately | Nothing |
-| Daily model cap | "You've reached today's limit for the assistant; your course plans and approvals still work" | Reads, approvals and executions keep working; only new turns stop |
+| Daily model cap | "Today's limit for the assistant has been reached; your course plans and approvals still work" | Reads, approvals and executions keep working; only new turns stop |
 | Turn limit (calls, time or tokens) | The loop's stop message naming which limit; nothing was changed | The conversation and any question asked so far |
 | API `503 service_busy` | "Busy, retrying…", then an error with a retry button | Nothing done; retrying is safe |
 | Trello `429` during an execution | That change `failed`, with *Retry failed changes* | Completed changes stay (P3) |

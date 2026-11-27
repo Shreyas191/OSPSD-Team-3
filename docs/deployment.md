@@ -63,11 +63,36 @@ Settings come only from the environment. The image contains none of them.
 | `SIGN_IN_REDIRECT_URI` | For sign-in (without it, `/auth/google/*` answers 503) | No | Where Google sends the browser after sign-in: the interface's callback |
 | `MODEL_CALLS_PER_USER_PER_DAY` | No (default 25) | No | Model calls each user may make per day (Pacific time, when Gemini's allowance resets); past it, turns answer `429 daily_limit_reached`. See `usage.py` |
 | `MODEL_CALLS_PER_MINUTE` | No (default 15, Gemini's free tier) | No | Model calls the whole project may make per minute, shared by every agent instance; past it, a turn waits for the next minute |
-| `EXECUTION` | No (on unless `disabled`) | No | The operator's switch: `disabled` makes `POST /proposals/{id}/execute` answer `503 execution_disabled`, while reads, proposals and approvals keep working. Set it with `execution_disabled = ["demo"]` in OpenTofu, so an apply doesn't undo it; for an immediate stop, `gcloud run services update cloud-storage-service-<env> --region=us-central1 --update-env-vars=EXECUTION=disabled` as well |
+| `MODEL_CALLS_PER_PROJECT_PER_DAY` | No (default 500, Gemini's daily allowance) | No | Model calls the whole project may make per day (Pacific time); past it, every user's turns answer `429 daily_limit_reached` instead of failing at Gemini partway through. The count is the `project-day` row of `usage_counters` |
+| `EXECUTION` | No (on unless `disabled`) | No | The operator's switch: `disabled` makes `POST /proposals/{id}/execute` answer `503 execution_disabled`, while reads, proposals and approvals keep working. Changing it creates a revision that gets **no traffic** until it is moved there: follow [Pausing executions](#pausing-executions) |
 | `TOKEN_ENCRYPTION_KEY` | For connections (without it, `/connections` and product routes for signed-in users answer 503) | Yes | Fernet key that encrypts stored provider tokens; see `infra/connections.tf` and `connections.py` |
 | `DROPBOX_CONNECT_REDIRECT_URI` | To offer Dropbox connections | No | Where Dropbox sends the browser back; uses `DROPBOX_APP_KEY`/`_SECRET` (an App folder app) |
 | `CALENDAR_CONNECT_REDIRECT_URI` | To offer Google Calendar connections | No | Where Google sends the browser back after the `calendar.events` consent; uses the OAuth client above |
 | `TRELLO_CONNECT_API_KEY`, `TRELLO_CONNECT_RETURN_URL` | To offer Trello connections | No (the key is public) | The Power-Up's API key, and where Trello returns the browser with the token in the fragment |
+
+### Pausing executions
+
+The pipeline pins each service's traffic to the tag of its release (`--to-tags=rel-<sha>=100`, `scripts/deploy.sh`). A revision created any other way, by `gcloud run services update` or by `tofu apply`, **serves nothing** until traffic moves to it. So setting `EXECUTION=disabled` alone doesn't stop executions: the release that is serving still has executions on.
+
+**Immediate stop** (for example on demo):
+
+```bash
+gcloud run services update cloud-storage-service-demo --region=us-central1 \
+  --update-env-vars=EXECUTION=disabled --tag=paused
+gcloud run services update-traffic cloud-storage-service-demo --region=us-central1 \
+  --to-tags=paused=100
+```
+
+**Keep it off**, so a later `tofu apply` doesn't undo it: add the environment to `execution_disabled` (for example `execution_disabled = ["demo"]`), run `tofu apply`, then move traffic to the revision it created:
+
+```bash
+gcloud run services update-traffic cloud-storage-service-demo --region=us-central1 \
+  --to-revisions=LATEST=100
+```
+
+Then check it took effect: `POST /proposals/{id}/execute` on any approved proposal answers `503 execution_disabled`, and `GET /proposals/{id}` still works.
+
+The next pipeline deploy builds on the service's current settings, so it keeps executions off. To turn them on again, remove the variable (`--remove-env-vars=EXECUTION` with `--tag=resumed`, or take the environment out of `execution_disabled` and apply), and move traffic the same way.
 
 ### The startup check
 

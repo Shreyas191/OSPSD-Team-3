@@ -40,9 +40,9 @@ The model decides how to word a reply. These rules don't depend on it:
 |---|---|
 | The model can only read and propose; it has no tool that changes anything, and its token is refused on approve, execute and connection routes | `tools.py`; the API service (T14) |
 | Every proposed change is validated by code (allowed operations, fields, times, targets the student created) before it is stored | the API service, `proposals.py` |
-| A message that looks like it contains a password, an API key or a token is **not sent to the model and not stored**; the student is told why | `loop.py`, `looks_secret`, before the model call (T10) |
-| A reply that looks like it contains a credential is replaced with fixed text | `loop.py`, `looks_secret`, on the reply (T10) |
-| Per-turn limits (8 model calls, 60 s, 200,000 tokens), 25 model calls per student per day, 15 per minute for the service, 3 turns at once with 10 queued | `loop.py`, `app.py`, the API service's `usage.py` (T12) |
+| A message that looks like it contains a password, an API key or a token is **not sent to the model and not stored**; the student is told why. It matches key and token formats (Google keys, `sk-`, `ghp_`, Slack, Dropbox, JWTs, private keys), and a labelled value (`password:`, `token is` …) only when the value looks like a secret: 8 or more characters with a letter and a digit. So "Zoom passcode: 834920" or "the token is required" goes through | `loop.py`, `looks_secret`, before the model call (T10) |
+| A reply that contains a key or token format is replaced with fixed text. Labelled values aren't screened in replies: replies quote the student's own documents, which may name a Zoom passcode, and a block there couldn't be fixed by rephrasing | `loop.py`, `reply_shows_secret`, on the reply (T10) |
+| Per-turn limits (8 model calls, 60 s, 200,000 tokens), 25 model calls per student per day, 500 per day and 15 per minute for the service, 3 turns at once with 10 queued | `loop.py`, `app.py`, the API service's `usage.py` (T12) |
 | Messages are at most 4,000 characters; a document is read as at most 20,000 characters | `app.py`; the API service, `courses.py` |
 | The operator can turn the assistant off (`MODEL_PROVIDER=disabled`) or pause execution (`EXECUTION=disabled`) | [Container and Configuration](deployment.md), the settings table |
 

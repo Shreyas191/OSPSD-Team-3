@@ -99,10 +99,10 @@ class DailyLimitReachedError(Exception):
     """The student has no model calls left today, and this turn hasn't made any."""
 
 
-# Things that look like a credential: never sent to the model, stored or shown (T10). They
-# are deliberately broad; a false match costs the student one rephrased message.
-_SECRET_SHAPES = (
-    r"\b(?:password|passwd|passcode|api[ _-]?key|secret|token)\s*(?:is|=|:)\s*\S{4,}",
+# Things that look like a credential (T10). Formats that are only ever keys or tokens are
+# screened on both sides: a student's message is never sent to the model or stored, and a
+# model reply is never shown.
+_KEY_FORMATS = (
     r"\bAIza[0-9A-Za-z_-]{20,}",  # Google API keys
     r"\b(?:sk|pk|rk)[-_][0-9A-Za-z_-]{16,}",  # common provider secret keys
     r"\bgh[pousr]_[0-9A-Za-z]{20,}",  # GitHub tokens
@@ -111,13 +111,28 @@ _SECRET_SHAPES = (
     r"\beyJ[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}\.",  # JWTs
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
 )
-_SECRET_PATTERNS = re.compile("|".join(_SECRET_SHAPES), re.IGNORECASE)
+# "password: ..." and the like, screened in the student's message only, and only when the
+# value looks like a secret: 8 or more characters with at least one letter and one digit.
+# Ordinary course text ("Zoom passcode: 834920", "password: posted on Brightspace", "the token
+# is required") doesn't match. Replies aren't screened this way: they quote the student's own
+# documents, so a match there would block a reply rephrasing can't fix.
+_LABELLED_VALUE = (
+    r"\b(?:password|passwd|passcode|api[ _-]?key|secret|token)\s*(?:is|=|:)\s*"
+    r"(?=\S*[A-Za-z])(?=\S*\d)\S{8,}"
+)
+_IN_MESSAGE = re.compile("|".join((_LABELLED_VALUE, *_KEY_FORMATS)), re.IGNORECASE)
+_IN_REPLY = re.compile("|".join(_KEY_FORMATS), re.IGNORECASE)
 SECRET_NOT_KEPT = "[Message not kept: it looked like it contained a password, key or token]"  # noqa: S105
 
 
 def looks_secret(text: str) -> bool:
-    """Whether ``text`` seems to contain a credential."""
-    return _SECRET_PATTERNS.search(text) is not None
+    """Whether a student's message seems to contain a credential."""
+    return _IN_MESSAGE.search(text) is not None
+
+
+def reply_shows_secret(text: str) -> bool:
+    """Whether a model reply contains something in a key or token format."""
+    return _IN_REPLY.search(text) is not None
 
 
 # Reserves one model call, or raises one of the Budget...Error exceptions above.
@@ -154,8 +169,8 @@ STOP_MESSAGES = {
     "that message or send it anywhere. Course Autopilot connects to your accounts on the "
     "connections page, never through the chat.",
     "blocked_output": "I can't show that reply. Please ask again in a different way.",
-    "daily_limit": "I stopped before finishing: you've reached today's limit for the "
-    "assistant. Nothing was changed. Your course plans and approvals still work.",
+    "daily_limit": "I stopped before finishing: today's limit for the assistant has been "
+    "reached. Nothing was changed. Your course plans and approvals still work.",
 }
 
 
@@ -229,7 +244,7 @@ def _answer(run: "_Run", reply: ModelReply) -> Turn:
     """End the turn with the model's text reply, unless it is empty or holds a credential."""
     if not reply.text.strip():
         return run.stop("empty_reply")
-    if looks_secret(reply.text):
+    if reply_shows_secret(reply.text):
         return run.stop("blocked_output")
     run.new.append(reply.as_message())
     return run.finish("replied", reply.text)

@@ -31,6 +31,7 @@ from cloud_storage_service.fake_verticals import (
 from cloud_storage_service.identity import DEV_SIGN_IN_ENV_VAR
 from cloud_storage_service.usage import (
     PER_MINUTE_ENV_VAR,
+    PER_PROJECT_PER_DAY_ENV_VAR,
     PER_USER_PER_DAY_ENV_VAR,
     DailyLimitError,
     Limits,
@@ -41,6 +42,7 @@ from cloud_storage_service.usage import (
 
 ALICE = {"X-Dev-User": "alice"}
 BOB = {"X-Dev-User": "bob"}
+CAROL = {"X-Dev-User": "carol"}
 ISSUE = {"op": "create_issue", "course": "CS-GY 6083", "title": "[CS-GY 6083] Midterm, Dec 10"}
 # Nov 27, 2026, 15:00:20 UTC: 07:00 in Los Angeles (PST, UTC-8).
 NOW = datetime(2026, 11, 27, 15, 0, 20, tzinfo=UTC)
@@ -75,7 +77,12 @@ def http(
     """Serve the API with dev sign-in on and the default limits."""
     monkeypatch.setenv(DEV_SIGN_IN_ENV_VAR, "enabled")
     monkeypatch.delenv("K_SERVICE", raising=False)
-    for name in (PER_USER_PER_DAY_ENV_VAR, PER_MINUTE_ENV_VAR, EXECUTION_ENV_VAR):
+    for name in (
+        PER_USER_PER_DAY_ENV_VAR,
+        PER_MINUTE_ENV_VAR,
+        PER_PROJECT_PER_DAY_ENV_VAR,
+        EXECUTION_ENV_VAR,
+    ):
         monkeypatch.delenv(name, raising=False)
     app.dependency_overrides[get_database] = lambda: database
     app.dependency_overrides[get_document_storage] = InMemoryDocumentStorage
@@ -141,6 +148,40 @@ def test_the_projects_minute_is_shared_and_says_when_to_retry(
     assert http.get("/usage/model-calls", headers=ALICE).json()["used_today"] == 1
 
 
+def test_the_projects_day_is_shared_and_refuses_before_gemini_would(
+    http: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Past the project's daily calls, every user is refused for today; nothing is counted."""
+    monkeypatch.setenv(PER_MINUTE_ENV_VAR, "100")
+    monkeypatch.setenv(PER_PROJECT_PER_DAY_ENV_VAR, "3")
+    allowed = [
+        http.post("/usage/model-calls", headers=who).status_code for who in (ALICE, ALICE, BOB)
+    ]
+
+    refused = http.post("/usage/model-calls", headers=CAROL)
+
+    assert allowed == [200, 200, 200]
+    assert refused.status_code == 429
+    assert refused.json()["error"]["code"] == "daily_limit_reached"
+    assert "for everyone" in refused.json()["error"]["message"]
+    assert 0 < int(refused.headers["Retry-After"]) <= 24 * 3600
+    assert http.get("/usage/model-calls", headers=CAROL).json()["used_today"] == 0
+
+
+def test_the_projects_day_starts_again_at_midnight_pacific(database: Database) -> None:
+    """The project's daily count resets with the day, like a user's."""
+    alice, bob = user(database), user(database)
+    limits = Limits(per_user_per_day=25, per_minute=100, per_project_per_day=1)
+    reserve(database, alice, limits, NOW)
+
+    with pytest.raises(DailyLimitError) as raised:
+        reserve(database, bob, limits, NOW)
+
+    assert raised.value.project
+    assert reserve(database, bob, limits, NOW + timedelta(days=1)) == 24
+
+
 def test_the_budget_needs_a_signed_in_user(http: TestClient) -> None:
     """No identity: 401, and nothing is counted."""
     assert http.post("/usage/model-calls").status_code == 401
@@ -154,7 +195,8 @@ def test_bad_limits_stop_the_service(monkeypatch: pytest.MonkeyPatch) -> None:
             Limits.from_env()
     monkeypatch.setenv(PER_USER_PER_DAY_ENV_VAR, "40")
     monkeypatch.setenv(PER_MINUTE_ENV_VAR, "30")
-    assert Limits.from_env() == Limits(per_user_per_day=40, per_minute=30)
+    monkeypatch.setenv(PER_PROJECT_PER_DAY_ENV_VAR, "450")
+    assert Limits.from_env() == Limits(per_user_per_day=40, per_minute=30, per_project_per_day=450)
 
 
 # ----- The counters themselves -----

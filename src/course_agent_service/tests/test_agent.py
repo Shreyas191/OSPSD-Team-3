@@ -983,6 +983,11 @@ def test_a_message_with_a_credential_never_reaches_the_model_or_the_database(
         "Set up CS-GY 6083 from my syllabus",
         "The midterm token deadline moved to Dec 10",
         "What's the late policy? Is the final 30%?",
+        # Review on #127: course text that names a password or token but holds no secret.
+        "The Zoom passcode: 834920, office hours on Tuesdays",
+        "Lecture recordings password: posted on Brightspace",
+        "The token is required for the lab printer",
+        "Remind me that my password is due for a reset",
     ],
 )
 def test_ordinary_messages_go_through(api: FakeApi, text: str) -> None:
@@ -991,6 +996,23 @@ def test_ordinary_messages_go_through(api: FakeApi, text: str) -> None:
 
     assert result.stop_reason == "replied"
     assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Your syllabus says: The Zoom passcode: 834920, office hours on Tuesdays",
+        "Lecture recordings password: posted on Brightspace",
+        "The token is required for the lab printer, so bring it to lab 3",
+        "My notes say: password = hunter2b, but that's from my syllabus example",
+    ],
+)
+def test_a_reply_quoting_course_text_is_shown(api: FakeApi, text: str) -> None:
+    """A reply quoting the student's documents isn't blocked by words like "passcode"."""
+    result, _ = turn(api, say(text))
+
+    assert result.stop_reason == "replied"
+    assert result.reply == text
 
 
 def test_a_reply_with_a_credential_is_replaced(api: FakeApi) -> None:

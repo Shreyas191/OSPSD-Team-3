@@ -8,15 +8,19 @@ agent service itself never touches the database (T14).
 - ``POST /usage/model-calls`` reserves one call for the caller (an agent token is enough):
   - ``200`` with what's left today;
   - ``429 daily_limit_reached``: the user has made ``MODEL_CALLS_PER_USER_PER_DAY`` calls
-    (default 25, about 3 course setups) today. Days start at midnight Pacific time, when
-    Gemini's own daily allowance resets;
+    (default 25, about 3 course setups) today, or the whole project has made
+    ``MODEL_CALLS_PER_PROJECT_PER_DAY`` (default 500, Gemini's daily allowance). Days start at
+    midnight Pacific time, when Gemini's own daily allowance resets. Refusing here is cleaner
+    than Gemini failing partway through a turn;
   - ``429 model_rate_limited`` with ``retry_after_seconds``: the project has made
     ``MODEL_CALLS_PER_MINUTE`` calls (default 15) this minute. The agent waits and asks again,
     so a turn queues instead of failing partway through.
 - ``GET /usage/model-calls``: today's use and limit, for the interface.
 
-A refused reservation counts nothing. Both counters change in one transaction, each with an
-atomic conditional increment, so two instances can't both take the last call.
+A refused reservation counts nothing. All three counters change in one transaction, each with
+an atomic conditional increment, so two instances can't both take the last call. The
+project's daily count is the ``project-day`` row of ``usage_counters``, so an alert can watch
+how much of Gemini's allowance is used.
 """
 
 import os
@@ -41,11 +45,14 @@ from cloud_storage_service.identity import CurrentUser, RequiredDatabase
 
 PER_USER_PER_DAY_ENV_VAR = "MODEL_CALLS_PER_USER_PER_DAY"
 PER_MINUTE_ENV_VAR = "MODEL_CALLS_PER_MINUTE"
+PER_PROJECT_PER_DAY_ENV_VAR = "MODEL_CALLS_PER_PROJECT_PER_DAY"
 DEFAULT_PER_USER_PER_DAY = 25
 DEFAULT_PER_MINUTE = 15
+DEFAULT_PER_PROJECT_PER_DAY = 500
 # Gemini's daily allowance resets at midnight Pacific time; ours does too.
 DAY_ZONE = ZoneInfo("America/Los_Angeles")
 PROJECT_KEY = "project"
+PROJECT_DAY_KEY = "project-day"
 # Counters older than this are no longer read; each reservation removes them.
 KEEP = timedelta(days=2)
 
@@ -54,18 +61,20 @@ router = APIRouter(prefix="/usage", tags=["usage"], route_class=SharedErrorRoute
 
 @dataclass(frozen=True)
 class Limits:
-    """Model calls allowed per user per day and per project per minute."""
+    """Model calls allowed per user per day, per project per minute and per project per day."""
 
     per_user_per_day: int = DEFAULT_PER_USER_PER_DAY
     per_minute: int = DEFAULT_PER_MINUTE
+    per_project_per_day: int = DEFAULT_PER_PROJECT_PER_DAY
 
     @classmethod
     def from_env(cls) -> "Limits":
-        """Read both limits; a value that isn't a positive whole number stops the service."""
+        """Read the limits; a value that isn't a positive whole number stops the service."""
         values = []
         for name, default in (
             (PER_USER_PER_DAY_ENV_VAR, DEFAULT_PER_USER_PER_DAY),
             (PER_MINUTE_ENV_VAR, DEFAULT_PER_MINUTE),
+            (PER_PROJECT_PER_DAY_ENV_VAR, DEFAULT_PER_PROJECT_PER_DAY),
         ):
             raw = os.environ.get(name, "").strip()
             try:
@@ -80,12 +89,13 @@ class Limits:
 
 
 class DailyLimitError(Exception):
-    """The user has used today's model calls."""
+    """The user, or the whole project, has used today's model calls."""
 
-    def __init__(self, resets_at: datetime) -> None:
-        """Record when the next day starts."""
+    def __init__(self, resets_at: datetime, *, project: bool = False) -> None:
+        """Record when the next day starts, and whether it's the project's limit."""
         super().__init__("daily limit reached")
         self.resets_at = resets_at
+        self.project = project
 
 
 class RateLimitedError(Exception):
@@ -148,7 +158,7 @@ def reserve(database: Database, user_id: uuid.UUID, limits: Limits, now: datetim
     """Reserve one model call for this user now; return how many are left today.
 
     Raises:
-        DailyLimitError: The user has none left today. Nothing is counted.
+        DailyLimitError: The user, or the project, has none left today. Nothing is counted.
         RateLimitedError: The project has none left this minute. Nothing is counted.
 
     """
@@ -158,6 +168,9 @@ def reserve(database: Database, user_id: uuid.UUID, limits: Limits, now: datetim
     with database.session() as session:
         if not _take(session, _user_key(user_id), day, limits.per_user_per_day):
             raise DailyLimitError(next_day_start(now))
+        if not _take(session, PROJECT_DAY_KEY, day, limits.per_project_per_day):
+            # Leaving the block with an error rolls back the user's count too.
+            raise DailyLimitError(next_day_start(now), project=True)
         if not _take(session, PROJECT_KEY, minute, limits.per_minute):
             # Leaving the block with an error rolls back the user's count too.
             raise RateLimitedError(max(1, 60 - now.astimezone(UTC).second))
@@ -192,11 +205,15 @@ def reserve_model_call(user: CurrentUser, database: RequiredDatabase) -> Reserve
     try:
         remaining = reserve(database, user, limits, datetime.now(UTC))
     except DailyLimitError as e:
+        whose = (
+            "The assistant has reached today's limit for everyone"
+            if e.project
+            else ("You've reached today's limit for the assistant")
+        )
         return error_response(
             429,
             "daily_limit_reached",
-            "You've reached today's limit for the assistant; your course plans and approvals "
-            "still work",
+            f"{whose}; your course plans and approvals still work",
             headers={"Retry-After": str(int((e.resets_at - datetime.now(UTC)).total_seconds()))},
         )
     except RateLimitedError as e:

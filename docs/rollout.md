@@ -55,7 +55,7 @@ Stage 1 needs the proposals and execution (#116), the agent loop, sign-in, provi
     ```
 
     `tofu apply` would turn it back on, so to keep it off, set `agent_model_provider = { demo = "disabled" }` too.
-2. **Stop executions** when the fault is in execution (wrong writes, or writes failing): set `EXECUTION=disabled` on the API service. Execute then answers `503`, while proposals and approvals are still recorded, so students can review and approve and run them later. This avoids rolling back a release that is otherwise fine. Shreyas builds the switch with #102. Until then, the only lever is rolling back the API.
+2. **Stop executions** when the fault is in execution (wrong writes, or writes failing): set `EXECUTION=disabled` on the API service and move traffic to the new revision, as [Pausing executions](deployment.md#pausing-executions) shows (setting the variable alone creates a revision that serves nothing). Execute then answers `503`, while proposals and approvals are still recorded, so students can review and approve and run them later. This avoids rolling back a release that is otherwise fine. Shreyas builds the switch with #102. Until then, the only lever is rolling back the API.
 3. **Roll back a release** (section 4) when errors start with a new revision.
 4. **Restore data** (section 6) when a release or a bug damaged the database. Neon can restore the last 6 hours; the daily backup covers older damage.
 
