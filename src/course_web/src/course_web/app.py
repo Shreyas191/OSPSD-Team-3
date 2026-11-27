@@ -249,6 +249,30 @@ def _csrf_refused(request: Request, _exc: CsrfError) -> HTMLResponse:
 CheckedForm = Annotated[None, Depends(check_csrf)]
 
 
+# The course list reads the person's own Dropbox, so the API answers with one of these until
+# Dropbox is connected and usable. For a new user that is the next step, not an error: the
+# signed-in page says what to do, keeping the session. Keyed by the API's error code.
+CONNECT_PROMPTS = {
+    "not_connected": (
+        "Connect your Dropbox to see your courses",
+        "Course Autopilot keeps each course's syllabus and plan in a folder in your Dropbox.",
+    ),
+    "reconnect_needed": (
+        "Reconnect your Dropbox to see your courses",
+        "Dropbox no longer accepts Course Autopilot's access, for example after it was removed "
+        "in Dropbox's settings. Nothing in your Dropbox was changed.",
+    ),
+    "setup_needed": (
+        "Finish connecting your accounts",
+        "",  # the API's message names the step, e.g. choosing the Trello list
+    ),
+    "connections_not_configured": (
+        "Connecting accounts isn't open on this site yet",
+        "Your courses appear here once it is. Try again later.",
+    ),
+}
+
+
 @app.get("/", response_class=HTMLResponse)
 def start_page(request: Request) -> HTMLResponse:
     """Render the person's courses when signed in; otherwise the start page with sign-in."""
@@ -257,6 +281,10 @@ def start_page(request: Request) -> HTMLResponse:
         try:
             courses = api.courses(token)
         except BackendError as e:
+            if e.code in CONNECT_PROMPTS and e.status in {409, 503}:
+                title, detail = CONNECT_PROMPTS[e.code]
+                prompt = {"title": title, "detail": detail or e.message}
+                return render(request, "courses.html", {"prompt": prompt, "signed_in": True})
             if e.status != 401:  # noqa: PLR2004 (HTTP status)
                 return backend_error_page(request, e)
             # The session ended (expired, or signed out elsewhere): show the start page.

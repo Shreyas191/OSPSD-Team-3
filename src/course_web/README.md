@@ -6,7 +6,9 @@ provider or database; pages get their data from the agent and API services over 
 
 Deployed as `course-web-<env>` by OpenTofu (`infra/web.tf`) and the pipeline
 (`scripts/deploy_web.sh`). So far it has the start page, Google sign-in and sign-out, and the
-signed-in course list (#95, first slice). Conversations, proposal review and outcomes come next.
+signed-in course list (#95, first slice). Until the person's Dropbox is connected and usable,
+the signed-in page says what to connect instead of showing an error. Conversations, proposal
+review and outcomes come next.
 
 Every form carries a CSRF value that must match the browser's `ca_csrf` cookie. The session
 token lives in the `ca_session` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` when deployed)
