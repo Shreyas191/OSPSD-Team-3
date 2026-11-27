@@ -280,6 +280,12 @@ jobs:
               --format='value(image_summary.digest)')"
             scripts/deploy_agent.sh << parameters.environment >> "${IMAGE_REPO}@${digest}" "${CIRCLE_SHA1}"
       - run:
+          name: "Deploy the interface for << parameters.environment >> and smoke-check it"
+          command: |
+            digest="$(gcloud artifacts docker images describe "${IMAGE_REPO}:${CIRCLE_SHA1}" \
+              --format='value(image_summary.digest)')"
+            scripts/deploy_web.sh << parameters.environment >> "${IMAGE_REPO}@${digest}" "${CIRCLE_SHA1}"
+      - run:
           name: "Point the database backup job for << parameters.environment >> at this release"
           command: |
             digest="$(gcloud artifacts docker images describe "${IMAGE_REPO}:${CIRCLE_SHA1}" \

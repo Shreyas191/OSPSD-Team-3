@@ -42,11 +42,11 @@ COPY src/ src/
 
 # --no-editable installs the workspace packages themselves into the venv, so the runtime
 # stage needs neither the source tree nor uv.
-# One image runs both services and the backup job: main.py starts the API service,
-# agent_main.py the agent service (HW3) and backup_main.py one database backup. Each picks
-# its entry point with its own start command.
+# One image runs all three services and the backup job: main.py starts the API service,
+# agent_main.py the agent service, web_main.py the interface (HW3) and backup_main.py one
+# database backup. Each picks its entry point with its own start command.
 RUN uv sync --locked --no-dev --no-editable \
-      --package cloud-storage-service --package course-agent-service
+      --package cloud-storage-service --package course-agent-service --package course-web
 
 # ----- Stage 2: the runtime image -----
 FROM ${PYTHON_IMAGE} AS runtime
@@ -75,7 +75,7 @@ RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
-COPY main.py agent_main.py backup_main.py ./
+COPY main.py agent_main.py web_main.py backup_main.py ./
 
 # HOST is 0.0.0.0 so the platform can reach the server; Cloud Run overrides PORT.
 ENV PATH="/app/.venv/bin:${PATH}" \

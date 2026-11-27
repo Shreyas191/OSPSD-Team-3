@@ -66,3 +66,20 @@ The services scale to zero, and every chart counts requests, so with no requests
 ## Changing it
 
 Edit `infra/dashboard.tf`, then `tofu fmt`, `tofu validate`, and `tofu plan`, which should show only the dashboard changing. Apply after review. Removing the infrastructure ([Teardown](teardown.md)) removes the dashboard and the metrics with it.
+
+## The agent's dashboard (HW3)
+
+**Where:** Cloud Monitoring → Dashboards → **Course Autopilot agent: task success**, or `tofu -chdir=infra output agent_dashboard_url`. **Defined in:** [`infra/agent_monitoring.tf`](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/infra/agent_monitoring.tf). The filter bar picks `course-agent-test` (default) or `course-agent-demo`.
+
+It reads the run record the agent service writes for every turn (`"event": "agent_run"`: stop reason, duration, model calls and tokens; never message text, document content or tool arguments) through log-based metrics labelled only by stop reason, plus Cloud Run's own request and instance metrics.
+
+| Panel | What it answers | What it changes |
+|---|---|---|
+| Task success: turns by how they ended | Are students getting answers or proposals (`replied`, `proposal_ready`)? | A rise in `model_unavailable` or `api_unavailable` is an incident (the agent alert); a rise in `limit_*` or `invalid_proposal` is a prompt or tool problem to investigate |
+| Errors: failed turns and agent 5xx | Which dependency is failing, and is the agent itself failing? | Which runbook section to follow |
+| Latency: full turn p50 and p95 | Are turns within the 45 s objective and the 60 s limit? | p95 near 45 s means fewer tool calls per turn or a faster model |
+| Active work: concurrent turns and instances | How close are we to the admission limits in the readiness record? | Whether to raise or lower the concurrent-turn limit |
+| Model usage: model calls and tokens per turn | What a turn costs, and how fast we use the model's quota | Input to the capacity estimate and the paid-tier decision |
+| Turns that didn't succeed (logs) | The run records behind the failures, with each tool's outcome | Where to start debugging |
+
+**Not on it yet:** what happened to approved changes. Execution answers `200` even when a change failed or is uncertain, so the proposal's outcomes are the only record; see [Failure Analysis](failure-analysis.md), item 4.

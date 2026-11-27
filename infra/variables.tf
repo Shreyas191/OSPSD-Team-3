@@ -75,6 +75,12 @@ variable "alert_5xx_threshold" {
   default     = 5
 }
 
+variable "alert_agent_failures_threshold" {
+  description = "Agent turns ended by an unavailable model or API, within 5 minutes, above which the agent alert fires (agent_monitoring.tf)."
+  type        = number
+  default     = 3
+}
+
 variable "composition_environments" {
   description = "Environments that get the secrets for other teams' implementations (composition.tf). Only test runs real providers for HW3; demo stays on the fakes."
   type        = set(string)

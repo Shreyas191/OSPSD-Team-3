@@ -101,8 +101,69 @@ If errors began when a new revision took traffic, roll back first and investigat
 - `curl -s <service url>/health/provider` returns `{"status":"ok"}`;
 - the smoke check passes: `uv run --no-project --with httpx python scripts/consumer_workflow.py <service url>`.
 
+## Alert: students' turns are failing
+
+**What it means:** on one agent service (`course-agent-test` or `-demo`), either more than 3 students' turns ended in 5 minutes because the model (Gemini) or the API service was unavailable, or the agent service itself returned more than 5 server errors. Students are getting "the assistant is busy" or "I couldn't reach your course data" instead of an answer. Nothing was changed in their accounts: a turn only reads and proposes. The alert is defined in `infra/agent_monitoring.tf`; it exists because a failed turn still answers `200`, which the 5xx alert above can't see. Which failures lead here and what each leaves behind: [Failure Analysis](failure-analysis.md).
+
+### 1. Find which failure
+
+Each turn writes one run record (`"event": "agent_run"`) with its stop reason and, per tool call, the tool's name and outcome:
+
+```bash
+gcloud logging read 'jsonPayload.event="agent_run"
+  jsonPayload.stop_reason=("model_unavailable" OR "api_unavailable")' \
+  --freshness=30m --limit=20 \
+  --format="table(timestamp,resource.labels.service_name,jsonPayload.stop_reason,jsonPayload.tools)"
+```
+
+| What you see | Likely cause | Do this |
+|---|---|---|
+| `model_unavailable`, students told "busy" | Gemini's per-minute or per-day quota, or Gemini overloaded | Check usage and limits in AI Studio. A per-minute limit clears within a minute; a per-day limit resets at midnight Pacific time. If it's the daily quota during launch week, see the paid-tier recommendation in the [readiness record](https://github.com/Shreyas191/OSPSD-Team-3/pull/117) |
+| `model_unavailable`, students told "failed", on every turn | Gemini rejects our key (revoked, or the project's billing changed) | Add a new key from a hidden prompt (the command in `infra/agent.tf`), then start a new revision so it is read: `gcloud run services update course-agent-<env> --region=us-central1 --update-labels=secret-rotated=$(date +%s)` |
+| `api_unavailable`, and the API's 5xx alert is open too | The API service or the database is down | Follow [the 5xx alert](#alert-callers-are-getting-server-errors-5xx). Check `GET /health/database` (Neon) and `GET /health/provider` (Dropbox) on the API service |
+| `api_unavailable`, only on `read_document` or `list_course_documents` in `tools` | Dropbox unreachable or refusing our token | [Dropbox unreachable](#dropbox-unreachable-503-provider_unavailable) or [credentials](#dropbox-rejects-our-credentials-502-provider_error) |
+| Agent 5xx, starting with a new revision | A bad release of the agent | Roll the agent service back (see "Roll back" in [Release Pipeline](release-pipeline.md)) |
+
+### 2. Confirm it's fixed
+
+- the alert email says **closed** (once 5 minutes pass with 3 or fewer failed turns and 5 or fewer agent 5xx);
+- the agent dashboard's Task success panel shows turns ending `replied` or `proposal_ready` again.
+
+**Recovery can't undo:** nothing to undo. A failed turn changed nothing; the student sends the message again. If the agent crashed after `propose_changes` stored a proposal, that proposal is still pending and the student can review it.
+
+## A proposal stuck in `executing`
+
+**Seen in:** a student reports that running their changes again fails with `409` ("it can't run now"), and the proposal's status is `executing` long after the request ended.
+
+The API instance stopped while it was executing (a redeploy, a crash or a timeout), between a provider write and saving that change's outcome ([Failure Analysis](failure-analysis.md), item 1). Nothing moves it on by itself yet. With the student's agreement: for each change that has no outcome, check their calendar or board for it; tell them what you found; then set the proposal's status to `failed` so the changes without an outcome can run again. Only do that once you're sure the unrecorded change wasn't made, or after the student has removed it, otherwise running again makes it twice.
+
+To find stuck proposals (read-only):
+
+```sql
+SELECT id, created_at, decided_at FROM proposals WHERE status = 'executing';
+```
+
 ## Alert test record
 
 | Date | Environment | How it was triggered | Opened (email received) | Closed | Notes |
 |---|---|---|---|---|---|
 | 2026-11-11 | `test` | 8 bursts of 60 concurrent `GET /files/metadata` (20:33:54–20:35:27 UTC) with `BASE_URL=<test url> uv run python scripts/overload_demo.py /alert-drill/does-not-exist.txt 60 60`, run 4 times 20 s apart. 301 requests got `503 service_busy`; Cloud Monitoring counted 221 + 80 5xx in the minutes ending 20:35 and 20:36, then 0. | Yes: "opened" email received at the alert address | Yes: "closed" email received after the errors stopped | Read-only requests for a missing file, so no Dropbox data changed. The other 189 requests were `404` (caller errors, not counted). No action needed: the limiter recovers when the burst ends. |
+| Pending | `test` | **Agent alert**: the drill below, once the agent loop (#92) is deployed and `agent_monitoring.tf` is applied | | | Expected: opens about 6 minutes after the first failed turn (5-minute window, held for 1 minute); closes about 5 minutes after the last. |
+
+### Agent alert drill
+
+Makes 5 turns fail with `model_unavailable` on a test revision that serves no traffic, then puts the service back. It changes no student data: a failed turn only reads.
+
+```bash
+# 1. A new revision that serves no traffic, with an invalid model key. This also changes the
+#    service's template, so step 3 must put the real key back before anything else deploys.
+gcloud run services update course-agent-test --region=us-central1 --no-traffic --tag=alertdrill \
+  --remove-secrets=GEMINI_API_KEY --update-env-vars=GEMINI_API_KEY=invalid-for-drill
+# 2. Send 5 turns to https://alertdrill---course-agent-test-<hash>-uc.a.run.app within 2 minutes, signed in as a test user.
+# 3. Put the real key back on the service template, then drop the tag.
+gcloud run services update course-agent-test --region=us-central1 --no-traffic \
+  --remove-env-vars=GEMINI_API_KEY --update-secrets=GEMINI_API_KEY=gemini-api-key-test:latest
+gcloud run services update-traffic course-agent-test --region=us-central1 --remove-tags=alertdrill
+```
+
+Record when the "opened" and "closed" emails arrived in the table above.
