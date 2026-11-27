@@ -18,6 +18,16 @@ from fastapi.responses import JSONResponse
 from cloud_storage_service.auth_routes import SignInNotConfiguredError
 from cloud_storage_service.auth_routes import router as auth_router
 from cloud_storage_service.configuration import ConfigurationError
+from cloud_storage_service.connection_routes import router as connection_router
+from cloud_storage_service.connections import (
+    NOT_CONFIGURED,
+    NOT_CONFIGURED_MESSAGE,
+    Connections,
+    ConnectionsNotConfiguredError,
+    ProviderNotReadyError,
+    TokenBox,
+)
+from cloud_storage_service.connectors import build_connectors
 from cloud_storage_service.conversation_routes import router as conversation_router
 from cloud_storage_service.courses import router as course_router
 from cloud_storage_service.database import build_database, migrate
@@ -80,9 +90,10 @@ def check_configuration() -> None:
     build_storage_client()
     build_issue_tracker()
     build_calendar()
+    TokenBox.from_env()
 
 
-GOOGLE_TIMEOUT_SECONDS = 10.0
+PROVIDER_TIMEOUT_SECONDS = 10.0
 
 
 @asynccontextmanager
@@ -101,13 +112,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.database = build_database()
     if app.state.database is not None:
         migrate(app.state.database)
+    # One HTTP client for the OAuth calls to Google and Trello (sign-in and connections).
+    http = httpx.Client(timeout=PROVIDER_TIMEOUT_SECONDS)
     # Google sign-in (#96): on only when the OAuth client and redirect URI are configured.
     google = GoogleSettings.from_env()
-    google_http = httpx.Client(timeout=GOOGLE_TIMEOUT_SECONDS) if google else None
-    app.state.google_sign_in = GoogleSignIn(google, google_http) if google and google_http else None
+    app.state.google_sign_in = GoogleSignIn(google, http) if google else None
+    # People's own provider connections (#98-#101): on only with a token encryption key;
+    # each provider can be connected once its own settings are present (connectors.py).
+    box = TokenBox.from_env()
+    app.state.connections = Connections(box, build_connectors(http)) if box else None
     yield
-    if google_http is not None:
-        google_http.close()
+    http.close()
     if app.state.database is not None:
         app.state.database.engine.dispose()
 
@@ -123,6 +138,7 @@ app.include_router(proposal_router)
 app.include_router(course_router)
 app.include_router(conversation_router)
 app.include_router(auth_router)
+app.include_router(connection_router)
 
 
 @app.exception_handler(SignInNotConfiguredError)
@@ -131,6 +147,25 @@ def _sign_in_not_configured(_request: Request, _exc: SignInNotConfiguredError) -
         status.HTTP_503_SERVICE_UNAVAILABLE,
         "sign_in_not_configured",
         "Google sign-in isn't configured on this service",
+    )
+
+
+@app.exception_handler(ProviderNotReadyError)
+def _provider_not_ready(_request: Request, exc: ProviderNotReadyError) -> JSONResponse:
+    if exc.code == NOT_CONFIGURED:
+        return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, exc.code, exc.message)
+    return error_response(status.HTTP_409_CONFLICT, exc.code, exc.message)
+
+
+@app.exception_handler(ConnectionsNotConfiguredError)
+def _connections_not_configured(
+    _request: Request,
+    _exc: ConnectionsNotConfiguredError,
+) -> JSONResponse:
+    return error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        NOT_CONFIGURED,
+        NOT_CONFIGURED_MESSAGE,
     )
 
 

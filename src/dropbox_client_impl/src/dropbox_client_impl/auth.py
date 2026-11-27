@@ -17,6 +17,7 @@ import json
 import os
 import webbrowser
 from collections.abc import Callable
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from time import monotonic
@@ -35,6 +36,7 @@ load_dotenv()
 APP_KEY_ENV_VAR = "DROPBOX_APP_KEY"
 APP_SECRET_ENV_VAR = "DROPBOX_APP_SECRET"  # noqa: S105
 REDIRECT_URI_ENV_VAR = "DROPBOX_REDIRECT_URI"
+CONNECT_REDIRECT_ENV_VAR = "DROPBOX_CONNECT_REDIRECT_URI"
 REFRESH_TOKEN_ENV_VAR = "DROPBOX_REFRESH_TOKEN"  # noqa: S105
 ACCESS_TOKEN_ENV_VAR = "DROPBOX_ACCESS_TOKEN"  # noqa: S105
 TOKEN_FILE_ENV_VAR = "DROPBOX_TOKEN_FILE"  # noqa: S105
@@ -127,6 +129,27 @@ def save_refresh_token(refresh_token: str, account_id: str) -> Path:
         f.write(payload)
     path.chmod(0o600)
     return path
+
+
+@dataclass(frozen=True)
+class ConnectSettings:
+    """The Dropbox app that people connect their own Dropbox to, and its redirect URI."""
+
+    app_key: str
+    app_secret: str
+    redirect_uri: str
+
+
+def connect_settings() -> ConnectSettings | None:
+    """Return the settings for connecting people's Dropbox (#99), or ``None`` if any is unset.
+
+    It is the service's Dropbox app (``DROPBOX_APP_KEY`` / ``DROPBOX_APP_SECRET``) with
+    ``DROPBOX_CONNECT_REDIRECT_URI``; see :mod:`dropbox_client_impl.connect`.
+    """
+    values = [
+        _env(name) for name in (APP_KEY_ENV_VAR, APP_SECRET_ENV_VAR, CONNECT_REDIRECT_ENV_VAR)
+    ]
+    return ConnectSettings(*values) if all(values) else None
 
 
 # ----- Authenticated clients and requests -----

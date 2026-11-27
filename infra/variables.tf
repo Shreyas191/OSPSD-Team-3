@@ -140,3 +140,19 @@ variable "sign_in_redirect_uris" {
     error_message = "Each key must be one of var.environments."
   }
 }
+
+variable "connections" {
+  description = "Environments where people connect their own providers (connections.tf), with each provider's return URL; a provider whose URL is empty isn't offered. Add an environment only after token-encryption-key-<env> has a value."
+  type = map(object({
+    dropbox_redirect_uri  = optional(string, "")
+    calendar_redirect_uri = optional(string, "")
+    trello_api_key        = optional(string, "")
+    trello_return_url     = optional(string, "")
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for env in keys(var.connections) : contains(var.environments, env)])
+    error_message = "Each key must be one of var.environments."
+  }
+}

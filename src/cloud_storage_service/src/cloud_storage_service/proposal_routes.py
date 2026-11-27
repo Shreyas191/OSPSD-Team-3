@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cloud_storage_service import execution, proposals
-from cloud_storage_service.dependencies import Calendar, DocumentStore, IssueTracker
+from cloud_storage_service.connections import UserCalendar, UserIssues, UserStorage
 from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute, error_response
 from cloud_storage_service.identity import CurrentUser, Person, RequiredDatabase
 
@@ -170,9 +170,9 @@ def execute_proposal(  # noqa: PLR0913 (each argument is a FastAPI dependency)
     proposal_id: uuid.UUID,
     person: Person,
     database: RequiredDatabase,
-    storage: DocumentStore,
-    issues: IssueTracker,
-    calendar: Calendar,
+    storage: UserStorage,
+    issues: UserIssues,
+    calendar: UserCalendar,
 ) -> ProposalResponse | JSONResponse:
     """Run an approved proposal, or retry a failed one; return every change's outcome."""
     try:
@@ -199,9 +199,9 @@ def resolve_change(  # noqa: PLR0913 (each argument is a FastAPI dependency)
     body: ResolveRequest,
     person: Person,
     database: RequiredDatabase,
-    storage: DocumentStore,
-    issues: IssueTracker,
-    calendar: Calendar,
+    storage: UserStorage,
+    issues: UserIssues,
+    calendar: UserCalendar,
 ) -> ProposalResponse | JSONResponse:
     """Settle an uncertain change after checking it; return the proposal."""
     try:

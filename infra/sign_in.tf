@@ -20,7 +20,7 @@ locals {
     GOOGLE_OAUTH_CLIENT_SECRET = "google-oauth-client-secret"
   }
   google_oauth_readers = {
-    for pair in setproduct(keys(var.sign_in_redirect_uris), keys(local.google_oauth_secrets)) :
+    for pair in setproduct(local.google_oauth_envs, keys(local.google_oauth_secrets)) :
     "${pair[0]}/${pair[1]}" => { env = pair[0], name = pair[1] }
   }
 }
@@ -42,7 +42,8 @@ resource "google_secret_manager_secret" "google_oauth" {
   depends_on = [google_project_service.apis]
 }
 
-# Only the API service of an environment with sign-in on reads the client; never the agent.
+# Only the API service of an environment with sign-in or calendar connections on reads the
+# client (connections.tf); never the agent.
 resource "google_secret_manager_secret_iam_member" "runtime_reads_google_oauth" {
   for_each = local.google_oauth_readers
 

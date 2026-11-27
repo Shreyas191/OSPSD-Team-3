@@ -58,7 +58,13 @@ Settings come only from the environment. The image contains none of them.
 | `CALENDAR_IMPL` | No (default `fake`) | No | Which calendar implementation to use: `team5` (Team 5's Google Calendar package), `fake` or `failing` (refused on demo) |
 | `CALENDAR_TOKEN_FILE` | With `CALENDAR_IMPL=team5` | The file is | Path of the OAuth token file for our own Google test account (`python -m team5_calendar.authorize`) |
 | `DATABASE_URL` | No (without it the service runs with no database, and `GET /health/database` answers 503) | Yes | Postgres connection string of this environment's Neon branch. Migrations run at startup; see `database.py` |
-| `DEV_SIGN_IN` | No (off unless `enabled`; always off on demo) | No | Until sign-in lands (#96, #97): accept the `X-Dev-User` header on product routes (`/proposals`) as a development user. Without it, those routes answer 401 |
+| `DEV_SIGN_IN` | No (off unless `enabled`; always off on demo) | No | Accept the `X-Dev-User` header on product routes as a development user, who runs on the service's shared clients above and has no connections. A bearer token, when sent, always wins. See `identity.py` |
+| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | For sign-in or calendar connections | Secret: yes | The Google OAuth client ("Web application"); see `infra/sign_in.tf` |
+| `SIGN_IN_REDIRECT_URI` | For sign-in (without it, `/auth/google/*` answers 503) | No | Where Google sends the browser after sign-in: the interface's callback |
+| `TOKEN_ENCRYPTION_KEY` | For connections (without it, `/connections` and product routes for signed-in users answer 503) | Yes | Fernet key that encrypts stored provider tokens; see `infra/connections.tf` and `connections.py` |
+| `DROPBOX_CONNECT_REDIRECT_URI` | To offer Dropbox connections | No | Where Dropbox sends the browser back; uses `DROPBOX_APP_KEY`/`_SECRET` (an App folder app) |
+| `CALENDAR_CONNECT_REDIRECT_URI` | To offer Google Calendar connections | No | Where Google sends the browser back after the `calendar.events` consent; uses the OAuth client above |
+| `TRELLO_CONNECT_API_KEY`, `TRELLO_CONNECT_RETURN_URL` | To offer Trello connections | No (the key is public) | The Power-Up's API key, and where Trello returns the browser with the token in the fragment |
 
 ### The startup check
 

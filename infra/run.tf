@@ -117,9 +117,10 @@ resource "google_cloud_run_v2_service" "service" {
         }
       }
 
-      # Google sign-in (sign_in.tf): only in environments given a redirect URI.
+      # Google sign-in (sign_in.tf): only in environments given a redirect URI, or connecting
+      # calendars (connections.tf).
       dynamic "env" {
-        for_each = contains(keys(var.sign_in_redirect_uris), each.key) ? local.google_oauth_secrets : {}
+        for_each = contains(local.google_oauth_envs, each.key) ? local.google_oauth_secrets : {}
         content {
           name = env.key
           value_source {
@@ -135,6 +136,27 @@ resource "google_cloud_run_v2_service" "service" {
         content {
           name  = env.value
           value = var.sign_in_redirect_uris[each.key]
+        }
+      }
+
+      # People's provider connections (connections.tf): only in listed environments.
+      dynamic "env" {
+        for_each = contains(keys(var.connections), each.key) ? ["TOKEN_ENCRYPTION_KEY"] : []
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.token_encryption_key[each.key].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = lookup(local.connection_settings, each.key, {})
+        content {
+          name  = env.key
+          value = env.value
         }
       }
 
@@ -206,6 +228,7 @@ resource "google_cloud_run_v2_service" "service" {
     google_secret_manager_secret_iam_member.runtime_reads_calendar_token,
     google_secret_manager_secret_iam_member.runtime_reads_database_url,
     google_secret_manager_secret_iam_member.runtime_reads_google_oauth,
+    google_secret_manager_secret_iam_member.runtime_reads_token_key,
   ]
 }
 
