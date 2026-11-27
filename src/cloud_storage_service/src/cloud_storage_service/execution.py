@@ -57,7 +57,13 @@ from issue_tracker_contract.models import IssueUpdate
 from sqlalchemy import and_, or_, select, update
 
 from cloud_storage_service.connections import ProviderNotReadyError
-from cloud_storage_service.proposals import COURSE_ROOT, ProposalError, get_owned, owned_record
+from cloud_storage_service.proposals import (
+    COURSE_ROOT,
+    ProposalError,
+    changes_hash,
+    get_owned,
+    owned_record,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
@@ -187,7 +193,10 @@ def _claim(
         approval = session.scalars(
             select(Approval).where(Approval.proposal_id == proposal_id),
         ).first()
-        if approval is None or approval.changes_hash != proposal.changes_hash:
+        # The hash of what is about to run, recomputed, not the stored column: content
+        # changed after approval (a bug, or a direct database write) doesn't match (T3).
+        running = changes_hash(list(proposal.changes))
+        if approval is None or not (approval.changes_hash == proposal.changes_hash == running):
             raise ProposalError(
                 409,
                 "conflict",
