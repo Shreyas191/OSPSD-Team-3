@@ -1,9 +1,10 @@
-"""Controlled implementations of the issue-tracker and calendar contracts.
+"""Controlled implementations of the issue-tracker, calendar and document-storage contracts.
 
 They let the service run, and the workflow be tested, without Trello or Google Calendar:
 
 - :class:`InMemoryIssueTracker` and :class:`InMemoryCalendar` keep what they create in a
   dictionary for as long as the process runs. Unit tests and local development use them.
+  :class:`InMemoryDocumentStorage` does the same for files, keeping their exact bytes.
 - :class:`FailingIssueTracker` and :class:`FailingCalendar` fail every call with the
   contract's own error, the way an unavailable provider would. They demonstrate that the
   caller of a composed operation is told which step failed.
@@ -15,6 +16,8 @@ import uuid
 
 from calendar_contract import CalendarError, CreateEvent, Event, ReplaceEvent
 from calendar_contract import ErrorCode as CalendarErrorCode
+from cloud_storage_api import DocumentStorage, FileInfo
+from cloud_storage_api.errors import ConflictError, NotFoundError
 from issue_tracker_contract import ErrorCode as IssueErrorCode
 from issue_tracker_contract import Issue, IssueUpdate, ServiceError
 
@@ -22,6 +25,7 @@ __all__ = [
     "FailingCalendar",
     "FailingIssueTracker",
     "InMemoryCalendar",
+    "InMemoryDocumentStorage",
     "InMemoryIssueTracker",
 ]
 
@@ -183,3 +187,77 @@ class FailingCalendar:
     def delete(self, event_id: str) -> None:  # noqa: ARG002
         """Fail."""
         raise self._fail()
+
+
+class InMemoryDocumentStorage(DocumentStorage):
+    """Files in a dictionary, keyed by path. Folders exist implicitly, as parents of files."""
+
+    def __init__(self) -> None:
+        """Start with no files."""
+        self.files: dict[str, bytes] = {}
+
+    def _info(self, path: str) -> FileInfo:
+        if path in self.files:
+            name = path.rsplit("/", 1)[-1]
+            return FileInfo(
+                None,
+                name,
+                path,
+                len(self.files[path]),
+                "2026-01-01T00:00:00Z",
+                None,
+                "file",
+            )
+        if any(p.startswith(path.rstrip("/") + "/") for p in self.files):
+            return FileInfo(None, path.rsplit("/", 1)[-1], path, None, None, None, "folder")
+        raise NotFoundError(path)
+
+    def create(self, path: str, content: bytes) -> FileInfo:
+        """Create a file; ``ConflictError`` if one exists."""
+        if path in self.files:
+            raise ConflictError(path)
+        self.files[path] = content
+        return self._info(path)
+
+    def replace(self, path: str, content: bytes) -> FileInfo:
+        """Replace an existing file; ``NotFoundError`` if missing."""
+        if path not in self.files:
+            raise NotFoundError(path)
+        self.files[path] = content
+        return self._info(path)
+
+    def download(self, path: str) -> bytes:
+        """Return the file's bytes."""
+        if path not in self.files:
+            raise NotFoundError(path)
+        return self.files[path]
+
+    def get_metadata(self, path: str) -> FileInfo:
+        """Return the file's or folder's info."""
+        return self._info(path)
+
+    def list_files(self, path: str) -> list[FileInfo]:
+        """Return the direct children of a folder, sorted by path."""
+        self._info(path)  # NotFoundError for a missing folder
+        prefix = path.rstrip("/") + "/"
+        children = {
+            prefix + p[len(prefix) :].split("/", 1)[0] for p in self.files if p.startswith(prefix)
+        }
+        return [self._info(child) for child in sorted(children)]
+
+    def move(self, from_path: str, to_path: str) -> FileInfo:
+        """Move a file."""
+        if to_path in self.files:
+            raise ConflictError(to_path)
+        self.files[to_path] = self.download(from_path)
+        del self.files[from_path]
+        return self._info(to_path)
+
+    def delete(self, path: str) -> None:
+        """Delete a file, or a folder and everything in it."""
+        self._info(path)
+        for p in [p for p in self.files if p == path or p.startswith(path.rstrip("/") + "/")]:
+            del self.files[p]
+
+    def check_health(self) -> None:
+        """Report healthy: there is no provider to reach."""

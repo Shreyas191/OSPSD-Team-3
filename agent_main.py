@@ -7,6 +7,7 @@ before it serves, with one line naming the setting. The container image runs thi
 the agent service and ``main.py`` for the API service.
 """
 
+import logging
 import os
 
 import uvicorn
@@ -24,6 +25,8 @@ def main() -> None:
     except ConfigurationError as e:
         msg = f"Startup failed: {e}"
         raise SystemExit(msg) from None
+    # One line per agent run (course_agent_service.app); the line is already JSON.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     host = os.environ.get("HOST", DEFAULT_HOST)
     port = int(os.environ.get("PORT", DEFAULT_PORT))
     uvicorn.run("course_agent_service.app:app", host=host, port=port)

@@ -88,6 +88,17 @@ def test_text_reply_and_token_usage_come_back() -> None:
     assert (reply.usage.input_tokens, reply.usage.output_tokens) == (12, 3)
 
 
+def test_the_version_that_answered_comes_back() -> None:
+    """The exact model version that answered comes back, for the run record."""
+    answer = response(types.Part(text="Hi"))
+    answer.model_version = "gemini-3.5-flash-lite-001"
+    model, _ = model_with(answer)
+
+    reply = model.complete(system="", messages=[Message(role="user", text="Hi")], tools=[])
+
+    assert reply.model_version == "gemini-3.5-flash-lite-001"
+
+
 def test_thoughts_are_not_shown_as_reply_text() -> None:
     """Thoughts are not shown as reply text."""
     model, _ = model_with(
@@ -186,12 +197,41 @@ def test_geminis_own_turn_is_sent_back_unchanged() -> None:
         system="",
         messages=[
             Message(role="user", text="x"),
-            Message(role="assistant", text="Looking.", provider_state=original),
+            Message(
+                role="assistant",
+                text="Looking.",
+                provider_state=original.model_dump(mode="json", exclude_none=True),
+            ),
         ],
         tools=[],
     )
 
-    assert models.requests[0]["contents"][1] is original
+    assert models.requests[0]["contents"][1] == original
+
+
+def test_results_of_one_turns_calls_go_back_together() -> None:
+    """Gemini wants every function response of a turn in one content."""
+    model, models = model_with(response(types.Part(text="Done")))
+    calls = (ToolCall("a", "list_courses", {}), ToolCall("b", "get_course_plan", {"course": "x"}))
+
+    model.complete(
+        system="",
+        messages=[
+            Message(role="user", text="x"),
+            Message(role="assistant", tool_calls=calls),
+            Message(role="tool", tool_call_id="a", name="list_courses", text="[]"),
+            Message(role="tool", tool_call_id="b", name="get_course_plan", text="{}"),
+            Message(role="user", text="thanks"),
+        ],
+        tools=[],
+    )
+
+    contents = models.requests[0]["contents"]
+    assert len(contents) == 4
+    assert [p.function_response.id for p in contents[2].parts or [] if p.function_response] == [
+        "a",
+        "b",
+    ]
 
 
 def test_the_reply_keeps_geminis_turn_for_the_next_call() -> None:
@@ -200,7 +240,8 @@ def test_the_reply_keeps_geminis_turn_for_the_next_call() -> None:
 
     reply = model.complete(system="", messages=[Message(role="user", text="x")], tools=[])
 
-    assert isinstance(reply.provider_state, types.Content)
+    # JSON, so it can be stored between turns, and it turns back into the same content.
+    assert (types.Content.model_validate(reply.provider_state).parts or [])[0].text == "ok"
 
 
 def test_an_empty_response_is_an_empty_reply() -> None:

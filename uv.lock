@@ -224,6 +224,7 @@ dependencies = [
     { name = "opentelemetry-instrumentation-requests" },
     { name = "opentelemetry-propagator-gcp" },
     { name = "opentelemetry-sdk" },
+    { name = "pypdf" },
     { name = "python-multipart" },
     { name = "sqlalchemy" },
     { name = "team-4-issue-tracker-trello" },
@@ -245,6 +246,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-requests", specifier = ">=0.66b1" },
     { name = "opentelemetry-propagator-gcp", specifier = ">=1.15.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.45.1" },
+    { name = "pypdf", specifier = ">=6.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "sqlalchemy", specifier = ">=2.0.36" },
     { name = "team-4-issue-tracker-trello", git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.1.0" },
@@ -268,6 +270,8 @@ source = { editable = "src/course_agent_service" }
 dependencies = [
     { name = "fastapi" },
     { name = "google-genai" },
+    { name = "httpx" },
+    { name = "pydantic" },
     { name = "uvicorn" },
 ]
 
@@ -275,6 +279,8 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-genai", specifier = ">=2.34,<3" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "pydantic", specifier = ">=2.9" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 
@@ -1398,6 +1404,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e4/11/b213bebff182584360cb8d17c72c1677fec5c5c228de439e63bcf8ab1c8f/pyparsing-3.3.3.tar.gz", hash = "sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36", size = 1050487, upload-time = "2026-09-20T20:59:05.609Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/bb/d215ee7c73b61497b28a5503f9f53523f294fcc936762b7caf90e0c1c2b5/pyparsing-3.3.3-py3-none-any.whl", hash = "sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4", size = 126420, upload-time = "2026-09-20T20:59:04.025Z" },
+]
+
+[[package]]
+name = "pypdf"
+version = "7.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/7b/5dff016bef001c3556c5fdd7645ec80251b78bb496b049d2ab9ec497b087/pypdf-7.2.0.tar.gz", hash = "sha256:b2c637b6f0be3def1f762fd8be20118736bafdffc75badab80db003d7a9ed110", size = 7253070, upload-time = "2026-11-26T15:38:53.825Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/b5/36b52010264f40f35fcd469f62586c0d88753c16682f2e156c42347f884b/pypdf-7.2.0-py3-none-any.whl", hash = "sha256:5edb9b033dd55cecead9303370e6854c1a3b979669bde1c46024cde0228405b1", size = 428449, upload-time = "2026-11-26T15:38:52.262Z" },
 ]
 
 [[package]]

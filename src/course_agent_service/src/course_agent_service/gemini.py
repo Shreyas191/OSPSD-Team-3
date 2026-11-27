@@ -63,7 +63,7 @@ class GeminiModel:
         try:
             response = self._client.models.generate_content(
                 model=self.model_name,
-                contents=[_content(m) for m in messages],
+                contents=_contents(messages),
                 config=config,
             )
         except errors.APIError as e:
@@ -84,10 +84,26 @@ def _declaration(tool: ToolSpec) -> types.FunctionDeclaration:
     )
 
 
+def _contents(messages: Sequence[Message]) -> list[types.Content]:
+    contents: list[types.Content] = []
+    for message in messages:
+        content = _content(message)
+        if message.role == "tool" and contents and _is_function_response(contents[-1]):
+            # Gemini expects all results of one turn's calls together, in one content.
+            contents[-1].parts = [*(contents[-1].parts or []), *(content.parts or [])]
+        else:
+            contents.append(content)
+    return contents
+
+
+def _is_function_response(content: types.Content) -> bool:
+    return bool(content.parts) and all(p.function_response for p in content.parts or [])
+
+
 def _content(message: Message) -> types.Content:
-    if message.role == "assistant" and isinstance(message.provider_state, types.Content):
+    if message.role == "assistant" and isinstance(message.provider_state, dict):
         # Gemini's own turn, unchanged, so its thought signatures go back with it.
-        return message.provider_state
+        return types.Content.model_validate(message.provider_state)
     if message.role == "assistant":
         parts = [types.Part(text=message.text)] if message.text else []
         parts += [
@@ -119,7 +135,9 @@ def _reply(response: types.GenerateContentResponse) -> ModelReply:
             input_tokens=(usage.prompt_token_count or 0) if usage else 0,
             output_tokens=(usage.candidates_token_count or 0) if usage else 0,
         ),
-        provider_state=content,
+        # Stored as JSON between turns (signatures are base64), so a restart keeps them.
+        provider_state=content.model_dump(mode="json", exclude_none=True) if content else None,
+        model_version=response.model_version or "",
     )
 
 
