@@ -58,6 +58,7 @@ Settings come only from the environment. The image contains none of them.
 | `CALENDAR_IMPL` | No (default `fake`) | No | Which calendar implementation to use: `team5` (Team 5's Google Calendar package), `fake` or `failing` (refused on demo) |
 | `CALENDAR_TOKEN_FILE` | With `CALENDAR_IMPL=team5` | The file is | Path of the OAuth token file for our own Google test account (`python -m team5_calendar.authorize`) |
 | `DATABASE_URL` | No (without it the service runs with no database, and `GET /health/database` answers 503) | Yes | Postgres connection string of this environment's Neon branch. Migrations run at startup; see `database.py` |
+| `DEV_SIGN_IN` | No (off unless `enabled`; always off on demo) | No | Until sign-in lands (#96, #97): accept the `X-Dev-User` header on product routes (`/proposals`) as a development user. Without it, those routes answer 401 |
 
 ### The startup check
 
