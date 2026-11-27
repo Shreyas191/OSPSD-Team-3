@@ -198,6 +198,8 @@ read -rs GEMINI_KEY && printf %s "$GEMINI_KEY" \
 
 The pipeline deploys the agent service right after the API service in each environment (`scripts/deploy_agent.sh`): a new revision with no traffic, `GET /health` on its own URL, then all traffic. Apply `infra/agent.tf` before the first release that includes it; until then the deploy step reports that the service doesn't exist yet and skips it.
 
+**Interface (`infra/web.tf`).** One Cloud Run service per environment, `course-web-<env>`, running the same image with `web_main.py` as its entry point; OpenTofu and the pipeline split the image and command between them as for the agent service. Its runtime identity (`web-run-<env>`) can read no secret: the interface holds only the browser's session cookie and gets its data from the API and agent services (DESIGN.md, P4). It is public, since students open it in a browser. The pipeline deploys it after the agent service (`scripts/deploy_web.sh`). Before moving traffic, the smoke check requires `GET /health` to answer `200` and `GET /` to be our start page naming the release being deployed. Apply `infra/web.tf` before the first release that includes it; until then the deploy step skips it in the same way.
+
 ## Roll back a release
 
 Each deploy creates a new Cloud Run revision; the previous one stays. To send all traffic back to it:
