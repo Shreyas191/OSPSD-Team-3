@@ -74,25 +74,27 @@ Settings come only from the environment. The image contains none of them.
 
 The pipeline pins each service's traffic to the tag of its release (`--to-tags=rel-<sha>=100`, `scripts/deploy.sh`). A revision created any other way, by `gcloud run services update` or by `tofu apply`, **serves nothing** until traffic moves to it. So setting `EXECUTION=disabled` alone doesn't stop executions: the release that is serving still has executions on.
 
-**Immediate stop** (for example on demo):
+The new revision must also be built from the image that is **serving now**, not from the service's template. `deploy.sh` puts each release's image in the template before its smoke check, and a release that fails the check stays there without traffic. A revision built from the template would then run that failed release, and moving traffic to it would put the broken image in front of students, right when something is already wrong.
+
+**Stop executions** (for example on demo):
 
 ```bash
-gcloud run services update cloud-storage-service-demo --region=us-central1 \
-  --update-env-vars=EXECUTION=disabled --tag=paused
-gcloud run services update-traffic cloud-storage-service-demo --region=us-central1 \
-  --to-tags=paused=100
+SERVICE=cloud-storage-service-demo REGION=us-central1
+serving=$(gcloud run services describe "$SERVICE" --region="$REGION" --format=json \
+  | python3 -c 'import json,sys; print(next(t["revisionName"] for t in json.load(sys.stdin)["status"]["traffic"] if t.get("percent") == 100))')
+image=$(gcloud run revisions describe "$serving" --region="$REGION" --format='value(spec.containers[0].image)')
+gcloud run services update "$SERVICE" --region="$REGION" \
+  --image="$image" --update-env-vars=EXECUTION=disabled --tag=paused
+gcloud run services update-traffic "$SERVICE" --region="$REGION" --to-tags=paused=100
 ```
 
-**Keep it off**, so a later `tofu apply` doesn't undo it: add the environment to `execution_disabled` (for example `execution_disabled = ["demo"]`), run `tofu apply`, then move traffic to the revision it created:
+`$image` is the serving revision's image by digest, so the `paused` revision runs exactly the release that was serving, with only `EXECUTION` changed.
 
-```bash
-gcloud run services update-traffic cloud-storage-service-demo --region=us-central1 \
-  --to-revisions=LATEST=100
-```
+**Keep it off** across a later `tofu apply`: also add the environment to `execution_disabled` (for example `execution_disabled = ["demo"]`) and apply. Don't move traffic to the revision `tofu apply` creates: it is built from the template's image, which may be a failed release. The `paused` revision above is the one that serves.
 
-Then check it took effect: `POST /proposals/{id}/execute` on any approved proposal answers `503 execution_disabled`, and `GET /proposals/{id}` still works.
+Then check it took effect: `POST /proposals/{id}/execute` with a signed-in session answers `503 execution_disabled`, and `GET /proposals/{id}` still works. `gcloud run services describe "$SERVICE" --region="$REGION" --format=json` shows `paused` with 100%.
 
-The next pipeline deploy builds on the service's current settings, so it keeps executions off. To turn them on again, remove the variable (`--remove-env-vars=EXECUTION` with `--tag=resumed`, or take the environment out of `execution_disabled` and apply), and move traffic the same way.
+The next pipeline release builds on the service's current settings, so it keeps executions off. **To turn them back on,** move traffic back to the release that was serving (`--to-tags=rel-<sha>=100`; its revision still has executions on), then remove the setting from the template so later releases have it on too: `gcloud run services update "$SERVICE" --region="$REGION" --remove-env-vars=EXECUTION` (the revision it makes gets no traffic; leave it so), or take the environment out of `execution_disabled` and apply.
 
 ### The startup check
 
