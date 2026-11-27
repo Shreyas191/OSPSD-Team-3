@@ -30,7 +30,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from course_web.backend import TIMEOUT_SECONDS, Api, BackendError
+from course_web.backend import TIMEOUT_SECONDS, Api, BackendError, TrelloList
 from course_web.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,9 @@ SIGN_IN_MAX_AGE = 10 * 60
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; base-uri 'none'; "
-        "form-action 'self' https://accounts.google.com; frame-ancestors 'none'"
+        # Forms post here; sign-in and connecting accounts then redirect to these providers.
+        "form-action 'self' https://accounts.google.com https://www.dropbox.com "
+        "https://trello.com; frame-ancestors 'none'"
     ),
     "X-Frame-Options": "DENY",  # frame-ancestors, for browsers that predate it
     "Referrer-Policy": "no-referrer",
@@ -200,12 +202,25 @@ def render(
     return response
 
 
-def error_page(request: Request, status_code: int, title: str, next_step: str) -> HTMLResponse:
-    """Render an error with what to do next."""
+def error_page(  # noqa: PLR0913 (the page, its words and where it points back to)
+    request: Request,
+    status_code: int,
+    title: str,
+    next_step: str,
+    back: str = "/",
+    back_label: str = "Back to Course Autopilot",
+) -> HTMLResponse:
+    """Render an error with what to do next, and a link back."""
     return render(
         request,
         "error.html",
-        {"title": title, "next_step": next_step, "signed_in": SESSION_COOKIE in request.cookies},
+        {
+            "title": title,
+            "next_step": next_step,
+            "back": back,
+            "back_label": back_label,
+            "signed_in": SESSION_COOKIE in request.cookies,
+        },
         status_code=status_code,
     )
 
@@ -283,7 +298,12 @@ def start_page(request: Request) -> HTMLResponse:
         except BackendError as e:
             if e.code in CONNECT_PROMPTS and e.status in {409, 503}:
                 title, detail = CONNECT_PROMPTS[e.code]
-                prompt = {"title": title, "detail": detail or e.message}
+                prompt = {
+                    "title": title,
+                    "detail": detail or e.message,
+                    # Nothing to connect while connections are off on this service.
+                    "link": e.code != "connections_not_configured",
+                }
                 return render(request, "courses.html", {"prompt": prompt, "signed_in": True})
             if e.status != 401:  # noqa: PLR2004 (HTTP status)
                 return backend_error_page(request, e)
@@ -364,6 +384,237 @@ def sign_out(request: Request, _csrf: CheckedForm) -> Response:
     response = RedirectResponse("/", status_code=303)
     _delete_cookie(request, response, SESSION_COOKIE)
     return response
+
+
+# ----- Connections: the person's own Dropbox, Google Calendar and Trello (#95; API #98-#101) -----
+
+PROVIDERS = {"dropbox": "Dropbox", "google_calendar": "Google Calendar", "trello": "Trello"}
+# What each account holds, in the person's terms (DESIGN.md, the three verticals).
+USES = {
+    "dropbox": "Your syllabi and course plans, in an app folder",
+    "google_calendar": "Deadlines, as events",
+    "trello": "Tasks, as cards in a list you choose",
+}
+BACK_TO_CONNECTIONS = {"back": "/connections", "back_label": "Back to your connections"}
+
+
+def _session(request: Request) -> tuple[Api, str] | Response:
+    """Return the API and the session token, or the page to show instead."""
+    api, token = _api(request), request.cookies.get(SESSION_COOKIE)
+    if api is None:
+        return error_page(
+            request,
+            503,
+            "Connecting accounts isn't open on this site yet",
+            "Try again later.",
+        )
+    if not token:
+        return RedirectResponse("/", status_code=303)  # sign in first
+    return api, token
+
+
+def _unknown_provider(request: Request) -> HTMLResponse:
+    return error_page(
+        request,
+        404,
+        "There's no such account to connect",
+        "Choose one from your connections.",
+        **BACK_TO_CONNECTIONS,
+    )
+
+
+def _connection_error(request: Request, e: BackendError, title: str) -> HTMLResponse:
+    """Render a refused or failed connection step, pointing back to the connections page."""
+    if e.status == 401 or e.status >= 500:  # noqa: PLR2004 (HTTP status)
+        return backend_error_page(request, e)
+    if e.code == "connect_failed":
+        return error_page(
+            request,
+            400,
+            f"{title} didn't connect",
+            "Nothing was saved. Connect it again from your connections.",
+            **BACK_TO_CONNECTIONS,
+        )
+    return error_page(
+        request,
+        e.status,
+        e.message or f"{title} didn't connect",
+        "Go back to your connections and try again.",
+        **BACK_TO_CONNECTIONS,
+    )
+
+
+@app.get("/connections", response_model=None)
+def connections_page(request: Request) -> Response:
+    """Show each provider: connected or not, and what to do next."""
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        connections = api.connections(token)
+    except BackendError as e:
+        if e.code == "connections_not_configured":
+            return error_page(
+                request,
+                503,
+                "Connecting accounts isn't open on this site yet",
+                "Try again later.",
+            )
+        return backend_error_page(request, e)
+    return render(
+        request,
+        "connections.html",
+        {"connections": connections, "uses": USES, "signed_in": True},
+    )
+
+
+@app.post("/connections/{provider}/connect", response_model=None)
+def connect(request: Request, provider: str, _csrf: CheckedForm) -> Response:
+    """Start connecting a provider and send the browser to it."""
+    if provider not in PROVIDERS:
+        return _unknown_provider(request)
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        url = api.start_connection(token, provider)
+    except BackendError as e:
+        return _connection_error(request, e, PROVIDERS[provider])
+    return RedirectResponse(url, status_code=303)
+
+
+def _finish(request: Request, provider: str, state: str, code: str) -> Response:
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        connection = api.finish_connection(token, provider, state, code)
+    except BackendError as e:
+        return _connection_error(request, e, PROVIDERS[provider])
+    # Trello isn't usable until the person picks the list their cards go to.
+    target = "/connections/trello/list" if connection.status == "setup_needed" else "/connections"
+    return RedirectResponse(target, status_code=303)
+
+
+@app.get("/connections/{provider}/callback", response_model=None)
+def connection_callback(
+    request: Request,
+    provider: str,
+    state: str = "",
+    code: str = "",
+    error: str = "",
+) -> Response:
+    """Where each provider sends the browser back.
+
+    Dropbox and Google put ``state`` and ``code`` in the query. Trello puts its token in the
+    URL fragment, which never reaches a server, so its page hands the token to a script that
+    posts it back (``static/trello-return.js``). The API ties each attempt to the session that
+    started it and uses it once, so a callback finished in another session fails there (T9).
+    """
+    if provider not in PROVIDERS:
+        return _unknown_provider(request)
+    title = PROVIDERS[provider]
+    if error or not state:
+        return error_page(
+            request,
+            400,
+            f"{title} wasn't connected",
+            "Nothing was saved. Connect it again when you're ready.",
+            **BACK_TO_CONNECTIONS,
+        )
+    if provider == "trello":
+        return render(request, "trello_return.html", {"state": state, "signed_in": True})
+    if not code:
+        return error_page(
+            request,
+            400,
+            f"{title} wasn't connected",
+            "Nothing was saved. Connect it again when you're ready.",
+            **BACK_TO_CONNECTIONS,
+        )
+    return _finish(request, provider, state, code)
+
+
+@app.post("/connections/trello/finish", response_model=None)
+def finish_trello(
+    request: Request,
+    _csrf: CheckedForm,
+    state: Annotated[str, Form()] = "",
+    token: Annotated[str, Form()] = "",
+) -> Response:
+    """Finish connecting Trello with the token its return page posted."""
+    if not state or not token:
+        return error_page(
+            request,
+            400,
+            "Trello wasn't connected",
+            "Nothing was saved. Connect it again when you're ready.",
+            **BACK_TO_CONNECTIONS,
+        )
+    return _finish(request, "trello", state, token)
+
+
+@app.get("/connections/trello/list", response_model=None)
+def trello_list_page(request: Request) -> Response:
+    """Let the person choose the Trello list their cards go to."""
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        lists = api.trello_lists(token)
+    except BackendError as e:
+        return _connection_error(request, e, "Trello")
+    boards: dict[str, list[TrelloList]] = {}
+    for item in lists:
+        boards.setdefault(item.board, []).append(item)
+    return render(request, "trello_list.html", {"boards": boards, "signed_in": True})
+
+
+@app.post("/connections/trello/list", response_model=None)
+def choose_trello_list(
+    request: Request,
+    _csrf: CheckedForm,
+    list_id: Annotated[str, Form()] = "",
+) -> Response:
+    """Save the chosen Trello list."""
+    if not list_id:
+        return error_page(
+            request,
+            400,
+            "Choose a list first",
+            "Pick the list your cards should go to.",
+            back="/connections/trello/list",
+            back_label="Back to your Trello lists",
+        )
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.choose_trello_list(token, list_id)
+    except BackendError as e:
+        return _connection_error(request, e, "Trello")
+    return RedirectResponse("/connections", status_code=303)
+
+
+@app.post("/connections/{provider}/disconnect", response_model=None)
+def disconnect(request: Request, provider: str, _csrf: CheckedForm) -> Response:
+    """Forget the connection here and revoke it at the provider."""
+    if provider not in PROVIDERS:
+        return _unknown_provider(request)
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.disconnect(token, provider)
+    except BackendError as e:
+        return _connection_error(request, e, PROVIDERS[provider])
+    return RedirectResponse("/connections", status_code=303)
 
 
 @app.get("/health")

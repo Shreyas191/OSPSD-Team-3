@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Choose a Trello list · Course Autopilot{% endblock %}
+{% block content %}
+<h1>Choose a Trello list</h1>
+{% if boards %}
+<p>Cards for your course tasks go to this list. You can change it later.</p>
+<form method="post" action="/connections/trello/list">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% for board, lists in boards.items() %}
+  <fieldset>
+    <legend>{{ board }}</legend>
+    {% for item in lists %}
+    <label><input type="radio" name="list_id" value="{{ item.id }}" required> {{ item.name }}</label>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+  <p><button type="submit">Use this list</button></p>
+</form>
+{% else %}
+<p>Your Trello account has no open lists. Create a board with a list in Trello, then reload
+this page.</p>
+{% endif %}
+<p><a href="/connections">Back to your connections</a></p>
+{% endblock %}

@@ -5,6 +5,7 @@
 {% if prompt %}
 <p><strong>{{ prompt.title }}</strong></p>
 <p>{{ prompt.detail }}</p>
+{% if prompt.link %}<p><a href="/connections">Connect your accounts</a></p>{% endif %}
 {% elif courses %}
 <table>
   <thead>

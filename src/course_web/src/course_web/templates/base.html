@@ -9,7 +9,7 @@
 <body>
   {% if signed_in %}
   <header>
-    <a href="/">Course Autopilot</a>
+    <nav><a href="/">Course Autopilot</a> <a href="/connections">Connections</a></nav>
     <form method="post" action="/sign-out">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="quiet">Sign out</button>
