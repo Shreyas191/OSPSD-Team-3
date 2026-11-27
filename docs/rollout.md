@@ -2,7 +2,7 @@
 
 HW3 Milestone 2, Level 5 (#113; task doc 7.5 and 7.7). This page plans how Course Autopilot reaches its users and how we take it back when something goes wrong, then records the drills that check those plans. The launch it serves and its objectives are in the [readiness record](https://github.com/Shreyas191/OSPSD-Team-3/pull/117); the failures it prepares for are in the [failure analysis](https://github.com/Shreyas191/OSPSD-Team-3/pull/119).
 
-**Status (Nov 27):** plan written. The drills in sections 5 to 7 have not run yet; each says what it needs first.
+**Status (Nov 27):** plan written. The drills in sections 4 to 6 have not run yet; each says what it needs first. The coverage rota and support channel (section 9) are proposals for the team to confirm.
 
 ## 1. What a release is
 
