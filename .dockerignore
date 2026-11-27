@@ -6,6 +6,8 @@
 !README.md
 !main.py
 !agent_main.py
+!backup_main.py
+!docker/
 !src/
 src/*/tests/
 **/__pycache__/

@@ -31,6 +31,9 @@ resource "google_project_service" "apis" {
     "logging.googleapis.com",
     # Traces (telemetry.tf).
     "cloudtrace.googleapis.com",
+    # The daily database backup (backup.tf): its bucket and its schedule.
+    "storage.googleapis.com",
+    "cloudscheduler.googleapis.com",
   ])
 
   service = each.value

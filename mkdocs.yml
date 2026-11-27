@@ -40,6 +40,7 @@ nav:
   - 'Fault Injection': 'fault-injection.md'
   - 'Synthetic Probe': 'synthetic-probe.md'
   - 'Composed Workflow (HW3)': 'composed-workflow.md'
+  - 'Database Backup (HW3)': 'database-backup.md'
   - 'Launch Readiness (HW3)': 'readiness.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'

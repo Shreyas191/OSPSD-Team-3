@@ -10,6 +10,8 @@ dependencies = [
     "course-autopilot-store",
     "dropbox-client-impl",
     "fastapi>=0.115.0",
+    "google-auth>=2.30",
+    "httpx>=0.28,<1",
     "issue-tracker-contract",
     "opentelemetry-api>=1.45.1",
     "opentelemetry-exporter-gcp-trace>=1.15.0",
