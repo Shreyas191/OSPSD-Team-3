@@ -1,0 +1,86 @@
+{
+  "about": "Answer key for assumption test A1 (#85), written by hand from each course's documents before any model run. The documents themselves are not in the repository. 'explicit' items must come back with this date (and this time, or no time when due_time is null). 'flag' items have no usable calendar date in the documents: the model must leave the date empty or mark the problem, never fill one in. 'traps' are items that do not exist. 'optional' items are real but not graded deadlines; they are neither required nor penalised.",
+  "time_zone": "America/New_York",
+  "courses": [
+    {
+      "id": "ml-6923",
+      "name": "CS-GY 6923 Machine Learning (Fall 2026)",
+      "documents": ["schedule.pdf", "logistics.pdf"],
+      "items": [
+        {"id": "assignment-2", "match": ["assignment\\s*0?2\\b", "\\bA0?2\\b", "\\bHW\\s*0?2\\b"], "expect": "explicit", "due_date": "2026-09-16", "due_time": "23:59"},
+        {"id": "assignment-3", "match": ["assignment\\s*0?3\\b", "\\bA0?3\\b", "\\bHW\\s*0?3\\b"], "expect": "explicit", "due_date": "2026-09-23", "due_time": "23:59"},
+        {"id": "assignment-4", "match": ["assignment\\s*0?4\\b", "\\bA0?4\\b", "\\bHW\\s*0?4\\b"], "expect": "explicit", "due_date": "2026-09-30", "due_time": "23:59"},
+        {"id": "assignment-5", "match": ["assignment\\s*0?5\\b", "\\bA0?5\\b", "\\bHW\\s*0?5\\b"], "expect": "explicit", "due_date": "2026-10-07", "due_time": "23:59"},
+        {"id": "assignment-6", "match": ["assignment\\s*0?6\\b", "\\bA0?6\\b", "\\bHW\\s*0?6\\b"], "expect": "explicit", "due_date": "2026-10-14", "due_time": "23:59"},
+        {"id": "project-proposal", "match": ["proposal"], "expect": "explicit", "due_date": "2026-10-14", "due_time": "23:59"},
+        {"id": "assignment-7", "match": ["assignment\\s*0?7\\b", "\\bA0?7\\b", "\\bHW\\s*0?7\\b"], "expect": "explicit", "due_date": "2026-10-21", "due_time": "23:59"},
+        {"id": "assignment-8", "match": ["assignment\\s*0?8\\b", "\\bA0?8\\b", "\\bHW\\s*0?8\\b"], "expect": "explicit", "due_date": "2026-10-28", "due_time": "23:59"},
+        {"id": "assignment-9", "match": ["assignment\\s*0?9\\b", "\\bA0?9\\b", "\\bHW\\s*0?9\\b"], "expect": "explicit", "due_date": "2026-11-04", "due_time": "23:59"},
+        {"id": "assignment-10", "match": ["assignment\\s*10\\b", "\\bA10\\b", "\\bHW\\s*10\\b"], "expect": "explicit", "due_date": "2026-11-11", "due_time": "23:59"},
+        {"id": "report-draft", "match": ["draft"], "expect": "explicit", "due_date": "2026-11-11", "due_time": "23:59"},
+        {"id": "final-report", "match": ["final.*report", "report.*final", "final project(?!.*(proposal|draft))"], "expect": "explicit", "due_date": "2026-12-01", "due_time": "23:59"},
+        {"id": "presentation-recording", "match": ["record", "video", "presentation", "demo", "final project(?!.*(proposal|draft))"], "expect": "explicit", "due_date": "2026-12-01", "due_time": "23:59"}
+      ],
+      "traps": [
+        {"match": "assignment\\s*0?1\\b|\\bA0?1\\b|\\bHW\\s*0?1\\b", "why": "there is no Assignment 1: numbering starts at 2"},
+        {"match": "midterm|final exam|\\bexam\\b", "why": "the course has no exams"}
+      ],
+      "optional": ["discussion", "forum", "live q", "peer (review|feedback)", "feedback on reviews", "code ?base"]
+    },
+    {
+      "id": "ai-6613",
+      "name": "CS-GY 6613 Artificial Intelligence (Fall 2025)",
+      "documents": ["outline.pdf"],
+      "items": [
+        {"id": "homework", "match": ["homework", "\\bhw\\b"], "expect": "flag"},
+        {"id": "projects", "match": ["project"], "expect": "flag"},
+        {"id": "quizzes", "match": ["quiz"], "expect": "flag"},
+        {"id": "exam-1", "match": ["exam\\s*(1|i)\\b", "first exam", "midterm"], "expect": "flag"},
+        {"id": "exam-2", "match": ["exam\\s*(2|ii)\\b", "second exam", "final exam"], "expect": "flag"}
+      ],
+      "traps": [],
+      "optional": ["follett", "opt.?out", "textbook", "office hour"]
+    },
+    {
+      "id": "fds-6053",
+      "name": "CS-GY 6053 Foundations of Data Science (Fall 2025)",
+      "documents": ["syllabus.pdf"],
+      "items": [
+        {"id": "homework", "match": ["homework", "assignment", "\\bhw\\b"], "expect": "flag"},
+        {"id": "midterm", "match": ["midterm"], "expect": "flag"},
+        {"id": "project-proposal", "match": ["proposal"], "expect": "flag"},
+        {"id": "final-project", "match": ["^(?!.*proposal).*project"], "expect": "flag"}
+      ],
+      "traps": [{"match": "final exam", "why": "the course has a final project, not a final exam"}],
+      "optional": ["reading", "discussion", "presentation"]
+    },
+    {
+      "id": "infovis",
+      "name": "Information Visualization",
+      "documents": ["syllabus.txt"],
+      "items": [
+        {"id": "mini-project-1", "match": ["mini.?project\\s*0?1\\b", "\\bmp\\s*0?1\\b"], "expect": "flag"},
+        {"id": "mini-project-2", "match": ["mini.?project\\s*0?2\\b", "\\bmp\\s*0?2\\b"], "expect": "flag"},
+        {"id": "mini-project-3", "match": ["mini.?project\\s*0?3\\b", "\\bmp\\s*0?3\\b"], "expect": "flag"},
+        {"id": "mini-project-4", "match": ["mini.?project\\s*0?4\\b", "\\bmp\\s*0?4\\b"], "expect": "flag"},
+        {"id": "mini-project-5", "match": ["mini.?project\\s*0?5\\b", "\\bmp\\s*0?5\\b", "fifth mini"], "expect": "flag"},
+        {"id": "final-project", "match": ["final project", "final presentation", "presentation"], "expect": "flag"},
+        {"id": "literature-survey", "match": ["literature", "survey"], "expect": "flag"}
+      ],
+      "traps": [{"match": "midterm|exam", "why": "the course has no exams"}],
+      "optional": ["critique", "consultation"]
+    },
+    {
+      "id": "ospsd-hw3",
+      "name": "OSPSD Fall 2026 HW3 (Build a Personal Agent)",
+      "documents": ["timeline.txt"],
+      "items": [
+        {"id": "milestone-1", "match": ["milestone\\s*1\\b", "\\bM1\\b", "compose the services"], "expect": "explicit", "due_date": "2026-11-18", "due_time": null},
+        {"id": "milestone-2", "match": ["milestone\\s*2\\b", "\\bM2\\b", "build and ship"], "expect": "explicit", "due_date": "2026-12-02", "due_time": null},
+        {"id": "milestone-3", "match": ["milestone\\s*3\\b", "\\bM3\\b", "launch and demo", "demo day"], "expect": "explicit", "due_date": "2026-12-09", "due_time": null}
+      ],
+      "traps": [],
+      "optional": ["launch week", "launch post", "extension", "final release", "retrospective", "slack", "feedback"]
+    }
+  ]
+}

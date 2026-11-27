@@ -42,6 +42,7 @@ nav:
   - 'Composed Workflow (HW3)': 'composed-workflow.md'
   - 'Launch Readiness (HW3)': 'readiness.md'
   - 'Failure Analysis (HW3)': 'failure-analysis.md'
+  - 'Assumption Tests (HW3)': 'assumption-tests.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'
