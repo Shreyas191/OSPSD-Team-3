@@ -31,7 +31,12 @@ from pypdf.errors import PyPdfError
 from sqlalchemy import func, select
 
 from cloud_storage_service import proposals
-from cloud_storage_service.dependencies import Calendar, DocumentStore, IssueTracker
+from cloud_storage_service.connections import (
+    ProviderNotReadyError,
+    UserCalendar,
+    UserIssues,
+    UserStorage,
+)
 from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute, error_response
 from cloud_storage_service.identity import CurrentUser, RequiredDatabase
 
@@ -49,6 +54,7 @@ ERRORS: dict[int | str, dict[str, Any]] = {
         400: "The course or file name isn't a single plain name",
         401: "Not signed in",
         404: "No such course folder or file",
+        409: "The provider isn't connected, needs reconnecting, or needs setup",
         413: "The file is larger than 10 MB",
         422: "The file can't be read as text (an unsupported type, or a scanned PDF)",
         502: "The storage provider failed",
@@ -149,7 +155,7 @@ def _storage_error(e: StorageError) -> JSONResponse:
 def list_courses(
     user: CurrentUser,
     database: RequiredDatabase,
-    storage: DocumentStore,
+    storage: UserStorage,
 ) -> list[CourseSummary] | JSONResponse:
     """List this user's courses: course folders, and courses with records we created."""
     try:
@@ -185,7 +191,7 @@ def list_courses(
 def list_course_documents(
     course: str,
     _user: CurrentUser,
-    storage: DocumentStore,
+    storage: UserStorage,
 ) -> list[DocumentEntry] | JSONResponse:
     """List the files in this course's folder."""
     try:
@@ -212,7 +218,7 @@ def read_course_document(
     course: str,
     name: str,
     _user: CurrentUser,
-    storage: DocumentStore,
+    storage: UserStorage,
 ) -> DocumentText | JSONResponse:
     """Return the text of one file in this course's folder, capped at 20,000 characters."""
     try:
@@ -269,8 +275,8 @@ def get_course_plan(
     course: str,
     user: CurrentUser,
     database: RequiredDatabase,
-    issues: IssueTracker,
-    calendar: Calendar,
+    issues: UserIssues,
+    calendar: UserCalendar,
 ) -> CoursePlan | JSONResponse:
     """Return the live records our proposals created for this course, read from each provider.
 
@@ -312,7 +318,7 @@ def get_course_plan(
                 items.append(PlanItem(kind="issue", id=rid, title=issues.get_issue(rid).title))
             else:
                 items.append(PlanItem(kind="document", id=rid, title=rid.rsplit("/", 1)[-1]))
-        except (CalendarError, ServiceError) as e:
+        except (CalendarError, ServiceError, ProviderNotReadyError) as e:
             logger.warning("Plan read of a %s failed (%s)", record.kind, e.code)
             items.append(PlanItem(kind=record.kind, id=rid, title="", available=False))
     return CoursePlan(course=course, items=items)

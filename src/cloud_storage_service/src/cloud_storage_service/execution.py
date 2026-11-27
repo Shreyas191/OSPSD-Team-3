@@ -48,6 +48,7 @@ from issue_tracker_contract.errors import ServiceError
 from issue_tracker_contract.models import IssueUpdate
 from sqlalchemy import and_, or_, select, update
 
+from cloud_storage_service.connections import ProviderNotReadyError
 from cloud_storage_service.proposals import COURSE_ROOT, ProposalError, get_owned, owned_record
 
 if TYPE_CHECKING:
@@ -77,7 +78,7 @@ class Resolution:
 
 @dataclass(frozen=True)
 class Verticals:
-    """The three providers a proposal runs against (per user once #98-#101 land)."""
+    """The three providers a proposal runs against: the person's own connections."""
 
     storage: DocumentStorage
     issues: IssueProvider
@@ -367,6 +368,9 @@ def _run(session: Any, user_id: uuid.UUID, change: dict[str, Any], v: Verticals)
         return runner(session, user_id, change, v)
     except _Uncertain as e:
         return Outcome("uncertain", e.detail)
+    except ProviderNotReadyError as e:
+        # Not connected, refused, or needing setup: nothing was written.
+        return Outcome("failed", e.message)
     except CalendarError as e:
         return _calendar_failure(e, change)
     except ServiceError as e:

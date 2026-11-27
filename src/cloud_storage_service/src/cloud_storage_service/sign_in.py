@@ -95,7 +95,8 @@ def verify_with_google(token: str, audience: str) -> Mapping[str, Any]:
     return claims
 
 
-def _challenge(verifier: str) -> str:
+def pkce_challenge(verifier: str) -> str:
+    """Return the PKCE S256 challenge for a code verifier."""
     digest = hashlib.sha256(verifier.encode()).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
@@ -148,7 +149,7 @@ class GoogleSignIn:
                 "scope": SCOPES,
                 "state": state,
                 "nonce": nonce,
-                "code_challenge": _challenge(verifier),
+                "code_challenge": pkce_challenge(verifier),
                 "code_challenge_method": "S256",
                 "prompt": "select_account",
             },

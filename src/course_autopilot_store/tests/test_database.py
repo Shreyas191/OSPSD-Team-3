@@ -40,6 +40,7 @@ TABLES = {
     "external_records",
     "sessions",
     "sign_in_attempts",
+    "connection_attempts",
 }
 
 

@@ -190,7 +190,7 @@ def test_a_full_sign_in_gives_a_session_for_product_routes(
     assert body["user"]["display_name"] == "Alice"
     me = client.get("/auth/me", headers=bearer(body["session_token"])).json()
     assert me == {"user_id": body["user"]["id"], "scope": "session"}
-    assert client.get("/courses", headers=bearer(body["session_token"])).status_code == 200
+    assert client.get("/auth/me", headers=bearer(body["session_token"])).status_code == 200
     # The code went to Google with the PKCE verifier and our secret, from the server only.
     exchange = google.exchanges[0]
     assert exchange["client_secret"] == [SETTINGS.client_secret]
@@ -380,7 +380,7 @@ def test_settings_need_all_three_values(monkeypatch: pytest.MonkeyPatch) -> None
 )
 def test_a_bad_token_is_401(client: TestClient, header: str) -> None:
     """An unknown or malformed token is 401."""
-    response = client.get("/courses", headers={"Authorization": header})
+    response = client.get("/auth/me", headers={"Authorization": header})
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "not_signed_in"
@@ -394,13 +394,13 @@ def test_a_bad_token_doesnt_fall_back_to_the_dev_header(
     monkeypatch.setenv(DEV_SIGN_IN_ENV_VAR, "enabled")
 
     response = client.get(
-        "/courses",
+        "/auth/me",
         headers={"Authorization": "Bearer stolen", "X-Dev-User": "alice"},
     )
 
     assert response.status_code == 401
     # Control: the dev header alone works where dev sign-in is on.
-    assert client.get("/courses", headers={"X-Dev-User": "alice"}).status_code == 200
+    assert client.get("/auth/me", headers={"X-Dev-User": "alice"}).status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -420,7 +420,7 @@ def test_an_expired_or_idle_session_is_401_and_removed(
     with database.session() as session:
         session.execute(update(UserSession).values(**column))
 
-    response = client.get("/courses", headers=bearer(token))
+    response = client.get("/auth/me", headers=bearer(token))
 
     assert response.status_code == 401
     with database.session() as session:
@@ -434,7 +434,7 @@ def test_using_a_session_keeps_it_alive(client: TestClient, database: Database) 
     with database.session() as session:
         session.execute(update(UserSession).values(last_seen_at=an_hour_ago))
 
-    client.get("/courses", headers=bearer(token))
+    client.get("/auth/me", headers=bearer(token))
 
     with database.session() as session:
         seen = session.scalars(select(UserSession.last_seen_at)).one()
@@ -449,10 +449,10 @@ def test_sign_out_ends_the_session_and_its_agent_tokens(client: TestClient) -> N
 
     assert client.post("/auth/sign-out", headers=bearer(token)).status_code == 204
 
-    assert client.get("/courses", headers=bearer(token)).status_code == 401
-    assert client.get("/courses", headers=bearer(agent)).status_code == 401
+    assert client.get("/auth/me", headers=bearer(token)).status_code == 401
+    assert client.get("/auth/me", headers=bearer(agent)).status_code == 401
     # Control: the same person's other session still works.
-    assert client.get("/courses", headers=bearer(other)).status_code == 200
+    assert client.get("/auth/me", headers=bearer(other)).status_code == 200
 
 
 def test_sign_out_everywhere_ends_every_session_of_that_user_only(
@@ -467,8 +467,8 @@ def test_sign_out_everywhere_ends_every_session_of_that_user_only(
 
     assert client.post("/auth/sign-out-everywhere", headers=bearer(laptop)).status_code == 204
 
-    assert client.get("/courses", headers=bearer(phone)).status_code == 401
-    assert client.get("/courses", headers=bearer(bob)).status_code == 200
+    assert client.get("/auth/me", headers=bearer(phone)).status_code == 401
+    assert client.get("/auth/me", headers=bearer(bob)).status_code == 200
 
 
 # Agent tokens (T14)
@@ -483,7 +483,7 @@ def test_an_agent_token_reads_and_proposes(client: TestClient) -> None:
     created = client.post("/proposals", json={"changes": [ISSUE]}, headers=bearer(agent["token"]))
 
     assert me == {"user_id": session["user"]["id"], "scope": "agent"}
-    assert client.get("/courses", headers=bearer(agent["token"])).status_code == 200
+    assert client.get("/auth/me", headers=bearer(agent["token"])).status_code == 200
     assert created.status_code == 201
 
 
@@ -520,7 +520,7 @@ def test_an_agent_token_cant_make_tokens_or_sign_out(client: TestClient) -> None
 
     for route in ("/auth/agent-token", "/auth/sign-out", "/auth/sign-out-everywhere"):
         assert client.post(route, headers=bearer(agent)).status_code == 403
-    assert client.get("/courses", headers=bearer(token)).status_code == 200
+    assert client.get("/auth/me", headers=bearer(token)).status_code == 200
 
 
 def test_an_agent_token_lasts_five_minutes_and_never_past_its_session(
@@ -545,7 +545,7 @@ def test_an_agent_token_lasts_five_minutes_and_never_past_its_session(
             .where(UserSession.scope == "agent")
             .values(expires_at=datetime.now(UTC) - timedelta(seconds=1)),
         )
-    assert client.get("/courses", headers=bearer(agent["token"])).status_code == 401
+    assert client.get("/auth/me", headers=bearer(agent["token"])).status_code == 401
 
 
 def test_a_dev_user_can_make_an_agent_token(

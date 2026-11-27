@@ -11,6 +11,8 @@ through a new migration.
   hash of each token is stored (migration ``0003``).
 - ``sign_in_attempts``: one Google sign-in in progress, used once (migration ``0003``).
 - ``provider_connections``: a user's Dropbox, Trello or Google Calendar access.
+- ``connection_attempts``: one provider connection in progress, tied to the session that
+  started it and used once (migration ``0004``).
 - ``conversations`` and ``messages``: the agent conversation, turn by turn.
 - ``proposals``: a change set the agent proposed, and ``approvals`` of its exact content.
 - ``change_outcomes``: what happened to each change when an approved proposal ran.
@@ -122,6 +124,27 @@ class ProviderConnection(Base):
         default=_now,
         onupdate=_now,
     )
+
+
+class ConnectionAttempt(Base):
+    """One provider connection between leaving for the provider and coming back. Used once.
+
+    It belongs to the session that started it, so only that session can finish it: a
+    callback carried to another browser or account fails (threat T9).
+    """
+
+    __tablename__ = "connection_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(32))
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Conversation(Base):

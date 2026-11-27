@@ -8,6 +8,7 @@ dependencies = [
     "calendar-contract",
     "cloud-storage-client-api",
     "course-autopilot-store",
+    "cryptography>=44",
     "dropbox-client-impl",
     "fastapi>=0.115.0",
     "google-auth>=2.30",
