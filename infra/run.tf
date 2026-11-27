@@ -139,6 +139,16 @@ resource "google_cloud_run_v2_service" "service" {
         }
       }
 
+      # The operator's execution switch (#102): approved proposals don't run while it's on;
+      # reads, proposals and approvals keep working. See docs/deployment.md.
+      dynamic "env" {
+        for_each = contains(var.execution_disabled, each.key) ? ["EXECUTION"] : []
+        content {
+          name  = env.value
+          value = "disabled"
+        }
+      }
+
       # People's provider connections (connections.tf): only in listed environments.
       dynamic "env" {
         for_each = contains(keys(var.connections), each.key) ? ["TOKEN_ENCRYPTION_KEY"] : []

@@ -156,3 +156,20 @@ variable "connections" {
     error_message = "Each key must be one of var.environments."
   }
 }
+
+variable "agent_max_instances" {
+  description = "Upper bound on agent service instances. Keep it 1: the agent's admission control (3 turns at once, 10 queued) is per instance (agent.tf)."
+  type        = number
+  default     = 1
+}
+
+variable "execution_disabled" {
+  description = "Environments where approved proposals don't run (EXECUTION=disabled on the API service): the operator's switch for a fault in execution. Reads, proposals and approvals keep working."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for env in var.execution_disabled : contains(var.environments, env)])
+    error_message = "Each entry must be one of var.environments."
+  }
+}

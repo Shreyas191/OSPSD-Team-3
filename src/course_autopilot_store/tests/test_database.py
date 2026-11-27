@@ -41,6 +41,7 @@ TABLES = {
     "sessions",
     "sign_in_attempts",
     "connection_attempts",
+    "usage_counters",
 }
 
 
