@@ -5,13 +5,15 @@ Two users, ``alice`` and ``bob``. Each rule from DESIGN.md (P1-P3) and the threa
 """
 
 import logging
+import threading
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
-from calendar_contract import CreateEvent, Event
+from calendar_contract import CalendarError, CreateEvent, Event
 from calendar_contract import ErrorCode as CalendarErrorCode
 from cloud_storage_api import FileInfo
 from cloud_storage_api.errors import ProviderError
@@ -26,6 +28,7 @@ from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.pool import StaticPool
 from tests.fakes import FakeStorageClient
 
+from cloud_storage_service import execution
 from cloud_storage_service.app import app
 from cloud_storage_service.database import get_database
 from cloud_storage_service.dependencies import get_calendar, get_document_storage, get_issue_tracker
@@ -844,3 +847,185 @@ def test_an_unreachable_database_is_503_not_500(
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "database_unavailable"
+
+
+# ----- A frozen run that wakes after a takeover (fencing by run_id) -----
+
+
+class CalendarThatStalls(InMemoryCalendar):
+    """Creates the event, then stalls (a request with no CPU) until the test releases it."""
+
+    def __init__(self) -> None:
+        """Start with no events and the run not yet stalled."""
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def create(self, request: CreateEvent) -> Event:
+        """Store the event, then wait to be released."""
+        created = super().create(request)
+        self.entered.set()
+        assert self.release.wait(10)
+        return created
+
+
+def start_frozen_run(
+    v: Verticals,
+    database: Database,
+    proposal: dict[str, Any],
+) -> tuple[threading.Thread, CalendarThatStalls]:
+    """Start run A on a calendar that stalls inside the event write; return once it's stuck."""
+    calendar = CalendarThatStalls()
+    v.calendar = calendar
+    with database.session() as session:
+        user_id = session.scalars(
+            select(Proposal.user_id).where(Proposal.id == uuid.UUID(proposal["id"])),
+        ).one()
+    verticals = execution.Verticals(storage=v.storage, issues=v.issues, calendar=calendar)
+    run_a = threading.Thread(
+        target=execution.execute,
+        args=(database, user_id, uuid.UUID(proposal["id"]), verticals),
+    )
+    run_a.start()
+    assert calendar.entered.wait(5)
+    return run_a, calendar
+
+
+def test_a_frozen_run_that_wakes_after_a_takeover_repeats_nothing(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Run A stalls in the event write; B takes over and creates the card; A wakes and stops."""
+    proposal = propose(http, EVENT, ISSUE)
+    approve(http, proposal)
+    run_a, calendar = start_frozen_run(v, database, proposal)
+    silence(database, minutes=11)
+
+    run_b = execute(http, proposal)
+    with caplog.at_level(logging.WARNING, logger="cloud_storage_service.execution"):
+        calendar.release.set()
+        run_a.join(5)
+    final = http.get(f"/proposals/{proposal['id']}", headers=ALICE).json()
+
+    assert not run_a.is_alive()
+    assert statuses(run_b) == ["uncertain", "completed"]
+    assert len(v.issues.list_issues(limit=10)) == 1  # the card was created once
+    assert len(calendar._events) == 1
+    # A neither overwrote B's outcomes nor B's final status.
+    assert (final["status"], statuses(final)) == ("failed", ["uncertain", "completed"])
+    [line] = [r for r in caplog.records if getattr(r, "event", "") == "proposal_run_superseded"]
+    event_id = next(iter(calendar._events))
+    assert (line.change_index, line.created_record_id) == (0, event_id)  # type: ignore[attr-defined]
+
+
+def test_a_run_taken_over_during_its_last_write_leaves_the_new_runs_result(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """A wakes after its only write, but B already finished: B's ``failed`` stands."""
+    proposal = propose(http, EVENT)
+    approve(http, proposal)
+    run_a, calendar = start_frozen_run(v, database, proposal)
+    silence(database, minutes=11)
+
+    run_b = execute(http, proposal)
+    calendar.release.set()
+    run_a.join(5)
+    final = http.get(f"/proposals/{proposal['id']}", headers=ALICE).json()
+
+    assert (run_b["status"], statuses(run_b)) == ("failed", ["uncertain"])
+    assert (final["status"], statuses(final)) == ("failed", ["uncertain"])
+    # Control: the person can still settle it with the event A created.
+    settled = resolve(
+        http,
+        proposal,
+        {"status": "completed", "record_id": next(iter(calendar._events))},
+    )
+    assert settled.json()["status"] == "done"
+
+
+# ----- Settling: the record must match the change, and can't be claimed twice -----
+
+
+class CalendarWithLostReplies(InMemoryCalendar):
+    """Every create stores the event but loses the reply."""
+
+    def create(self, request: CreateEvent) -> Event:
+        """Store the event, then fail as a lost reply does."""
+        super().create(request)
+        raise CalendarError(CalendarErrorCode.PROVIDER_ERROR, "lost", retryable=False)
+
+
+def uncertain_event(http: TestClient) -> dict[str, Any]:
+    """Propose, approve and run one event whose reply is lost; return the proposal."""
+    proposal = propose(http, EVENT)
+    approve(http, proposal)
+    assert statuses(execute(http, proposal)) == ["uncertain"]
+    return proposal
+
+
+def test_a_confirmed_event_must_match_the_changes_time(v: Verticals, http: TestClient) -> None:
+    """Last week's event with the same title isn't the one this change created."""
+    v.calendar = CalendarWithLostReplies()
+    proposal = uncertain_event(http)
+    [ours] = v.calendar._events
+    other = InMemoryCalendar.create(
+        v.calendar,
+        CreateEvent(
+            title=EVENT["title"],
+            start="2026-12-03T14:00:00-05:00",
+            end="2026-12-03T15:30:00-05:00",
+        ),
+    )
+
+    wrong_time = resolve(http, proposal, {"status": "completed", "record_id": other.id})
+    right = resolve(http, proposal, {"status": "completed", "record_id": ours})
+
+    assert wrong_time.status_code == 400
+    assert "title, start and end" in wrong_time.json()["error"]["message"]
+    assert right.status_code == 200  # control
+    assert right.json()["status"] == "done"
+
+
+def test_one_record_cant_settle_two_changes(v: Verticals, http: TestClient) -> None:
+    """An ID already recorded for one change is refused for another."""
+    v.calendar = CalendarWithLostReplies()
+    first = uncertain_event(http)
+    second = uncertain_event(http)
+    first_id, second_id = v.calendar._events
+
+    assert resolve(http, first, {"status": "completed", "record_id": first_id}).status_code == 200
+    reused = resolve(http, second, {"status": "completed", "record_id": first_id})
+    right = resolve(http, second, {"status": "completed", "record_id": second_id})
+
+    assert reused.status_code == 400
+    assert "already recorded" in reused.json()["error"]["message"]
+    assert right.status_code == 200  # control
+
+
+def test_settling_only_finishes_a_failed_proposal(
+    v: Verticals,
+    database: Database,
+    http: TestClient,
+) -> None:
+    """If a run claimed the proposal while it was being settled, settling doesn't set ``done``."""
+    v.calendar = CalendarWithLostReplies()
+    proposal = uncertain_event(http)
+    event_id = next(iter(v.calendar._events))
+    real_confirmed = execution._confirmed
+
+    def confirmed_while_a_run_claims(*args: Any, **kwargs: Any) -> execution.Outcome:
+        # On Postgres the row is held, so a claim waits; here, force the race the hold prevents.
+        with database.session() as session:
+            session.execute(update(Proposal).values(status="executing"))
+        return real_confirmed(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(execution, "_confirmed", confirmed_while_a_run_claims)
+        resolve(http, proposal, {"status": "completed", "record_id": event_id})
+
+    with database.session() as session:
+        assert session.scalars(select(Proposal.status)).one() == "executing"
