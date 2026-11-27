@@ -14,6 +14,8 @@ result matched to its call), and repeats until one of these **stop reasons**:
 | ``cancelled`` | The caller cancelled (the browser went away) | "Stopped" |
 | ``empty_reply`` | The model returned nothing | Fixed text |
 | ``daily_limit`` | The student's daily model calls ran out partway through the turn | Fixed text |
+| ``declined_secret`` | The message seems to hold a credential: not sent, not stored | Fixed text |
+| ``blocked_output`` | The model's reply seems to hold a credential | Fixed text instead |
 
 Before **every** model call the loop reserves it from the model budget (``budget``; the API
 service counts per user per day and per project per minute, #102). When this minute's calls
@@ -31,6 +33,7 @@ Each run produces a **run record**: tool calls and their outcomes, timing, token
 stop reason. It never contains document text, tool arguments or credentials.
 """
 
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -57,6 +60,16 @@ them before anything happens; say nothing is added until they approve.
 "[<course>] <item>, <due date>". Put a short summary of the course's deadlines, weights and \
 policies in a document named "course plan.md".
 - You can't change anything directly and can't approve anything. Never claim you did.
+
+What you help with, and what you decline (docs/acceptable-use.md):
+- Help only with this student's own courses and their planning: their documents, deadlines, \
+weights, policies, and proposing events, cards and the course plan.
+- Decline, briefly, and say what you can help with: anything unrelated to their courses; \
+doing coursework for them (answering assignment or exam questions, writing submissions); \
+anything about another person; anything harmful, harassing or illegal.
+- Ask one short question instead of guessing when a date, time, time zone or course is \
+unclear, or when a change would remove or rename something the student already has.
+- Never ask for, repeat or include passwords, keys or tokens.
 """
 
 MAX_MODEL_CALLS = 8
@@ -84,6 +97,27 @@ class BudgetUnavailableError(Exception):
 
 class DailyLimitReachedError(Exception):
     """The student has no model calls left today, and this turn hasn't made any."""
+
+
+# Things that look like a credential: never sent to the model, stored or shown (T10). They
+# are deliberately broad; a false match costs the student one rephrased message.
+_SECRET_SHAPES = (
+    r"\b(?:password|passwd|passcode|api[ _-]?key|secret|token)\s*(?:is|=|:)\s*\S{4,}",
+    r"\bAIza[0-9A-Za-z_-]{20,}",  # Google API keys
+    r"\b(?:sk|pk|rk)[-_][0-9A-Za-z_-]{16,}",  # common provider secret keys
+    r"\bgh[pousr]_[0-9A-Za-z]{20,}",  # GitHub tokens
+    r"\bxox[abposr]-[0-9A-Za-z-]{10,}",  # Slack tokens
+    r"\bsl\.[0-9A-Za-z_-]{20,}",  # Dropbox access tokens
+    r"\beyJ[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}\.",  # JWTs
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+)
+_SECRET_PATTERNS = re.compile("|".join(_SECRET_SHAPES), re.IGNORECASE)
+SECRET_NOT_KEPT = "[Message not kept: it looked like it contained a password, key or token]"  # noqa: S105
+
+
+def looks_secret(text: str) -> bool:
+    """Whether ``text`` seems to contain a credential."""
+    return _SECRET_PATTERNS.search(text) is not None
 
 
 # Reserves one model call, or raises one of the Budget...Error exceptions above.
@@ -116,6 +150,10 @@ STOP_MESSAGES = {
     "api_unavailable": "I couldn't reach your course data, so I stopped. Nothing was changed.",
     "cancelled": "Stopped. Nothing was changed.",
     "empty_reply": "I didn't get an answer from the assistant; please try again.",
+    "declined_secret": "Please don't share passwords, keys or tokens here. I didn't keep "
+    "that message or send it anywhere. Course Autopilot connects to your accounts on the "
+    "connections page, never through the chat.",
+    "blocked_output": "I can't show that reply. Please ask again in a different way.",
     "daily_limit": "I stopped before finishing: you've reached today's limit for the "
     "assistant. Nothing was changed. Your course plans and approvals still work.",
 }
@@ -153,6 +191,10 @@ def run_turn(  # noqa: PLR0913 (the loop's inputs; all keyword-only)
         DailyLimitReachedError: The student has no model calls left today; nothing ran.
 
     """
+    if looks_secret(text):
+        # Screened before anything else: the text never reaches the model or the database.
+        run = _Run(limits or Limits(), cancelled, clock, Message(role="user", text=SECRET_NOT_KEPT))
+        return run.stop("declined_secret")
     run = _Run(limits or Limits(), cancelled, clock, Message(role="user", text=text))
     while True:
         reason = run.limit_reached() or _reserve(run, budget, sleep)
@@ -171,10 +213,7 @@ def run_turn(  # noqa: PLR0913 (the loop's inputs; all keyword-only)
         if run.record["input_tokens"] + run.record["output_tokens"] > run.limits.tokens:
             return run.stop("limit_tokens")
         if not reply.tool_calls:
-            if not reply.text.strip():
-                return run.stop("empty_reply")
-            run.new.append(reply.as_message())
-            return run.finish("replied", reply.text)
+            return _answer(run, reply)
         run.new.append(reply.as_message())
         results = _run_calls(reply, toolbox, cancelled, run.record)
         for call, result in zip(reply.tool_calls, results, strict=True):
@@ -184,6 +223,16 @@ def run_turn(  # noqa: PLR0913 (the loop's inputs; all keyword-only)
         turn = run.after_tools(reply, results)
         if turn is not None:
             return turn
+
+
+def _answer(run: "_Run", reply: ModelReply) -> Turn:
+    """End the turn with the model's text reply, unless it is empty or holds a credential."""
+    if not reply.text.strip():
+        return run.stop("empty_reply")
+    if looks_secret(reply.text):
+        return run.stop("blocked_output")
+    run.new.append(reply.as_message())
+    return run.finish("replied", reply.text)
 
 
 def _reserve(run: "_Run", budget: Budget, sleep: Callable[[float], None]) -> str | None:

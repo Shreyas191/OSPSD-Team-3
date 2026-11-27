@@ -18,7 +18,9 @@ from course_agent_service import app as agent_app
 from course_agent_service.api_client import ApiClient
 from course_agent_service.conversation import from_stored, to_stored
 from course_agent_service.loop import (
+    SECRET_NOT_KEPT,
     STOP_MESSAGES,
+    SYSTEM_PROMPT,
     BudgetDailyLimitError,
     BudgetRateLimitedError,
     BudgetUnavailableError,
@@ -942,3 +944,65 @@ def test_a_queued_turn_gives_up_after_its_wait_or_when_the_caller_leaves() -> No
         return busy, left, admission.waiting
 
     assert asyncio.run(scenario()) == (True, True, 0)
+
+
+# ----- #102: what the assistant won't take in or give out (docs/acceptable-use.md) -----
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "my password is hunter2!!",
+        "Dropbox token: sl.u.AbCdEfGhIjKlMnOpQrStUvWxYz0123",
+        "here is the key AIzaSyA1234567890abcdefghijklmnop",
+        "use ghp_abcdefghijklmnopqrstuvwxyz1234",
+        "-----BEGIN RSA PRIVATE KEY----- MIIE",
+    ],
+)
+def test_a_message_with_a_credential_never_reaches_the_model_or_the_database(
+    api: FakeApi,
+    wire: Any,
+    text: str,
+) -> None:
+    """T10: no model call, no budget spent, and only a placeholder is stored."""
+    http = wire([say("x")])
+
+    response = http.post("/conversations/c1/turns", json={"text": text}, headers=ALICE)
+
+    assert response.json()["stop_reason"] == "declined_secret"
+    assert response.json()["reply"] == STOP_MESSAGES["declined_secret"]
+    stored = json.dumps(api.conversations["c1"])
+    assert text not in stored
+    assert SECRET_NOT_KEPT in stored
+    assert not any(r.url.path == "/usage/model-calls" for r in api.requests)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Set up CS-GY 6083 from my syllabus",
+        "The midterm token deadline moved to Dec 10",
+        "What's the late policy? Is the final 30%?",
+    ],
+)
+def test_ordinary_messages_go_through(api: FakeApi, text: str) -> None:
+    """Control: course requests, even ones using words like "token", reach the model."""
+    result, model = turn(api, say("Sure"), text=text)
+
+    assert result.stop_reason == "replied"
+    assert len(model.calls) == 1
+
+
+def test_a_reply_with_a_credential_is_replaced(api: FakeApi) -> None:
+    """T10: a model reply that looks like a key is never shown or stored."""
+    result, _ = turn(api, say("Use this: sk-live_ABCDEFGHIJKLMNOPQRSTUV"))
+
+    assert result.stop_reason == "blocked_output"
+    assert result.reply == STOP_MESSAGES["blocked_output"]
+    assert "sk-live" not in json.dumps([m.text for m in result.messages])
+
+
+def test_the_instructions_carry_the_policy() -> None:
+    """The prompt says what to decline and what to ask about (docs/acceptable-use.md)."""
+    for phrase in ("doing coursework for them", "anything about another person", "Ask one short"):
+        assert phrase in SYSTEM_PROMPT

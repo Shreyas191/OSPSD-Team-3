@@ -40,6 +40,7 @@ nav:
   - 'Fault Injection': 'fault-injection.md'
   - 'Synthetic Probe': 'synthetic-probe.md'
   - 'Composed Workflow (HW3)': 'composed-workflow.md'
+  - 'Acceptable Use (HW3)': 'acceptable-use.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'
