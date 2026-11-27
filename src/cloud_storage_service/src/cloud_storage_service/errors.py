@@ -107,6 +107,7 @@ def add_error_handlers(app: FastAPI) -> None:
             ),
             # Product routes (HW3): no signed-in user, or no database configured.
             status.HTTP_401_UNAUTHORIZED: ("not_signed_in", str(exc.detail)),
+            status.HTTP_403_FORBIDDEN: ("permission_denied", str(exc.detail)),
             status.HTTP_503_SERVICE_UNAVAILABLE: ("database_not_configured", str(exc.detail)),
         }
         code, message = known.get(exc.status_code, ("invalid_request", str(exc.detail)))

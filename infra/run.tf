@@ -117,6 +117,27 @@ resource "google_cloud_run_v2_service" "service" {
         }
       }
 
+      # Google sign-in (sign_in.tf): only in environments given a redirect URI.
+      dynamic "env" {
+        for_each = contains(keys(var.sign_in_redirect_uris), each.key) ? local.google_oauth_secrets : {}
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.google_oauth[env.key].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = contains(keys(var.sign_in_redirect_uris), each.key) ? ["SIGN_IN_REDIRECT_URI"] : []
+        content {
+          name  = env.value
+          value = var.sign_in_redirect_uris[each.key]
+        }
+      }
+
       # HW3 product state (database.tf): this environment's Neon branch.
       env {
         name = "DATABASE_URL"
@@ -184,6 +205,7 @@ resource "google_cloud_run_v2_service" "service" {
     google_secret_manager_secret_iam_member.runtime_reads_trello,
     google_secret_manager_secret_iam_member.runtime_reads_calendar_token,
     google_secret_manager_secret_iam_member.runtime_reads_database_url,
+    google_secret_manager_secret_iam_member.runtime_reads_google_oauth,
   ]
 }
 

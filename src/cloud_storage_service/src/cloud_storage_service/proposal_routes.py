@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from cloud_storage_service import execution, proposals
 from cloud_storage_service.dependencies import Calendar, DocumentStore, IssueTracker
 from cloud_storage_service.errors import ErrorResponse, SharedErrorRoute, error_response
-from cloud_storage_service.identity import CurrentUser, RequiredDatabase
+from cloud_storage_service.identity import CurrentUser, Person, RequiredDatabase
 
 router = APIRouter(prefix="/proposals", tags=["proposals"], route_class=SharedErrorRoute)
 
@@ -137,7 +137,7 @@ def get_proposal(
 def approve_proposal(
     proposal_id: uuid.UUID,
     body: ApproveRequest,
-    user: CurrentUser,
+    person: Person,
     database: RequiredDatabase,
 ) -> ProposalResponse | JSONResponse:
     """Approve exactly the content with this hash."""
@@ -145,7 +145,7 @@ def approve_proposal(
         with database.session() as session:
             return _response(
                 session,
-                proposals.approve(session, user, proposal_id, body.changes_hash),
+                proposals.approve(session, person.user_id, proposal_id, body.changes_hash),
             )
     except proposals.ProposalError as e:
         return _error(e)
@@ -154,13 +154,13 @@ def approve_proposal(
 @router.post("/{proposal_id}/reject", responses=ERRORS, response_model=ProposalResponse)
 def reject_proposal(
     proposal_id: uuid.UUID,
-    user: CurrentUser,
+    person: Person,
     database: RequiredDatabase,
 ) -> ProposalResponse | JSONResponse:
     """Reject a pending proposal."""
     try:
         with database.session() as session:
-            return _response(session, proposals.reject(session, user, proposal_id))
+            return _response(session, proposals.reject(session, person.user_id, proposal_id))
     except proposals.ProposalError as e:
         return _error(e)
 
@@ -168,7 +168,7 @@ def reject_proposal(
 @router.post("/{proposal_id}/execute", responses=ERRORS, response_model=ProposalResponse)
 def execute_proposal(  # noqa: PLR0913 (each argument is a FastAPI dependency)
     proposal_id: uuid.UUID,
-    user: CurrentUser,
+    person: Person,
     database: RequiredDatabase,
     storage: DocumentStore,
     issues: IssueTracker,
@@ -178,12 +178,12 @@ def execute_proposal(  # noqa: PLR0913 (each argument is a FastAPI dependency)
     try:
         execution.execute(
             database,
-            user,
+            person.user_id,
             proposal_id,
             execution.Verticals(storage, issues, calendar),
         )
         with database.session() as session:
-            return _response(session, proposals.get_owned(session, user, proposal_id))
+            return _response(session, proposals.get_owned(session, person.user_id, proposal_id))
     except proposals.ProposalError as e:
         return _error(e)
 
@@ -197,7 +197,7 @@ def resolve_change(  # noqa: PLR0913 (each argument is a FastAPI dependency)
     proposal_id: uuid.UUID,
     change_index: int,
     body: ResolveRequest,
-    user: CurrentUser,
+    person: Person,
     database: RequiredDatabase,
     storage: DocumentStore,
     issues: IssueTracker,
@@ -207,13 +207,13 @@ def resolve_change(  # noqa: PLR0913 (each argument is a FastAPI dependency)
     try:
         execution.resolve(
             database,
-            user,
+            person.user_id,
             proposal_id,
             change_index,
             execution.Resolution(body.status, body.record_id),
             execution.Verticals(storage, issues, calendar),
         )
         with database.session() as session:
-            return _response(session, proposals.get_owned(session, user, proposal_id))
+            return _response(session, proposals.get_owned(session, person.user_id, proposal_id))
     except proposals.ProposalError as e:
         return _error(e)

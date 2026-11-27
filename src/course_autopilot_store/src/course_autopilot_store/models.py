@@ -2,10 +2,14 @@
 
 Every row a user owns carries ``user_id``, so each query can be scoped to the signed-in
 user (Level 4). Provider credentials are stored only encrypted. The first migration
-(``migrations/versions/0001_initial.py``) creates exactly these tables; change them only
+(``migrations/versions/0001_initial_schema.py``) and the ones after it create exactly these
+tables; change them only
 through a new migration.
 
 - ``users``: one per person, with the stable identity their sign-in provider gives them.
+- ``sessions``: signed-in sessions, and the short-lived agent tokens made from them; only a
+  hash of each token is stored (migration ``0003``).
+- ``sign_in_attempts``: one Google sign-in in progress, used once (migration ``0003``).
 - ``provider_connections``: a user's Dropbox, Trello or Google Calendar access.
 - ``conversations`` and ``messages``: the agent conversation, turn by turn.
 - ``proposals``: a change set the agent proposed, and ``approvals`` of its exact content.
@@ -50,6 +54,48 @@ class User(Base):
     auth_subject: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UserSession(Base):
+    """A signed-in session, or an agent token made from one. Only the token's hash is kept.
+
+    ``scope`` is ``session`` (the person, through the interface) or ``agent`` (one agent turn:
+    read and propose only). An agent token belongs to its ``parent_id`` session and ends with it.
+    """
+
+    __tablename__ = "sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    scope: Mapped[str] = mapped_column(String(16), default="session")  # session | agent
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SignInAttempt(Base):
+    """One Google sign-in between leaving for Google and coming back. Used at most once.
+
+    ``state_hash`` finds it; ``binding_hash`` ties it to the browser that started it, so a
+    callback carried to another browser fails (threat T9).
+    """
+
+    __tablename__ = "sign_in_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    binding_hash: Mapped[str] = mapped_column(String(64))
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    nonce: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ProviderConnection(Base):

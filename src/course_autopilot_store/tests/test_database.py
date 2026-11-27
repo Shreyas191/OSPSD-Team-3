@@ -38,6 +38,8 @@ TABLES = {
     "approvals",
     "change_outcomes",
     "external_records",
+    "sessions",
+    "sign_in_attempts",
 }
 
 

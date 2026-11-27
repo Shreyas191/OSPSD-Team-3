@@ -123,3 +123,14 @@ variable "agent_model_provider" {
     error_message = "agent_model_provider values must be gemini, scripted or disabled."
   }
 }
+
+variable "sign_in_redirect_uris" {
+  description = "Environments with Google sign-in on, and where Google sends the browser back (the interface's callback, also listed on the OAuth client). Add an environment only after the google-oauth-client-* secrets have values (sign_in.tf)."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for env in keys(var.sign_in_redirect_uris) : contains(var.environments, env)])
+    error_message = "Each key must be one of var.environments."
+  }
+}
