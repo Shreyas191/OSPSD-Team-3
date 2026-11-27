@@ -29,6 +29,6 @@ output "agent_service_urls" {
 }
 
 output "web_service_urls" {
-  description = "Base URL of each environment's interface."
-  value       = { for env, svc in google_cloud_run_v2_service.web : env => svc.uri }
+  description = "Each environment's interface, at its one public address (PUBLIC_URL); OAuth redirect URIs go under it."
+  value       = local.web_urls
 }
