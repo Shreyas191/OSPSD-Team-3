@@ -6,6 +6,7 @@
 !README.md
 !main.py
 !agent_main.py
+!web_main.py
 !src/
 src/*/tests/
 **/__pycache__/
