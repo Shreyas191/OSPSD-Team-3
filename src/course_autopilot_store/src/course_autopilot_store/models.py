@@ -214,6 +214,9 @@ class Proposal(Base):
     # While executing: when the run last showed it was alive (claimed, or began a change).
     # A run silent for too long has stopped, and another run may take it over (migration 0002).
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # While executing: the run that holds the proposal. A run checks it's still this one
+    # before each write and before its final update, so a run that was taken over stops.
+    run_id: Mapped[uuid.UUID | None] = mapped_column()
 
 
 class Approval(Base):

@@ -20,6 +20,13 @@ Each change is saved as ``started`` just before its write, and the run updates t
 proposal's ``heartbeat_at`` as it goes. Once a run has been silent for ``STALE_AFTER``,
 running the proposal again takes it over, and a ``started`` change becomes ``uncertain``.
 
+A run that was frozen rather than stopped (on Cloud Run, a request that outlives its timeout
+can sit with no CPU, then carry on) must not act after it was taken over. Each run claims the
+proposal with its own ``run_id``. Before each write, and for its final update, it checks the
+proposal still names it; if not, it stops, so it never repeats a change the new run did. A
+write it already had in flight is left as the new run recorded it (``uncertain``), and the
+stopped run logs what that write did, for the person to settle.
+
 The person settles an uncertain change after checking the provider (:func:`resolve`): it
 happened (for a created event or card, they give its ID, which is read back before it is
 recorded as ours) or it didn't (the next run does it). Once every change is completed, the
@@ -131,6 +138,49 @@ def execute(
             doesn't match its content, or another run holds it.
 
     """
+    run_id = uuid.uuid4()
+    changes, done = _claim(database, user_id, proposal_id, run_id)
+
+    final = "done"
+    for index, change in enumerate(changes):
+        if done.get(index) in {"completed", "uncertain"}:
+            if done[index] == "uncertain":
+                final = "failed"
+            continue
+        outcome = _run_change(database, user_id, proposal_id, run_id, index, change, verticals)
+        if outcome is None:  # taken over by a newer run, which decides from here
+            return
+        if outcome.status != "completed":
+            final = "failed"
+            break
+
+    with database.session() as session:
+        result = cast(
+            "CursorResult[Any]",
+            session.execute(
+                update(Proposal)
+                .where(Proposal.id == proposal_id, Proposal.run_id == run_id)
+                .values(status=final, heartbeat_at=None, run_id=None),
+            ),
+        )
+        if result.rowcount != 1:  # taken over after its last change: the new run decides
+            _log_superseded(proposal_id, None, None)
+            return
+        _log_execution(session, proposal_id, final, len(changes))
+
+
+def _claim(
+    database: Database,
+    user_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    run_id: uuid.UUID,
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
+    """Claim the proposal for ``run_id``; return its changes and each change's saved status.
+
+    Raises:
+        ProposalError: as :func:`execute` documents.
+
+    """
     now = datetime.now(UTC)
     with database.session() as session:
         proposal = get_owned(session, user_id, proposal_id)
@@ -159,7 +209,7 @@ def execute(
                         ),
                     ),
                 )
-                .values(status="executing", heartbeat_at=now)
+                .values(status="executing", heartbeat_at=now, run_id=run_id)
                 # Decided in the database alone: the loaded row's time may lack its zone.
                 .execution_options(synchronize_session=False),
             ),
@@ -177,35 +227,72 @@ def execute(
         for row in outcomes:
             if row.status == "started":  # left by a run that stopped mid-change
                 row.status, row.detail, row.recorded_at = "uncertain", INTERRUPTED, now
-        done = {o.change_index: o.status for o in outcomes}
+        return changes, {o.change_index: o.status for o in outcomes}
 
-    final = "done"
-    for index, change in enumerate(changes):
-        if done.get(index) in {"completed", "uncertain"}:
-            if done[index] == "uncertain":
-                final = "failed"
-            continue
-        with database.session() as session:
-            _record(session, user_id, proposal_id, index, change, Outcome("started", STARTED))
-            session.execute(
-                update(Proposal)
-                .where(Proposal.id == proposal_id)
-                .values(heartbeat_at=datetime.now(UTC)),
-            )
-        with database.session() as session:
-            outcome = _run(session, user_id, change, verticals)
-            _record(session, user_id, proposal_id, index, change, outcome)
-        if outcome.status != "completed":
-            final = "failed"
-            break
 
+def _run_change(  # noqa: PLR0913 (the run, the change and the providers)
+    database: Database,
+    user_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    run_id: uuid.UUID,
+    index: int,
+    change: dict[str, Any],
+    verticals: Verticals,
+) -> Outcome | None:
+    """Run one change and save its outcome; ``None`` if a newer run took the proposal over."""
     with database.session() as session:
+        # Fenced: a run that was taken over stops here, before it writes anything.
+        if not _still_holds(session, proposal_id, run_id):
+            _log_superseded(proposal_id, index, None)
+            return None
+        _record(session, user_id, proposal_id, index, change, Outcome("started", STARTED))
+    with database.session() as session:
+        outcome = _run(session, user_id, change, verticals)
+        # Taken over during the write: the new run already made this change uncertain.
+        if not _still_holds(session, proposal_id, run_id):
+            _log_superseded(proposal_id, index, outcome)
+            return None
+        _record(session, user_id, proposal_id, index, change, outcome)
+    return outcome
+
+
+def _still_holds(session: Any, proposal_id: uuid.UUID, run_id: uuid.UUID) -> bool:  # noqa: ANN401
+    """Update the heartbeat if this run still holds the proposal, and say whether it does.
+
+    The check and the heartbeat are one conditional update, so no other run can take the
+    proposal over between them.
+    """
+    result = cast(
+        "CursorResult[Any]",
         session.execute(
             update(Proposal)
-            .where(Proposal.id == proposal_id)
-            .values(status=final, heartbeat_at=None),
-        )
-        _log_execution(session, proposal_id, final, len(changes))
+            .where(
+                Proposal.id == proposal_id,
+                Proposal.status == "executing",
+                Proposal.run_id == run_id,
+            )
+            .values(heartbeat_at=datetime.now(UTC))
+            .execution_options(synchronize_session=False),
+        ),
+    )
+    return result.rowcount == 1
+
+
+def _log_superseded(proposal_id: uuid.UUID, index: int | None, outcome: Outcome | None) -> None:
+    """Log that a run stopped because another run took the proposal over.
+
+    If a write was in flight, the line says what it did (including any record it created),
+    so the person can settle the change the new run left ``uncertain``.
+    """
+    fields: dict[str, Any] = {"event": "proposal_run_superseded", "proposal_id": str(proposal_id)}
+    if index is not None:
+        fields["change_index"] = index
+    if outcome is not None:
+        fields["change_status"] = outcome.status
+        fields["change_detail"] = outcome.detail
+        if outcome.created:
+            fields["created_kind"], fields["created_record_id"] = outcome.created
+    logger.warning("Proposal run superseded by a newer run; stopping", extra=fields)
 
 
 def _log_execution(session: Any, proposal_id: uuid.UUID, final: str, total: int) -> None:  # noqa: ANN401
@@ -242,19 +329,33 @@ def resolve(  # noqa: PLR0913 (the proposal, the change, the person's answer and
     """Record what the person found when they checked an ``uncertain`` change.
 
     ``completed``: the change happened. For a created event or card, ``record_id`` names it;
-    it is read back, and must carry the change's title, before it is recorded as ours. A
-    created document is found at its path. ``failed``: it didn't happen, so the next run
-    does it again. Once every change is completed, the proposal is ``done``.
+    it is read back and must match the change (a card's title; an event's title, start and
+    end) before it is recorded as ours, and it can't be a record already recorded for
+    another change. A created document is found at its path. ``failed``: it didn't happen,
+    so the next run does it again. Once every change is completed, the proposal is ``done``.
+
+    The proposal's row is held while settling, so a run can't claim it in between: a run
+    that already holds it makes this 409, and one that starts now waits until this ends.
 
     Raises:
         ProposalError: 404 if the proposal or change isn't this user's; 409 if the proposal
             is running or the change isn't uncertain; 400 if a created record's ID is
-            missing, or names a record that doesn't match the change.
+            missing, names a record that doesn't match the change, or is already recorded.
 
     """
     with database.session() as session:
         proposal = get_owned(session, user_id, proposal_id)
-        if proposal.status == "executing":
+        # A no-op update that takes the row's lock until this transaction ends.
+        held = cast(
+            "CursorResult[Any]",
+            session.execute(
+                update(Proposal)
+                .where(Proposal.id == proposal_id, Proposal.status != "executing")
+                .values(status=Proposal.status)
+                .execution_options(synchronize_session=False),
+            ),
+        )
+        if held.rowcount != 1:
             raise ProposalError(409, "conflict", "The proposal is running; wait for it to end")
         changes: list[dict[str, Any]] = list(proposal.changes)
         if not 0 <= index < len(changes):
@@ -279,7 +380,13 @@ def resolve(  # noqa: PLR0913 (the proposal, the change, the person's answer and
             ),
         )
         if len(statuses) == len(changes) and all(s == "completed" for s in statuses):
-            proposal.status = "done"
+            # Only a failed proposal finishes here; a run's own final update decides otherwise.
+            session.execute(
+                update(Proposal)
+                .where(Proposal.id == proposal_id, Proposal.status == "failed")
+                .values(status="done")
+                .execution_options(synchronize_session=False),
+            )
 
 
 def _confirmed(
@@ -300,22 +407,25 @@ def _confirmed(
                 "invalid_request",
                 f"Give the ID of the {kind} that was created, so it can be recorded",
             )
-        try:
-            title = (
-                v.calendar.get(record_id).title
-                if kind == "event"
-                else (v.issues.get_issue(record_id, fresh=True).title)
-            )
-        except (CalendarError, ServiceError):
-            title = None
-        if title != change["title"]:
+        if not _matches(kind, record_id, change, v):
+            detail = "title, start and end" if kind == "event" else "title"
             raise ProposalError(
                 400,
                 "invalid_request",
-                f"No {kind} with that ID and this change's title was found",
+                f"No {kind} with that ID and this change's {detail} was found",
             )
-        created = None if owned_record(session, user_id, kind, record_id) else (kind, record_id)
-        return Outcome("completed", f"{confirmed} ({kind} {record_id})", created=created)
+        if owned_record(session, user_id, kind, record_id) is not None:
+            raise ProposalError(
+                400,
+                "invalid_request",
+                f"That {kind} is already recorded for another change; give the one this "
+                "change created",
+            )
+        return Outcome(
+            "completed",
+            f"{confirmed} ({kind} {record_id})",
+            created=(kind, record_id),
+        )
     if op == "write_document":
         path = f"{COURSE_ROOT}/{change['course']}/{change['name']}"
         ours = owned_record(session, user_id, "document", path) is not None
@@ -325,6 +435,24 @@ def _confirmed(
         target = change["event_id"] if kind == "event" else change["issue_id"]
         return Outcome("completed", confirmed, deleted=(kind, target))
     return Outcome("completed", confirmed)
+
+
+def _matches(kind: str, record_id: str, change: dict[str, Any], v: Verticals) -> bool:
+    """Whether the record exists and matches the change.
+
+    An event must match its title, start and end; a card, its title.
+    """
+    try:
+        if kind == "event":
+            event = v.calendar.get(record_id)
+            return bool(
+                event.title == change["title"]
+                and _same_time(event.start, change["start"])
+                and _same_time(event.end, change["end"]),
+            )
+        return bool(v.issues.get_issue(record_id, fresh=True).title == change["title"])
+    except (CalendarError, ServiceError):
+        return False
 
 
 def _record(  # noqa: PLR0913 (the outcome needs its proposal, change and user)
@@ -350,7 +478,7 @@ def _record(  # noqa: PLR0913 (the outcome needs its proposal, change and user)
                 detail=outcome.detail,
             ),
         )
-    else:  # a retry of a failed change
+    else:  # this change's ``started`` marker, or a failed outcome being retried
         existing.status, existing.detail, existing.recorded_at = (
             outcome.status,
             outcome.detail,
