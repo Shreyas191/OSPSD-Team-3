@@ -1,6 +1,6 @@
 # Launch Readiness Record
 
-This is the HW3 Milestone 2 launch-readiness record for **Course Autopilot** (handout, Level 5). It starts with the launch we promise to support and how we will judge it (Level 5 §1, task 7.1), followed by a capacity estimate across the whole request path (§2, task 7.2). The later sections (load test, failure analysis, rollout, launch decision) are added by their own issues and link back here.
+This is the HW3 Milestone 2 launch-readiness record for **Course Autopilot** (handout, Level 5). It starts with the launch we promise to support and how we will judge it (Level 5 §1, task 7.1), followed by a capacity estimate across the whole request path (§2, task 7.2), and a summary of the failure analysis (§5, task 7.4). The later sections (load test, failure analysis, rollout, launch decision) are added by their own issues and link back here.
 
 **Status (Nov 26, 2026):** launch criteria and capacity estimate written before the agent loop, proposals and the interface are built (#89–#95). Every number below is tagged with where it comes from:
 
@@ -134,6 +134,15 @@ Each implementation limit is tied to the calculation, measurement or assumption 
 | Trello `429` during an execution | That change `failed`, with *Retry failed changes* | Completed changes stay (P3) |
 | Neon compute or storage allowance used up | The service's database error page | Unchanged; requires the paid plan or deleting old branches |
 
+## 5. Failures, and how we detect them
+
+The [failure analysis](https://github.com/Shreyas191/OSPSD-Team-3/pull/119) (#112) records, for each significant failure, what students can still do, what becomes uncertain, how we detect it and how work recovers. It ran ten failures through S1 end to end. What it means for launch:
+
+- **Before approval nothing can be harmed.** Gemini, API, Neon and Dropbox failures all stop the turn with a fixed message and change nothing in a student's accounts.
+- **During execution, P3 mostly holds.** Completed changes are never repeated, and a write whose reply was lost is marked `uncertain` and never retried.
+- **Two gaps break P3 and should be fixed before launch week (#90).** First, a proposal whose request ends mid-execution (redeploy, crash, timeout) stays `executing` forever with an unrecorded write. Second, an `uncertain` change can never be resolved, so its proposal never reaches `done`.
+- **Detection.** An agent dashboard (task success, errors, full-turn latency against the 45 s objective, active turns, model calls and tokens per turn) and an alert on turns that fail because the model or API is unavailable. A failed turn still answers `200`, so the existing 5xx alert can't see it. Both are defined in `infra/agent_monitoring.tf` and are applied once the agent loop is deployed; the alert's drill is in the runbook.
+
 ## Measurements so far
 
 | When (UTC) | What | Environment | Result | Sample |
@@ -144,6 +153,7 @@ Each implementation limit is tied to the calculation, measurement or assumption 
 | Nov 26, 20:47 | `GET /health` on the API service, from a laptop | test | 0.10–0.19 s (already warm) | 11 requests |
 | Nov 26, 20:48 | `GET /health/provider` (one Dropbox round trip through the API), from a laptop | test | 0.46–0.69 s, median 0.51 s | 11 requests |
 | Nov 26 | One Gemini call reading a whole course's documents (`gemini-3.5-flash-lite`, free tier), [assumption test A1](https://github.com/Shreyas191/OSPSD-Team-3/pull/118) | laptop → Gemini API | 1,727–4,163 tokens per call (mean 2,617); 0.95–8.92 s, median 1.33 s | 15 calls, 5 courses |
+| Nov 26, 23:24 | `GET /health/database` (one Neon query through the API) after 7 idle minutes, instance already warm | test | first query **1.03 s**, then 0.25–0.29 s | 3 requests ([failure analysis](https://github.com/Shreyas191/OSPSD-Team-3/pull/119)) |
 
 These are small samples from one place. They set the starting assumptions above; they don't establish the SLOs.
 
@@ -154,4 +164,4 @@ These are small samples from one place. They set the starting assumptions above;
 - **Trello and Calendar write latency** through Teams 4's and 5's packages. Measured in the load test (#111).
 - **Whether the SLOs hold under load.** That is the load test (#111), which runs the workload in section 1 and links its report here.
 
-Still to come in this record: the load test (#111); the failure analysis, dashboard and alert (#112); rollout, game day and backup restore (#113); and the launch decision (#114).
+Still to come in this record: the load test (#111); the alert drill (#112, once the agent loop is deployed); rollout, game day and backup restore (#113); and the launch decision (#114).
