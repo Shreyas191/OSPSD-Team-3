@@ -9,7 +9,8 @@ from course_agent_service.model import ModelClient, ScriptedModel
 
 ModelProvider = Literal["gemini", "scripted", "disabled"]
 MODEL_PROVIDERS: tuple[ModelProvider, ...] = ("gemini", "scripted", "disabled")
-DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
+# A fixed version, not the moving "-latest" alias, so evaluation runs compare like with like.
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 DEMO_SERVICE = "course-agent-demo"
 
 

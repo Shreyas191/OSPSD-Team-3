@@ -88,6 +88,17 @@ def test_text_reply_and_token_usage_come_back() -> None:
     assert (reply.usage.input_tokens, reply.usage.output_tokens) == (12, 3)
 
 
+def test_the_version_that_answered_comes_back() -> None:
+    """The exact model version that answered comes back, for the run record."""
+    answer = response(types.Part(text="Hi"))
+    answer.model_version = "gemini-3.5-flash-lite-001"
+    model, _ = model_with(answer)
+
+    reply = model.complete(system="", messages=[Message(role="user", text="Hi")], tools=[])
+
+    assert reply.model_version == "gemini-3.5-flash-lite-001"
+
+
 def test_thoughts_are_not_shown_as_reply_text() -> None:
     """Thoughts are not shown as reply text."""
     model, _ = model_with(

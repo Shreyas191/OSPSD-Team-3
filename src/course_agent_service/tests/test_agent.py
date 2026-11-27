@@ -30,11 +30,12 @@ from course_agent_service.tools import DOCUMENT_END, DOCUMENT_START, TOOL_NAMES,
 ALICE = {"x-dev-user": "alice"}
 COURSE = "CS-GY 6083"
 SYLLABUS = "Midterm: Week 7. Final project due Dec 15."
+ZONE = "America/New_York"
 EVENT = {
     "op": "create_event",
     "title": "Midterm",
-    "start": "2026-10-15T14:00:00-04:00",
-    "end": "2026-10-15T15:30:00-04:00",
+    "start": "2026-10-15T14:00",
+    "end": "2026-10-15T15:30",
 }
 CARD = {"op": "create_issue", "title": "[CS-GY 6083] Midterm, Oct 15"}
 
@@ -207,11 +208,40 @@ def test_an_unknown_tool_runs_nothing(api: FakeApi) -> None:
         call("list_course_documents", course=7),
         call("list_courses", user_id="bob"),
         call("read_document", course=COURSE),
-        call("propose_changes", course=COURSE, changes=[]),
-        call("propose_changes", course=COURSE, changes=[{"op": "drop_table"}]),
-        call("propose_changes", course=COURSE, changes=[{**EVENT, "start": "2026-10-15T14:00"}]),
-        call("propose_changes", course=COURSE, changes=[{**CARD, "user_id": "bob"}]),
-        call("propose_changes", course=COURSE, changes=[{"op": "write_document", "name": "x.sh"}]),
+        call("propose_changes", course=COURSE, time_zone=ZONE, changes=[]),
+        call("propose_changes", course=COURSE, time_zone=ZONE, changes=[{"op": "drop_table"}]),
+        call(
+            "propose_changes",
+            course=COURSE,
+            time_zone=ZONE,
+            changes=[{**EVENT, "start": "2026-10-15T14:00-04:00"}],
+        ),
+        call("propose_changes", course=COURSE, changes=[EVENT]),
+        call("propose_changes", course=COURSE, time_zone="Eastern", changes=[EVENT]),
+        call(
+            "propose_changes",
+            course=COURSE,
+            time_zone=ZONE,
+            changes=[{**EVENT, "start": "2026-03-08T02:30"}],
+        ),
+        call(
+            "propose_changes",
+            course=COURSE,
+            time_zone=ZONE,
+            changes=[{**EVENT, "end": "2026-11-01T01:30"}],
+        ),
+        call(
+            "propose_changes",
+            course=COURSE,
+            time_zone=ZONE,
+            changes=[{**CARD, "user_id": "bob"}],
+        ),
+        call(
+            "propose_changes",
+            course=COURSE,
+            time_zone=ZONE,
+            changes=[{"op": "write_document", "name": "x.sh"}],
+        ),
     ],
 )
 def test_malformed_arguments_run_nothing(api: FakeApi, tool_call: ToolCall) -> None:
@@ -225,22 +255,45 @@ def test_malformed_arguments_run_nothing(api: FakeApi, tool_call: ToolCall) -> N
 
 def test_propose_changes_stores_a_pending_proposal(api: FakeApi) -> None:
     """Propose changes stores a pending proposal."""
-    result = toolbox(api).run(call("propose_changes", course=COURSE, changes=[EVENT, CARD]))
+    result = toolbox(api).run(
+        call("propose_changes", course=COURSE, time_zone=ZONE, changes=[EVENT, CARD]),
+    )
 
     assert result.outcome == "ok"
     assert result.proposal is not None
     sent = json.loads(api.requests[0].content)
     assert sent["conversation_id"] == "c1"
     assert [c["course"] for c in sent["changes"]] == [COURSE, COURSE]
-    assert sent["changes"][0]["start"] == EVENT["start"]
+    assert sent["changes"][0]["start"] == "2026-10-15T14:00:00-04:00"
     assert json.loads(result.text)["status"] == "pending"
+
+
+def test_code_not_the_model_works_out_each_offset(api: FakeApi) -> None:
+    """Deadlines either side of the end of daylight saving time get their own offsets (A1)."""
+    december = {**EVENT, "start": "2026-12-15T23:00", "end": "2026-12-15T23:59"}
+
+    toolbox(api).run(
+        call("propose_changes", course=COURSE, time_zone=ZONE, changes=[EVENT, december]),
+    )
+
+    sent = json.loads(api.requests[0].content)["changes"]
+    assert [c["start"] for c in sent] == ["2026-10-15T14:00:00-04:00", "2026-12-15T23:00:00-05:00"]
+
+
+def test_a_card_only_proposal_needs_no_time_zone(api: FakeApi) -> None:
+    """A card-only proposal needs no time zone."""
+    result = toolbox(api).run(call("propose_changes", course=COURSE, changes=[CARD]))
+
+    assert result.outcome == "ok"
 
 
 def test_a_refused_proposal_returns_the_apis_reason(api: FakeApi) -> None:
     """A refused proposal returns the API's reason."""
     api.proposal_status = 400
 
-    result = toolbox(api).run(call("propose_changes", course=COURSE, changes=[CARD]))
+    result = toolbox(api).run(
+        call("propose_changes", course=COURSE, time_zone=ZONE, changes=[CARD]),
+    )
 
     assert result.outcome == "refused"
     assert "targets an event" in result.text
@@ -300,7 +353,7 @@ def test_s1_from_a_request_to_a_stored_proposal(api: FakeApi) -> None:
         api,
         calls(call("list_course_documents", course=COURSE)),
         calls(call("read_document", course=COURSE, name="syllabus.pdf")),
-        calls(call("propose_changes", course=COURSE, changes=[EVENT, CARD])),
+        calls(call("propose_changes", course=COURSE, time_zone=ZONE, changes=[EVENT, CARD])),
     )
 
     assert result.stop_reason == "proposal_ready"
@@ -340,6 +393,13 @@ def test_the_run_record_has_no_document_text_or_arguments(api: FakeApi) -> None:
     assert result.record["input_tokens"] == 20
 
 
+def test_the_run_record_names_the_model_version(api: FakeApi) -> None:
+    """The run record names the model version that answered."""
+    result, _ = turn(api, ModelReply(text="Hi", model_version="gemini-3.5-flash-lite-001"))
+
+    assert result.record["model_version"] == "gemini-3.5-flash-lite-001"
+
+
 def test_a_clarifying_question_ends_the_turn(api: FakeApi) -> None:
     """A clarifying question ends the turn."""
     question = "Week 7 starts Mon Oct 12. Is the midterm on Tue Oct 13 or Thu Oct 15?"
@@ -361,7 +421,7 @@ def test_the_answer_continues_from_the_saved_question(api: FakeApi) -> None:
 
     second, model = turn(
         api,
-        calls(call("propose_changes", course=COURSE, changes=[EVENT])),
+        calls(call("propose_changes", course=COURSE, time_zone=ZONE, changes=[EVENT])),
         history=first.messages,
         text="Oct 15",
     )
@@ -373,8 +433,10 @@ def test_the_answer_continues_from_the_saved_question(api: FakeApi) -> None:
 
 def test_the_model_may_correct_an_invalid_proposal_twice(api: FakeApi) -> None:
     """The model may correct an invalid proposal twice."""
-    bad = calls(call("propose_changes", course=COURSE, changes=[{"op": "create_event"}]))
-    good = calls(call("propose_changes", course=COURSE, changes=[EVENT]))
+    bad = calls(
+        call("propose_changes", course=COURSE, time_zone=ZONE, changes=[{"op": "create_event"}]),
+    )
+    good = calls(call("propose_changes", course=COURSE, time_zone=ZONE, changes=[EVENT]))
 
     result, _ = turn(api, bad, bad, good)
 
@@ -384,7 +446,7 @@ def test_the_model_may_correct_an_invalid_proposal_twice(api: FakeApi) -> None:
 def test_a_third_invalid_proposal_stops_the_run(api: FakeApi) -> None:
     """A third invalid proposal stops the run."""
     api.proposal_status = 400
-    refused = calls(call("propose_changes", course=COURSE, changes=[CARD]))
+    refused = calls(call("propose_changes", course=COURSE, time_zone=ZONE, changes=[CARD]))
 
     result, model = turn(api, refused, refused, refused, say("unused"))
 
@@ -479,7 +541,7 @@ def test_nothing_runs_after_a_stored_proposal(api: FakeApi) -> None:
     result, _ = turn(
         api,
         calls(
-            call("propose_changes", course=COURSE, changes=[CARD]),
+            call("propose_changes", course=COURSE, time_zone=ZONE, changes=[CARD]),
             call("list_courses"),
         ),
     )
@@ -536,7 +598,9 @@ def wire(api: FakeApi) -> Iterator[Callable[[list[ModelReply | ModelError]], Tes
 
 def test_a_turn_is_saved_with_its_run_record(api: FakeApi, wire: Any) -> None:
     """A turn is saved with its run record."""
-    http = wire([calls(call("propose_changes", course=COURSE, changes=[EVENT, CARD]))])
+    http = wire(
+        [calls(call("propose_changes", course=COURSE, time_zone=ZONE, changes=[EVENT, CARD]))],
+    )
 
     response = http.post("/conversations/c1/turns", json={"text": "Set up"}, headers=ALICE)
 

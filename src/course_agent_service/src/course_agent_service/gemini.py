@@ -137,6 +137,7 @@ def _reply(response: types.GenerateContentResponse) -> ModelReply:
         ),
         # Stored as JSON between turns (signatures are base64), so a restart keeps them.
         provider_state=content.model_dump(mode="json", exclude_none=True) if content else None,
+        model_version=response.model_version or "",
     )
 
 

@@ -30,5 +30,5 @@ uv run python agent_main.py        # http://127.0.0.1:8001
 |---|---|---|
 | `MODEL_PROVIDER` | `gemini`, `scripted`, `disabled` | `disabled` |
 | `GEMINI_API_KEY` | required when `MODEL_PROVIDER=gemini` | none |
-| `GEMINI_MODEL` | Gemini model name | `gemini-flash-lite-latest` |
+| `GEMINI_MODEL` | Gemini model name (each run records the version that answered) | `gemini-3.5-flash-lite` |
 | `API_BASE_URL` | URL of the API service the agent calls | none |

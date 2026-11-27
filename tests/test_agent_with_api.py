@@ -82,12 +82,7 @@ def tool(name: str, /, **arguments: Any) -> ModelReply:
     return ModelReply(tool_calls=(ToolCall(id=f"id-{name}", name=name, arguments=arguments),))
 
 
-EVENT = {
-    "op": "create_event",
-    "title": "Midterm",
-    "start": "2026-10-15T14:00:00-04:00",
-    "end": "2026-10-15T15:30:00-04:00",
-}
+EVENT = {"op": "create_event", "title": "Midterm", "start": "2026-10-15T14:00", "end": "2026-10-15T15:30"}
 CARD = {"op": "create_issue", "title": "[CS-GY 6083] Midterm, Oct 15"}
 
 
@@ -109,7 +104,7 @@ def test_s1_question_then_proposal_then_approved_execution(world: World) -> None
     assert "DOCUMENT CONTENT" in read_result
 
     # A new model (as after a restart) continues from the saved question.
-    agent = world.agent(tool("propose_changes", course=COURSE, changes=[EVENT, CARD]))
+    agent = world.agent(tool("propose_changes", course=COURSE, time_zone="America/New_York", changes=[EVENT, CARD]))
     second = agent.post(f"/conversations/{cid}/turns", json={"text": "Thursday"}, headers=ALICE)
 
     body = second.json()
@@ -163,3 +158,19 @@ def test_another_users_conversation_stays_hidden(world: World) -> None:
     # Control: alice can.
     own = agent.post(f"/conversations/{cid}/turns", json={"text": "hi"}, headers=ALICE)
     assert own.status_code == 200
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Dev-User": ""}, {"Authorization": "Bearer guess"}])
+def test_no_session_spends_no_model_call(world: World, headers: dict[str, str]) -> None:
+    """T12: the agent service is public, so a turn without a session is 401 before the model."""
+    agent = world.agent(ModelReply(text="hi"))
+    cid = agent.post("/conversations", json={}, headers=ALICE).json()["id"]
+
+    anonymous = agent.post(f"/conversations/{cid}/turns", json={"text": "hi"}, headers=headers)
+
+    assert anonymous.status_code == 401
+    assert world.model.calls == []
+    # Control: with a session, the same turn reaches the model.
+    own = agent.post(f"/conversations/{cid}/turns", json={"text": "hi"}, headers=ALICE)
+    assert own.status_code == 200
+    assert len(world.model.calls) == 1
