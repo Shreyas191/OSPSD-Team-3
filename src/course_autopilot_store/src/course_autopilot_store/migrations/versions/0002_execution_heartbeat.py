@@ -1,4 +1,4 @@
-"""Execution: when a running proposal last showed it was alive (#90).
+"""Execution: which run holds a running proposal, and when it last showed it was alive (#90).
 
 Revision ID: 0002
 Revises: 0001
@@ -15,13 +15,15 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    """Add ``proposals.heartbeat_at``."""
+    """Add ``proposals.heartbeat_at`` and ``proposals.run_id``."""
     op.add_column(
         "proposals",
         sa.Column("heartbeat_at", sa.DateTime(timezone=True), nullable=True),
     )
+    op.add_column("proposals", sa.Column("run_id", sa.Uuid(), nullable=True))
 
 
 def downgrade() -> None:
-    """Drop ``proposals.heartbeat_at``."""
+    """Drop ``proposals.run_id`` and ``proposals.heartbeat_at``."""
+    op.drop_column("proposals", "run_id")
     op.drop_column("proposals", "heartbeat_at")
