@@ -12,8 +12,9 @@ from urllib.parse import quote
 import httpx
 
 # The headers that identify the caller. Only these are forwarded; nothing else from the
-# incoming request reaches the API service.
-IDENTITY_HEADERS = ("x-dev-user",)
+# incoming request reaches the API service. The interface sends an agent token
+# (``Authorization: Bearer``, read and propose only), never the person's session.
+IDENTITY_HEADERS = ("authorization", "x-dev-user")
 
 
 class ApiError(Exception):

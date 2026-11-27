@@ -174,3 +174,22 @@ def test_no_session_spends_no_model_call(world: World, headers: dict[str, str]) 
     own = agent.post(f"/conversations/{cid}/turns", json={"text": "hi"}, headers=ALICE)
     assert own.status_code == 200
     assert len(world.model.calls) == 1
+
+
+def test_a_turn_with_an_agent_token_proposes_but_cant_approve(world: World) -> None:
+    """T14: the agent, holding only an agent token, gets a proposal stored but can't approve it."""
+    token = world.api.post("/auth/agent-token", headers=ALICE).json()["token"]
+    agent_token = {"Authorization": f"Bearer {token}"}
+    agent = world.agent(tool("propose_changes", course=COURSE, changes=[CARD]))
+    cid = agent.post("/conversations", json={}, headers=agent_token).json()["id"]
+
+    body = agent.post(f"/conversations/{cid}/turns", json={"text": "Add it"}, headers=agent_token)
+
+    assert body.json()["stop_reason"] == "proposal_ready"
+    proposal = world.api.get(f"/proposals/{body.json()['proposal_id']}", headers=ALICE).json()
+    approve = {"changes_hash": proposal["changes_hash"]}
+    stolen = world.api.post(f"/proposals/{proposal['id']}/approve", json=approve, headers=agent_token)
+    assert stolen.status_code == 403
+    # Control: Alice's own session approves it.
+    mine = world.api.post(f"/proposals/{proposal['id']}/approve", json=approve, headers=ALICE)
+    assert mine.json()["status"] == "approved"

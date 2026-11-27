@@ -10,21 +10,26 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import cloud_storage_client_api
+import httpx
 from dropbox_client_impl import DropboxAuthError, DropboxClient, DropboxDocumentStorage
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 
+from cloud_storage_service.auth_routes import SignInNotConfiguredError
+from cloud_storage_service.auth_routes import router as auth_router
 from cloud_storage_service.configuration import ConfigurationError
 from cloud_storage_service.conversation_routes import router as conversation_router
 from cloud_storage_service.courses import router as course_router
 from cloud_storage_service.database import build_database, migrate
 from cloud_storage_service.database import router as database_router
 from cloud_storage_service.dependencies import get_storage_client
-from cloud_storage_service.errors import add_error_handlers
+from cloud_storage_service.errors import add_error_handlers, error_response
 from cloud_storage_service.faults import with_faults
 from cloud_storage_service.models import FileResponse
 from cloud_storage_service.overload import ConcurrencyLimitMiddleware, max_in_flight_from_env
 from cloud_storage_service.proposal_routes import router as proposal_router
 from cloud_storage_service.routes import router
+from cloud_storage_service.sign_in import GoogleSettings, GoogleSignIn
 from cloud_storage_service.telemetry import RequestTelemetryMiddleware, configure_tracing
 from cloud_storage_service.verticals import build_calendar, build_issue_tracker
 from cloud_storage_service.workflow_routes import router as workflow_router
@@ -77,6 +82,9 @@ def check_configuration() -> None:
     build_calendar()
 
 
+GOOGLE_TIMEOUT_SECONDS = 10.0
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Create one client per vertical when the app starts; each lives as long as the app."""
@@ -93,7 +101,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.database = build_database()
     if app.state.database is not None:
         migrate(app.state.database)
+    # Google sign-in (#96): on only when the OAuth client and redirect URI are configured.
+    google = GoogleSettings.from_env()
+    google_http = httpx.Client(timeout=GOOGLE_TIMEOUT_SECONDS) if google else None
+    app.state.google_sign_in = GoogleSignIn(google, google_http) if google and google_http else None
     yield
+    if google_http is not None:
+        google_http.close()
     if app.state.database is not None:
         app.state.database.engine.dispose()
 
@@ -108,6 +122,18 @@ app.include_router(database_router)
 app.include_router(proposal_router)
 app.include_router(course_router)
 app.include_router(conversation_router)
+app.include_router(auth_router)
+
+
+@app.exception_handler(SignInNotConfiguredError)
+def _sign_in_not_configured(_request: Request, _exc: SignInNotConfiguredError) -> JSONResponse:
+    return error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "sign_in_not_configured",
+        "Google sign-in isn't configured on this service",
+    )
+
+
 add_error_handlers(app)
 # Added last, so it wraps everything above, including requests the overload limit refuses:
 # every request gets exactly one log line (see telemetry.py).
