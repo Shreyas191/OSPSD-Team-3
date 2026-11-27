@@ -226,6 +226,7 @@ dependencies = [
     { name = "opentelemetry-instrumentation-requests" },
     { name = "opentelemetry-propagator-gcp" },
     { name = "opentelemetry-sdk" },
+    { name = "pypdf" },
     { name = "python-multipart" },
     { name = "sqlalchemy" },
     { name = "team-4-issue-tracker-trello" },
@@ -249,9 +250,10 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-requests", specifier = ">=0.66b1" },
     { name = "opentelemetry-propagator-gcp", specifier = ">=1.15.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.45.1" },
+    { name = "pypdf", specifier = ">=6.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "sqlalchemy", specifier = ">=2.0.36" },
-    { name = "team-4-issue-tracker-trello", git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.0.0" },
+    { name = "team-4-issue-tracker-trello", git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.1.0" },
     { name = "team5-calendar", git = "https://github.com/juno-junhyuk-lee/OSPSD-Team-5.git?subdirectory=packages%2Fteam5-calendar&tag=team5-calendar-v0.1.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
@@ -272,6 +274,8 @@ source = { editable = "src/course_agent_service" }
 dependencies = [
     { name = "fastapi" },
     { name = "google-genai" },
+    { name = "httpx" },
+    { name = "pydantic" },
     { name = "uvicorn" },
 ]
 
@@ -279,6 +283,8 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-genai", specifier = ">=2.34,<3" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "pydantic", specifier = ">=2.9" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 
@@ -1405,6 +1411,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pypdf"
+version = "7.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/7b/5dff016bef001c3556c5fdd7645ec80251b78bb496b049d2ab9ec497b087/pypdf-7.2.0.tar.gz", hash = "sha256:b2c637b6f0be3def1f762fd8be20118736bafdffc75badab80db003d7a9ed110", size = 7253070, upload-time = "2026-11-26T15:38:53.825Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/b5/36b52010264f40f35fcd469f62586c0d88753c16682f2e156c42347f884b/pypdf-7.2.0-py3-none-any.whl", hash = "sha256:5edb9b033dd55cecead9303370e6854c1a3b979669bde1c46024cde0228405b1", size = 428449, upload-time = "2026-11-26T15:38:52.262Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1665,8 +1680,8 @@ wheels = [
 
 [[package]]
 name = "team-4-issue-tracker-trello"
-version = "1.0.0"
-source = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.0.0#c88ce2fd287f2524ba09ad5d94faf3983fdac08d" }
+version = "1.1.0"
+source = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git?subdirectory=team-4-trello-impl&tag=team-4-issue-tracker-trello-v1.1.0#73daee42a219c001b9c720aeed14fc0ab049b51d" }
 dependencies = [
     { name = "issue-tracker-contract" },
 ]

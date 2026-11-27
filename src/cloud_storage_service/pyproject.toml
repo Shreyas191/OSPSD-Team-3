@@ -19,6 +19,7 @@ dependencies = [
     "opentelemetry-instrumentation-requests>=0.66b1",
     "opentelemetry-propagator-gcp>=1.15.0",
     "opentelemetry-sdk>=1.45.1",
+    "pypdf>=6.0",
     "python-multipart>=0.0.32",
     "sqlalchemy>=2.0.36",
     "team-4-issue-tracker-trello",
@@ -52,5 +53,5 @@ course-autopilot-store = { workspace = true }
 # a tag. `rev` matches the direct Git references inside Team 4's and Team 5's packages.
 calendar-contract = { git = "https://github.com/Airbus-A330/OSPSD-Calendar.git", rev = "v0.1.0" }
 issue-tracker-contract = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git", rev = "issue-tracker-contract-v1.1.0", subdirectory = "contract" }
-team-4-issue-tracker-trello = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git", tag = "team-4-issue-tracker-trello-v1.0.0", subdirectory = "team-4-trello-impl" }
+team-4-issue-tracker-trello = { git = "https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git", tag = "team-4-issue-tracker-trello-v1.1.0", subdirectory = "team-4-trello-impl" }
 team5-calendar = { git = "https://github.com/juno-junhyuk-lee/OSPSD-Team-5.git", tag = "team5-calendar-v0.1.0", subdirectory = "packages/team5-calendar" }

@@ -67,6 +67,7 @@ class ModelReply:
     tool_calls: tuple[ToolCall, ...] = ()
     usage: Usage = field(default_factory=Usage)
     provider_state: Any = None
+    model_version: str = ""  # the exact version that answered, when the provider says
 
     def as_message(self) -> Message:
         """Return the reply as an ``assistant`` turn to append to the conversation."""

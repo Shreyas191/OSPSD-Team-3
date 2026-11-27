@@ -22,6 +22,8 @@ Every error the service returns uses this body. Two places produce it:
 | any other ``OSError``                   | 502    | ``provider_error``       |
 | no such route                           | 404    | ``route_not_found``      |
 | method not allowed on the route         | 405    | ``method_not_allowed``   |
+| database unreachable (SQLAlchemy        | 503    | ``database_unavailable`` |
+| ``OperationalError``, ``InterfaceError``)|        |                          |
 | unexpected exception                    | 500    | ``internal_error``       |
 
 For ``5xx`` responses the message is fixed, so provider details never reach the caller;
@@ -37,6 +39,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import InterfaceError, OperationalError, SQLAlchemyError
 from starlette.exceptions import HTTPException
 
 from cloud_storage_service.telemetry import record_failure
@@ -102,10 +105,29 @@ def add_error_handlers(app: FastAPI) -> None:
                 "method_not_allowed",
                 f"{request.method} is not allowed on {request.url.path}",
             ),
+            # Product routes (HW3): no signed-in user, or no database configured.
+            status.HTTP_401_UNAUTHORIZED: ("not_signed_in", str(exc.detail)),
+            status.HTTP_403_FORBIDDEN: ("permission_denied", str(exc.detail)),
+            status.HTTP_503_SERVICE_UNAVAILABLE: ("database_not_configured", str(exc.detail)),
         }
         code, message = known.get(exc.status_code, ("invalid_request", str(exc.detail)))
         record_failure(f"{request.method} {request.url.path}", exc.status_code, code, message)
         return error_response(exc.status_code, code, message, headers=exc.headers)
+
+    @app.exception_handler(OperationalError)
+    @app.exception_handler(InterfaceError)
+    def database_unavailable(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+        # The database (Neon) is unreachable or dropped the connection: a 503 the caller
+        # can wait out, like GET /health/database, not a 500 that reads as a bug.
+        code, message = "database_unavailable", "The database is unreachable; try again later"
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        record_failure(
+            f"{request.method} {request.url.path}",
+            status_code,
+            code,
+            type(exc).__name__,
+        )
+        return error_response(status_code, code, message)
 
     @app.exception_handler(Exception)
     def unexpected_error(_request: Request, _exc: Exception) -> JSONResponse:

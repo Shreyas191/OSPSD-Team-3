@@ -2,10 +2,14 @@
 
 Every row a user owns carries ``user_id``, so each query can be scoped to the signed-in
 user (Level 4). Provider credentials are stored only encrypted. The first migration
-(``migrations/versions/0001_initial.py``) creates exactly these tables; change them only
+(``migrations/versions/0001_initial_schema.py``) and the ones after it create exactly these
+tables; change them only
 through a new migration.
 
 - ``users``: one per person, with the stable identity their sign-in provider gives them.
+- ``sessions``: signed-in sessions, and the short-lived agent tokens made from them; only a
+  hash of each token is stored (migration ``0003``).
+- ``sign_in_attempts``: one Google sign-in in progress, used once (migration ``0003``).
 - ``provider_connections``: a user's Dropbox, Trello or Google Calendar access.
 - ``conversations`` and ``messages``: the agent conversation, turn by turn.
 - ``proposals``: a change set the agent proposed, and ``approvals`` of its exact content.
@@ -50,6 +54,48 @@ class User(Base):
     auth_subject: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UserSession(Base):
+    """A signed-in session, or an agent token made from one. Only the token's hash is kept.
+
+    ``scope`` is ``session`` (the person, through the interface) or ``agent`` (one agent turn:
+    read and propose only). An agent token belongs to its ``parent_id`` session and ends with it.
+    """
+
+    __tablename__ = "sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    scope: Mapped[str] = mapped_column(String(16), default="session")  # session | agent
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SignInAttempt(Base):
+    """One Google sign-in between leaving for Google and coming back. Used at most once.
+
+    ``state_hash`` finds it; ``binding_hash`` ties it to the browser that started it, so a
+    callback carried to another browser fails (threat T9).
+    """
+
+    __tablename__ = "sign_in_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    binding_hash: Mapped[str] = mapped_column(String(64))
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    nonce: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ProviderConnection(Base):
@@ -127,6 +173,12 @@ class Proposal(Base):
     changes_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # While executing: when the run last showed it was alive (claimed, or began a change).
+    # A run silent for too long has stopped, and another run may take it over (migration 0002).
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # While executing: the run that holds the proposal. A run checks it's still this one
+    # before each write and before its final update, so a run that was taken over stops.
+    run_id: Mapped[uuid.UUID | None] = mapped_column()
 
 
 class Approval(Base):
@@ -145,7 +197,11 @@ class Approval(Base):
 
 
 class ChangeOutcome(Base):
-    """What happened to one change of an approved proposal: completed, failed or uncertain."""
+    """What happened to one change of an approved proposal.
+
+    ``started`` is saved just before the provider write, so a run that stops before it can
+    save the outcome leaves a trace; the next run turns it into ``uncertain``.
+    """
 
     __tablename__ = "change_outcomes"
     __table_args__ = (UniqueConstraint("proposal_id", "change_index"),)
@@ -153,7 +209,7 @@ class ChangeOutcome(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id", ondelete="CASCADE"))
     change_index: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String(16))  # completed | failed | uncertain
+    status: Mapped[str] = mapped_column(String(16))  # started | completed | failed | uncertain
     detail: Mapped[str] = mapped_column(Text, default="")
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

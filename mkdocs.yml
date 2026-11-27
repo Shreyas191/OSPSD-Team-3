@@ -43,6 +43,8 @@ nav:
   - 'Database Backup (HW3)': 'database-backup.md'
   - 'Launch Readiness (HW3)': 'readiness.md'
   - 'Failure Analysis (HW3)': 'failure-analysis.md'
+  - 'Assumption Tests (HW3)': 'assumption-tests.md'
+  - 'Rollout and Recovery (HW3)': 'rollout.md'
   - 'API Reference':
     - 'Cloud Storage Client API': 'api/cloud_storage_client_api.md'
     - 'Dropbox Client Implementation': 'api/dropbox_client_impl.md'
