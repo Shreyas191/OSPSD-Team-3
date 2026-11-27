@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Your connections · Course Autopilot{% endblock %}
+{% block content %}
+<h1>Your connections</h1>
+<p>Course Autopilot works in your own accounts, and only changes them when you approve a plan.
+You can disconnect any of them here at any time.</p>
+<table>
+  <thead>
+    <tr><th scope="col">Account</th><th scope="col">Used for</th><th scope="col">Status</th>
+        <th scope="col"><span class="visually-hidden">Actions</span></th></tr>
+  </thead>
+  <tbody>
+    {% for c in connections %}
+    <tr>
+      <td>{{ c.title }}</td>
+      <td>{{ uses.get(c.provider, "") }}</td>
+      {% if not c.available %}
+      <td>Not available on this site yet</td><td></td>
+      {% elif c.status == "connected" %}
+      <td>Connected{% if c.account %} as {{ c.account }}{% endif %}</td>
+      <td class="actions">
+        {% if c.provider == "trello" %}<a href="/connections/trello/list">Change list</a>{% endif %}
+        <form method="post" action="/connections/{{ c.provider }}/disconnect">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="quiet">Disconnect</button>
+        </form>
+      </td>
+      {% elif c.status == "setup_needed" %}
+      <td>Connected; choose the list for your cards</td>
+      <td class="actions">
+        <a href="/connections/trello/list">Choose a list</a>
+        <form method="post" action="/connections/{{ c.provider }}/disconnect">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="quiet">Disconnect</button>
+        </form>
+      </td>
+      {% else %}
+      <td>{% if c.status == "needs_attention" %}Needs reconnecting{% else %}Not connected{% endif %}</td>
+      <td class="actions">
+        <form method="post" action="/connections/{{ c.provider }}/connect">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit">{% if c.status == "needs_attention" %}Reconnect{% else %}Connect{% endif %}</button>
+        </form>
+        {% if c.status == "needs_attention" %}
+        <form method="post" action="/connections/{{ c.provider }}/disconnect">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="quiet">Disconnect</button>
+        </form>
+        {% endif %}
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p><a href="/">Back to your courses</a></p>
+{% endblock %}

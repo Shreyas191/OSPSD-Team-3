@@ -6,7 +6,16 @@ provider or database; pages get their data from the agent and API services over 
 
 Deployed as `course-web-<env>` by OpenTofu (`infra/web.tf`) and the pipeline
 (`scripts/deploy_web.sh`). So far it has the start page, Google sign-in and sign-out, and the
-signed-in course list (#95, first slice). Conversations, proposal review and outcomes come next.
+signed-in course list (#95, first slice). Until the person's Dropbox is connected and usable,
+the signed-in page says what to connect and links to `/connections`, where the person
+connects, reconnects or disconnects Dropbox, Google Calendar and Trello, and chooses the
+Trello list their cards go to. Conversations, proposal review and outcomes come next.
+
+Each provider sends the browser back to `<PUBLIC_URL>/connections/<provider>/callback`
+(`dropbox`, `google_calendar`, `trello`), so those are the URLs to set in the API service's
+`connections` variable and to register with Dropbox, the Google OAuth client and the Trello
+Power-Up. Trello returns its token in the URL fragment, which no server sees, so its callback
+page loads `static/trello-return.js`, which posts the token back in a form with the CSRF value.
 
 Every form carries a CSRF value that must match the browser's `ca_csrf` cookie. The session
 token lives in the `ca_session` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` when deployed)
@@ -14,7 +23,9 @@ and goes to the API service as `Authorization: Bearer`. Google sends the browser
 `<PUBLIC_URL>/auth/callback`, so that URL must be in the API service's `sign_in_redirect_uris`.
 
 Pages can't be framed by another site (`frame-ancestors 'none'` and `X-Frame-Options: DENY`),
-and the Content-Security-Policy allows nothing inline: styles come from `static/site.css`.
+and the Content-Security-Policy allows nothing inline: styles come from `static/site.css`,
+and the one script from `static/trello-return.js`. Forms may lead only to this site, Google,
+Dropbox and Trello (`form-action`), since connecting redirects the form's post there.
 
 ```bash
 uv run python web_main.py        # http://127.0.0.1:8002

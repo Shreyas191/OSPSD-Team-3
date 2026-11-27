@@ -43,6 +43,36 @@ class Course:
     documents: int
 
 
+@dataclass(frozen=True)
+class Connection:
+    """One provider as the connections page shows it: never a token."""
+
+    provider: str
+    title: str
+    available: bool
+    status: str
+    account: str
+
+
+@dataclass(frozen=True)
+class TrelloList:
+    """A Trello list the person can send their cards to."""
+
+    board: str
+    id: str
+    name: str
+
+
+def _connection(c: dict[str, Any]) -> Connection:
+    return Connection(
+        provider=str(c["provider"]),
+        title=str(c["title"]),
+        available=bool(c["available"]),
+        status=str(c["status"]),
+        account=str(c.get("account") or ""),
+    )
+
+
 class Api:
     """A client for the API service's sign-in and course routes."""
 
@@ -101,3 +131,37 @@ class Api:
             )
             for c in self._call("GET", "/courses", token=token)
         ]
+
+    def connections(self, token: str) -> list[Connection]:
+        """Return each provider and the person's connection to it."""
+        return [_connection(c) for c in self._call("GET", "/connections", token=token)]
+
+    def start_connection(self, token: str, provider: str) -> str:
+        """Begin connecting ``provider``; return where to send the browser."""
+        body = self._call("POST", f"/connections/{provider}/start", token=token)
+        return str(body["authorization_url"])
+
+    def finish_connection(self, token: str, provider: str, state: str, code: str) -> Connection:
+        """Finish connecting ``provider`` with what it sent back (Trello: the token)."""
+        c = self._call(
+            "POST",
+            f"/connections/{provider}/finish",
+            token=token,
+            body={"state": state, "code": code},
+        )
+        return _connection(c)
+
+    def disconnect(self, token: str, provider: str) -> None:
+        """Delete the stored connection and revoke it at the provider."""
+        self._call("DELETE", f"/connections/{provider}", token=token)
+
+    def trello_lists(self, token: str) -> list[TrelloList]:
+        """Return the open lists on the person's open Trello boards."""
+        return [
+            TrelloList(board=str(t["board"]), id=str(t["id"]), name=str(t["name"]))
+            for t in self._call("GET", "/connections/trello/lists", token=token)
+        ]
+
+    def choose_trello_list(self, token: str, list_id: str) -> None:
+        """Choose the list the person's cards go to."""
+        self._call("PUT", "/connections/trello/list", token=token, body={"list_id": list_id})
