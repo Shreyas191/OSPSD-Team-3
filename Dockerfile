@@ -42,9 +42,9 @@ COPY src/ src/
 
 # --no-editable installs the workspace packages themselves into the venv, so the runtime
 # stage needs neither the source tree nor uv.
-# One image runs all three services: main.py starts the API service, agent_main.py the agent
-# service and web_main.py the interface (HW3). Each Cloud Run service picks its entry point
-# with its own start command.
+# One image runs all three services and the backup job: main.py starts the API service,
+# agent_main.py the agent service, web_main.py the interface (HW3) and backup_main.py one
+# database backup. Each picks its entry point with its own start command.
 RUN uv sync --locked --no-dev --no-editable \
       --package cloud-storage-service --package course-agent-service --package course-web
 
@@ -57,11 +57,25 @@ LABEL org.opencontainers.image.title="cloud-storage-service" \
       org.opencontainers.image.source="https://github.com/Shreyas191/OSPSD-Team-3" \
       org.opencontainers.image.revision="${RELEASE}"
 
+# pg_dump for the database backup job (backup_main.py, infra/backup.tf). It must be at least
+# the server's major version, and Neon runs PostgreSQL 18 while Debian trixie ships 17, so
+# it comes from the PostgreSQL project's own repository. Its signing key is kept in the repo
+# (docker/apt.postgresql.org.asc, fingerprint B97B 0AFC AA1A 47F0 44F2 44A0 7FCC 7D46 ACCC
+# 4CF8), so the build doesn't fetch its own trust anchor.
+COPY docker/apt.postgresql.org.asc /usr/share/keyrings/apt.postgresql.org.asc
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends ca-certificates \
+ && echo "deb [signed-by=/usr/share/keyrings/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list \
+ && apt-get update \
+ && apt-get install --yes --no-install-recommends postgresql-client-18 \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
-COPY main.py agent_main.py web_main.py ./
+COPY main.py agent_main.py web_main.py backup_main.py ./
 
 # HOST is 0.0.0.0 so the platform can reach the server; Cloud Run overrides PORT.
 ENV PATH="/app/.venv/bin:${PATH}" \
