@@ -124,7 +124,66 @@ A planned failure on `test`, recovered by a teammate who didn't write the runboo
 
 It needs access to the team's Neon project (Shreyas owns it).
 
-## 7. Results
+## 7. Data loss and recovery time
+
+How much work a failure can lose, and how long until students can use the product again. The times are targets: the measured ones come from HW2's rollback drill; the others are checked by the drills above.
+
+| Failure | Data lost | Back in service within | Basis |
+|---|---|---|---|
+| Bad release, caught by the smoke check | none | 0: it never gets traffic | the pipeline's gate (HW2 [rollback drill](rollback-drill.md), evidence 1) |
+| Bad release that reached users | none in our database; changes it made are kept, and those in students' accounts need finding | **5 minutes** from deciding to roll back: the traffic switch took 4 s, then the smoke check | measured in HW2 for the traffic switch; the rest is assumed |
+| Assistant misbehaving | none | **5 minutes**: one setting, one new revision | assumed; the game day measures a similar change |
+| Database damaged (a bad migration, a bug that overwrites rows), **noticed within 6 hours** | none: restore to just before the damage | **1 hour**: find the time, restore, check | assumed until the restore drill (section 6) |
+| The same, **noticed later** | everything since the last daily backup, up to **24 hours**, if the daily `pg_dump` is adopted; otherwise everything | **2 hours** to restore from the dump | assumed; nothing yet backs this up |
+| Neon or Gemini down | none; turns and executions in progress stop with a fixed message (failure analysis) | when the provider is back | not in our control |
+
+**What a database loss costs students:** their courses, conversations, proposals and outcomes live in our database. The events, cards and documents we made live in their own accounts, so those survive. But a lost `external_records` row means we no longer know a record was ours, and later changes to it are refused as "not created by Course Autopilot". The student can still edit or delete it themselves.
+
+## 8. Reconciling partial external actions
+
+An execution can end with some changes made and others not. Each change's outcome is saved after its write (P3), so the proposal itself says what happened:
+
+| Outcome | Meaning | What we do |
+|---|---|---|
+| `completed` | made and read back | nothing; it is never made again |
+| `failed` | not made (refused before writing) | the student runs the proposal again; only `failed` and not-yet-run changes run |
+| `uncertain` | the write may have happened, but its reply was lost or the read-back differed | never retried automatically. The student checks their calendar. Until #90 adds a way to mark it resolved, the on-duty person helps: if the event is there, record it as completed; if not, mark it failed and let it run again |
+| no outcome, proposal stuck `executing` | the API stopped mid-execution | the runbook's ["A proposal stuck in `executing`"](https://github.com/Shreyas191/OSPSD-Team-3/pull/119) section: check the student's accounts for the change with no outcome, then release the proposal |
+
+**Once a day during launch week**, the on-duty person runs these read-only queries and follows up on anything they find with its student:
+
+```sql
+SELECT id, created_at, decided_at FROM proposals WHERE status = 'executing';
+SELECT proposal_id, change_index, recorded_at FROM change_outcomes WHERE status = 'uncertain';
+```
+
+Until execution logs its outcomes (failure analysis, item 4), these queries are the only way to see partial executions.
+
+## 9. Launch-week coverage, escalation and support
+
+**Proposed for the team to confirm:**
+
+| Day (Dec) | On duty | Backup |
+|---|---|---|
+| Tue 2 | John | Shreyas |
+| Wed 3 | Shreyas | Zesan |
+| Thu 4 | Zesan | Jing |
+| Fri 5 | Jing | Victor |
+| Sat 6 | Victor | John |
+
+- **Hours:** 9:00–21:00 Eastern. Outside them, alerts still email the team and are handled the next morning. If something unsafe happens overnight, whoever sees it first turns the assistant off (section 2), which needs no other decision.
+- **The on-duty person:**
+  - checks the agent and API dashboards at the start, middle and end of the day, and Gemini's daily use in AI Studio;
+  - handles alert emails within 30 minutes during hours, using the runbook;
+  - runs the reconciliation queries (section 8);
+  - answers support requests within 2 hours.
+- **Escalation**, in this order:
+  1. the day's backup;
+  2. **Shreyas** for anything that needs owner access: the Google Cloud project, Neon, the Gemini key's project, or Secret Manager;
+  3. **course staff** for a safety violation that affected another team's users (a change without approval, or one user reading another's data). We tell them the same day, after turning the assistant off.
+- **Support channel:** a GitHub issue in this repository with a `launch-support` label, linked from the interface's footer, so every report has a record and an owner. For students without a GitHub account, the interface also lists the team's contact address. The label and the footer link are to be added with #95.
+
+## 10. Results
 
 | Drill | Date | Result | Findings and fixes |
 |---|---|---|---|
