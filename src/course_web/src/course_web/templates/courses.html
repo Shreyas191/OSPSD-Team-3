@@ -2,7 +2,10 @@
 {% block title %}Your courses · Course Autopilot{% endblock %}
 {% block content %}
 <h1>Your courses</h1>
-{% if courses %}
+{% if prompt %}
+<p><strong>{{ prompt.title }}</strong></p>
+<p>{{ prompt.detail }}</p>
+{% elif courses %}
 <table>
   <thead>
     <tr><th scope="col">Course</th><th scope="col" class="count">Deadlines</th>
