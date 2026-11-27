@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Your courses · Course Autopilot{% endblock %}
+{% block content %}
+<h1>Your courses</h1>
+{% if courses %}
+<table>
+  <thead>
+    <tr><th scope="col">Course</th><th scope="col" class="count">Deadlines</th>
+        <th scope="col" class="count">Tasks</th><th scope="col" class="count">Documents</th></tr>
+  </thead>
+  <tbody>
+    {% for c in courses %}
+    <tr><td>{{ c.course }}</td><td class="count">{{ c.events }}</td>
+        <td class="count">{{ c.issues }}</td><td class="count">{{ c.documents }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>You have no courses yet. Each course you set up appears here, with the deadlines, tasks
+and documents Course Autopilot added for it.</p>
+{% endif %}
+{% endblock %}

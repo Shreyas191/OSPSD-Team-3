@@ -2,8 +2,25 @@
 #
 # It runs the same image as the other two services (the pipeline deploys one image to all
 # three), with web_main.py as its entry point. Its runtime identity can read no secret: the
-# interface holds only the browser's session cookie and gets everything else from the API
-# and agent services (DESIGN.md, P4).
+# interface holds only the browser's cookies and gets everything else from the API service
+# (DESIGN.md, P4).
+
+# Cloud Run serves a service at two addresses: a hash-based one (its `uri`) and a deterministic
+# one, https://SERVICE-PROJECT_NUMBER.REGION.run.app, known before the service exists. Cookies
+# belong to one host, and Google, Dropbox and Trello match redirect URIs exactly, so the
+# interface uses one: the deterministic address. The service is told it (PUBLIC_URL; it can't
+# read its own `uri`), sends page requests on the other address there, and the
+# `web_service_urls` output gives it for sign_in_redirect_uris and the connections' redirects.
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+locals {
+  web_urls = {
+    for env in var.environments :
+    env => "https://course-web-${env}-${data.google_project.current.number}.${var.region}.run.app"
+  }
+}
 
 resource "google_service_account" "web_runtime" {
   for_each = var.environments
@@ -44,6 +61,20 @@ resource "google_cloud_run_v2_service" "web" {
           memory = "512Mi"
         }
         cpu_idle = true
+      }
+
+      # The only service the interface calls in this slice; sign-in and every check happen
+      # there (DESIGN.md, P4).
+      env {
+        name  = "API_BASE_URL"
+        value = google_cloud_run_v2_service.service[each.key].uri
+      }
+
+      # Google sends the browser back to <PUBLIC_URL>/auth/callback, which must be listed in
+      # sign_in_redirect_uris for the API service (the web_service_urls output).
+      env {
+        name  = "PUBLIC_URL"
+        value = local.web_urls[each.key]
       }
 
       startup_probe {

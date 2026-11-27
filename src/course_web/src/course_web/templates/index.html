@@ -4,5 +4,12 @@
 <p>Course Autopilot reads your syllabi and proposes a plan for each course: deadlines in your
 Google Calendar, tasks on your Trello board and a reference document in your Dropbox.
 Nothing is added until you have reviewed and approved each change.</p>
+{% if sign_in_open %}
+<form method="post" action="/sign-in">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit">Sign in with Google</button>
+</form>
+{% else %}
 <p>Sign-in and course setup open for launch week, December 2–6.</p>
+{% endif %}
 {% endblock %}
