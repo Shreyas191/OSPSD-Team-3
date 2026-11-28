@@ -447,14 +447,19 @@ class TrelloConnector:
             raise _unreachable(self.title) from None
 
     def authorization_url(self, state: str, _code_challenge: str) -> str:
-        """Return Trello's authorize URL for a read and write token that doesn't expire."""
+        """Return Trello's authorize URL for a read and write token that expires in 30 days.
+
+        The token comes back in the return URL's fragment, so the browser's history keeps it
+        (T10). Expiring it bounds how long a copy found there works; after that, Trello refuses
+        it and the connection is marked ``needs_attention`` ("Reconnect Trello").
+        """
         return_url = f"{self._settings.return_url}?{urlencode({'state': state})}"
         query = urlencode(
             {
                 "key": self._settings.api_key,
                 "name": APP_NAME,
                 "scope": "read,write",
-                "expiration": "never",
+                "expiration": "30days",
                 "response_type": "token",
                 "callback_method": "fragment",
                 "return_url": return_url,
