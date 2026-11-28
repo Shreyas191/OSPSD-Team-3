@@ -2,7 +2,11 @@
 {% block title %}Your courses · Course Autopilot{% endblock %}
 {% block content %}
 <h1>Your courses</h1>
-{% if courses %}
+{% if prompt %}
+<p><strong>{{ prompt.title }}</strong></p>
+<p>{{ prompt.detail }}</p>
+{% if prompt.link %}<p><a href="/connections">Connect your accounts</a></p>{% endif %}
+{% elif courses %}
 <table>
   <thead>
     <tr><th scope="col">Course</th><th scope="col" class="count">Deadlines</th>
@@ -18,5 +22,11 @@
 {% else %}
 <p>You have no courses yet. Each course you set up appears here, with the deadlines, tasks
 and documents Course Autopilot added for it.</p>
+{% endif %}
+{% if not prompt %}
+<form method="post" action="/chat">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <p><button type="submit">Ask the assistant</button></p>
+</form>
 {% endif %}
 {% endblock %}

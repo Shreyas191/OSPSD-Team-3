@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Your conversation · Course Autopilot{% endblock %}
+{% block content %}
+<h1>Ask the assistant</h1>
+<p>The assistant reads your course documents and prepares changes for you to review. It
+never changes anything by itself: you approve each change set first.</p>
+
+{% if entries %}
+<ol class="chat">
+  {% for e in entries %}
+  <li class="{{ e.role }}">
+    <span class="who">{% if e.role == "student" %}You{% else %}Assistant{% endif %}</span>
+    {# Shown as text: the reply can't add links, markup or anything that loads. #}
+    <p class="said">{{ e.text }}</p>
+    {% if e.proposal_id %}<p><a href="/proposals/{{ e.proposal_id }}?conversation={{ conversation_id }}">Review the proposed changes</a></p>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p>Ask about a course, for example: <q>Set up CS-GY 6083 from its syllabus.</q></p>
+{% endif %}
+
+{% if notice %}<p class="notice" role="alert">{{ notice }}</p>{% endif %}
+
+{% if assistant_open %}
+<form method="post" action="/chat/{{ conversation_id }}" data-busy="Working on it… this can take up to a minute.">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="text">Your message</label>
+  <textarea id="text" name="text" rows="4" maxlength="{{ max_length }}" required>{{ draft }}</textarea>
+  <p><button type="submit">Send</button> <span class="busy" aria-live="polite"></span></p>
+</form>
+{% else %}
+<p>The assistant isn't open on this site yet. Your courses and approvals still work.</p>
+{% endif %}
+<p><a href="/">Back to your courses</a></p>
+<script src="/static/busy.js"></script>
+{% endblock %}

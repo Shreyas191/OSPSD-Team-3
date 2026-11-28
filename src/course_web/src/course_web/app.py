@@ -18,11 +18,12 @@ import hmac
 import logging
 import os
 import secrets
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Form, Request, Response
@@ -30,8 +31,18 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from course_web.backend import TIMEOUT_SECONDS, Api, BackendError
+from course_web.backend import (
+    AGENT_TIMEOUT_SECONDS,
+    TIMEOUT_SECONDS,
+    Agent,
+    Api,
+    BackendError,
+    ChatEntry,
+    Proposal,
+    TrelloList,
+)
 from course_web.config import Settings
+from course_web.views import STATUSES, change_views
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +51,7 @@ SIGN_IN_COOKIE = "ca_sign_in"
 CSRF_COOKIE = "ca_csrf"
 SESSION_MAX_AGE = 7 * 24 * 60 * 60
 SIGN_IN_MAX_AGE = 10 * 60
+MAX_MESSAGE_CHARACTERS = 4000  # the agent service's limit on one message
 
 # Pages are personal and short-lived: never cached, never framed (no other site can overlay
 # an approve button and trick a click), and no referrer, so the sign-in callback's code never
@@ -47,7 +59,9 @@ SIGN_IN_MAX_AGE = 10 * 60
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; base-uri 'none'; "
-        "form-action 'self' https://accounts.google.com; frame-ancestors 'none'"
+        # Forms post here; sign-in and connecting accounts then redirect to these providers.
+        "form-action 'self' https://accounts.google.com https://www.dropbox.com "
+        "https://trello.com; frame-ancestors 'none'"
     ),
     "X-Frame-Options": "DENY",  # frame-ancestors, for browsers that predate it
     "Referrer-Policy": "no-referrer",
@@ -69,17 +83,21 @@ def check_configuration() -> Settings:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Read the settings and open one HTTP client to the API service for the app's life."""
+    """Read the settings and open one HTTP client to each service for the app's life."""
     settings = check_configuration()
     app.state.settings = settings
-    http = (
-        httpx.Client(base_url=settings.api_base_url, timeout=TIMEOUT_SECONDS)
-        if settings.api_base_url
-        else None
-    )
-    app.state.api = Api(http) if http else None
+    clients = []
+    app.state.api = app.state.agent = None
+    if settings.api_base_url:
+        clients.append(httpx.Client(base_url=settings.api_base_url, timeout=TIMEOUT_SECONDS))
+        app.state.api = Api(clients[-1])
+    if settings.agent_base_url:
+        clients.append(
+            httpx.Client(base_url=settings.agent_base_url, timeout=AGENT_TIMEOUT_SECONDS),
+        )
+        app.state.agent = Agent(clients[-1])
     yield
-    if http is not None:
+    for http in clients:
         http.close()
 
 
@@ -149,6 +167,11 @@ def _api(request: Request) -> Api | None:
     return api
 
 
+def _agent(request: Request) -> Agent | None:
+    agent: Agent | None = getattr(request.app.state, "agent", None)
+    return agent
+
+
 def _release() -> str:
     return os.environ.get("RELEASE", "unknown")
 
@@ -200,12 +223,25 @@ def render(
     return response
 
 
-def error_page(request: Request, status_code: int, title: str, next_step: str) -> HTMLResponse:
-    """Render an error with what to do next."""
+def error_page(  # noqa: PLR0913 (the page, its words and where it points back to)
+    request: Request,
+    status_code: int,
+    title: str,
+    next_step: str,
+    back: str = "/",
+    back_label: str = "Back to Course Autopilot",
+) -> HTMLResponse:
+    """Render an error with what to do next, and a link back."""
     return render(
         request,
         "error.html",
-        {"title": title, "next_step": next_step, "signed_in": SESSION_COOKIE in request.cookies},
+        {
+            "title": title,
+            "next_step": next_step,
+            "back": back,
+            "back_label": back_label,
+            "signed_in": SESSION_COOKIE in request.cookies,
+        },
         status_code=status_code,
     )
 
@@ -249,6 +285,30 @@ def _csrf_refused(request: Request, _exc: CsrfError) -> HTMLResponse:
 CheckedForm = Annotated[None, Depends(check_csrf)]
 
 
+# The course list reads the person's own Dropbox, so the API answers with one of these until
+# Dropbox is connected and usable. For a new user that is the next step, not an error: the
+# signed-in page says what to do, keeping the session. Keyed by the API's error code.
+CONNECT_PROMPTS = {
+    "not_connected": (
+        "Connect your Dropbox to see your courses",
+        "Course Autopilot keeps each course's syllabus and plan in a folder in your Dropbox.",
+    ),
+    "reconnect_needed": (
+        "Reconnect your Dropbox to see your courses",
+        "Dropbox no longer accepts Course Autopilot's access, for example after it was removed "
+        "in Dropbox's settings. Nothing in your Dropbox was changed.",
+    ),
+    "setup_needed": (
+        "Finish connecting your accounts",
+        "",  # the API's message names the step, e.g. choosing the Trello list
+    ),
+    "connections_not_configured": (
+        "Connecting accounts isn't open on this site yet",
+        "Your courses appear here once it is. Try again later.",
+    ),
+}
+
+
 @app.get("/", response_class=HTMLResponse)
 def start_page(request: Request) -> HTMLResponse:
     """Render the person's courses when signed in; otherwise the start page with sign-in."""
@@ -257,6 +317,15 @@ def start_page(request: Request) -> HTMLResponse:
         try:
             courses = api.courses(token)
         except BackendError as e:
+            if e.code in CONNECT_PROMPTS and e.status in {409, 503}:
+                title, detail = CONNECT_PROMPTS[e.code]
+                prompt = {
+                    "title": title,
+                    "detail": detail or e.message,
+                    # Nothing to connect while connections are off on this service.
+                    "link": e.code != "connections_not_configured",
+                }
+                return render(request, "courses.html", {"prompt": prompt, "signed_in": True})
             if e.status != 401:  # noqa: PLR2004 (HTTP status)
                 return backend_error_page(request, e)
             # The session ended (expired, or signed out elsewhere): show the start page.
@@ -336,6 +405,603 @@ def sign_out(request: Request, _csrf: CheckedForm) -> Response:
     response = RedirectResponse("/", status_code=303)
     _delete_cookie(request, response, SESSION_COOKIE)
     return response
+
+
+# ----- Connections: the person's own Dropbox, Google Calendar and Trello (#95; API #98-#101) -----
+
+PROVIDERS = {"dropbox": "Dropbox", "google_calendar": "Google Calendar", "trello": "Trello"}
+# What each account holds, in the person's terms (DESIGN.md, the three verticals).
+USES = {
+    "dropbox": "Your syllabi and course plans, in an app folder",
+    "google_calendar": "Deadlines, as events",
+    "trello": "Tasks, as cards in a list you choose",
+}
+BACK_TO_CONNECTIONS = {"back": "/connections", "back_label": "Back to your connections"}
+
+
+def _session(request: Request) -> tuple[Api, str] | Response:
+    """Return the API and the session token, or the page to show instead."""
+    api, token = _api(request), request.cookies.get(SESSION_COOKIE)
+    if api is None:
+        return error_page(
+            request,
+            503,
+            "Connecting accounts isn't open on this site yet",
+            "Try again later.",
+        )
+    if not token:
+        return RedirectResponse("/", status_code=303)  # sign in first
+    return api, token
+
+
+def _unknown_provider(request: Request) -> HTMLResponse:
+    return error_page(
+        request,
+        404,
+        "There's no such account to connect",
+        "Choose one from your connections.",
+        **BACK_TO_CONNECTIONS,
+    )
+
+
+def _connection_error(request: Request, e: BackendError, title: str) -> HTMLResponse:
+    """Render a refused or failed connection step, pointing back to the connections page."""
+    if e.status == 401 or e.status >= 500:  # noqa: PLR2004 (HTTP status)
+        return backend_error_page(request, e)
+    if e.code == "connect_failed":
+        return error_page(
+            request,
+            400,
+            f"{title} didn't connect",
+            "Nothing was saved. Connect it again from your connections.",
+            **BACK_TO_CONNECTIONS,
+        )
+    return error_page(
+        request,
+        e.status,
+        e.message or f"{title} didn't connect",
+        "Go back to your connections and try again.",
+        **BACK_TO_CONNECTIONS,
+    )
+
+
+@app.get("/connections", response_model=None)
+def connections_page(request: Request) -> Response:
+    """Show each provider: connected or not, and what to do next."""
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        connections = api.connections(token)
+    except BackendError as e:
+        if e.code == "connections_not_configured":
+            return error_page(
+                request,
+                503,
+                "Connecting accounts isn't open on this site yet",
+                "Try again later.",
+            )
+        return backend_error_page(request, e)
+    return render(
+        request,
+        "connections.html",
+        {"connections": connections, "uses": USES, "signed_in": True},
+    )
+
+
+@app.post("/connections/{provider}/connect", response_model=None)
+def connect(request: Request, provider: str, _csrf: CheckedForm) -> Response:
+    """Start connecting a provider and send the browser to it."""
+    if provider not in PROVIDERS:
+        return _unknown_provider(request)
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        url = api.start_connection(token, provider)
+    except BackendError as e:
+        return _connection_error(request, e, PROVIDERS[provider])
+    return RedirectResponse(url, status_code=303)
+
+
+def _finish(request: Request, provider: str, state: str, code: str) -> Response:
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        connection = api.finish_connection(token, provider, state, code)
+    except BackendError as e:
+        return _connection_error(request, e, PROVIDERS[provider])
+    # Trello isn't usable until the person picks the list their cards go to.
+    target = "/connections/trello/list" if connection.status == "setup_needed" else "/connections"
+    return RedirectResponse(target, status_code=303)
+
+
+@app.get("/connections/{provider}/callback", response_model=None)
+def connection_callback(
+    request: Request,
+    provider: str,
+    state: str = "",
+    code: str = "",
+    error: str = "",
+) -> Response:
+    """Where each provider sends the browser back.
+
+    Dropbox and Google put ``state`` and ``code`` in the query. Trello puts its token in the
+    URL fragment, which never reaches a server, so its page hands the token to a script that
+    posts it back (``static/trello-return.js``). The API ties each attempt to the session that
+    started it and uses it once, so a callback finished in another session fails there (T9).
+    """
+    if provider not in PROVIDERS:
+        return _unknown_provider(request)
+    title = PROVIDERS[provider]
+    if error or not state:
+        return error_page(
+            request,
+            400,
+            f"{title} wasn't connected",
+            "Nothing was saved. Connect it again when you're ready.",
+            **BACK_TO_CONNECTIONS,
+        )
+    if provider == "trello":
+        return render(request, "trello_return.html", {"state": state, "signed_in": True})
+    if not code:
+        return error_page(
+            request,
+            400,
+            f"{title} wasn't connected",
+            "Nothing was saved. Connect it again when you're ready.",
+            **BACK_TO_CONNECTIONS,
+        )
+    return _finish(request, provider, state, code)
+
+
+@app.post("/connections/trello/finish", response_model=None)
+def finish_trello(
+    request: Request,
+    _csrf: CheckedForm,
+    state: Annotated[str, Form()] = "",
+    token: Annotated[str, Form()] = "",
+) -> Response:
+    """Finish connecting Trello with the token its return page posted."""
+    if not state or not token:
+        return error_page(
+            request,
+            400,
+            "Trello wasn't connected",
+            "Nothing was saved. Connect it again when you're ready.",
+            **BACK_TO_CONNECTIONS,
+        )
+    return _finish(request, "trello", state, token)
+
+
+@app.get("/connections/trello/list", response_model=None)
+def trello_list_page(request: Request) -> Response:
+    """Let the person choose the Trello list their cards go to."""
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        lists = api.trello_lists(token)
+    except BackendError as e:
+        return _connection_error(request, e, "Trello")
+    boards: dict[str, list[TrelloList]] = {}
+    for item in lists:
+        boards.setdefault(item.board, []).append(item)
+    return render(request, "trello_list.html", {"boards": boards, "signed_in": True})
+
+
+@app.post("/connections/trello/list", response_model=None)
+def choose_trello_list(
+    request: Request,
+    _csrf: CheckedForm,
+    list_id: Annotated[str, Form()] = "",
+) -> Response:
+    """Save the chosen Trello list."""
+    if not list_id:
+        return error_page(
+            request,
+            400,
+            "Choose a list first",
+            "Pick the list your cards should go to.",
+            back="/connections/trello/list",
+            back_label="Back to your Trello lists",
+        )
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.choose_trello_list(token, list_id)
+    except BackendError as e:
+        return _connection_error(request, e, "Trello")
+    return RedirectResponse("/connections", status_code=303)
+
+
+@app.post("/connections/{provider}/disconnect", response_model=None)
+def disconnect(request: Request, provider: str, _csrf: CheckedForm) -> Response:
+    """Forget the connection here and revoke it at the provider."""
+    if provider not in PROVIDERS:
+        return _unknown_provider(request)
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.disconnect(token, provider)
+    except BackendError as e:
+        return _connection_error(request, e, PROVIDERS[provider])
+    return RedirectResponse("/connections", status_code=303)
+
+
+# ----- Conversations and proposals (#95; agent #94, proposals #89 and #90) -----
+#
+# A turn goes to the agent service with an agent token made for that one turn: it can read
+# and propose, never approve or execute (identity.py, T14). Approving, rejecting, executing
+# and settling go to the API with the person's own session, from forms on our pages only.
+
+# Shown after a redirect, chosen by key: no text from the URL ever reaches the page.
+NOTICES = {
+    "kept": "Here are the changes you kept. Nothing has been approved yet: review them and "
+    "approve.",
+    "paused": "Making changes is paused on this site right now. Your approval is kept: "
+    "try again later.",
+    "none_kept": "You unchecked every change, so the proposal was rejected. Nothing was changed.",
+    "settled": "Thanks. That change is recorded.",
+    "kept_old_open": "Here are the changes you kept. Nothing has been approved yet. The "
+    "earlier proposal couldn't be rejected, so it's still open: approve only this one.",
+    "running": "The changes are still being made. Wait a few minutes, reload this page, and "
+    "run them again if it hasn't finished.",
+}
+
+# A turn the agent service refused: what the person sees above the message box.
+TURN_ERRORS = {
+    "assistant_busy": "The assistant is busy right now. Try again in a minute.",
+    "daily_limit_reached": "You've reached today's limit for the assistant. Your course "
+    "plans and approvals still work.",
+    "not_connected": "Connect your accounts first: the assistant reads your Dropbox.",
+    "reconnect_needed": "Reconnect your accounts: Dropbox no longer accepts Course "
+    "Autopilot's access.",
+}
+UNAVAILABLE = "The assistant isn't available right now. Your courses and approvals still work."
+
+
+def _turn_refused(e: BackendError) -> tuple[str, int]:
+    """Return what to tell the person about a turn the agent side refused, and the status."""
+    if e.status == 401:  # noqa: PLR2004 (HTTP status)
+        # The agent side refused the turn's token, not the session, which the API had just
+        # accepted (clock skew, a misconfiguration): the person stays signed in.
+        return UNAVAILABLE, 503
+    message = TURN_ERRORS.get(e.code) or (UNAVAILABLE if e.status >= 500 else e.message)  # noqa: PLR2004
+    return message or UNAVAILABLE, e.status
+
+
+def _valid_id(value: str) -> bool:
+    """Whether ``value`` is a UUID, so it can go into an API path as one segment."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _not_found(request: Request, what: str) -> HTMLResponse:
+    return error_page(request, 404, f"There's no such {what}", "Go back to your courses.")
+
+
+def _chat_page(  # noqa: PLR0913 (the page and what it shows)
+    request: Request,
+    conversation_id: str,
+    entries: list[ChatEntry],
+    notice: str = "",
+    draft: str = "",
+    status_code: int = 200,
+) -> HTMLResponse:
+    return render(
+        request,
+        "chat.html",
+        {
+            "conversation_id": conversation_id,
+            "entries": entries,
+            "notice": notice,
+            "draft": draft,
+            "assistant_open": _agent(request) is not None,
+            "max_length": MAX_MESSAGE_CHARACTERS,
+            "signed_in": True,
+        },
+        status_code=status_code,
+    )
+
+
+@app.post("/chat", response_model=None)
+def new_conversation(request: Request, _csrf: CheckedForm) -> Response:
+    """Start a conversation with the assistant."""
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        conversation_id = api.create_conversation(token)
+    except BackendError as e:
+        return backend_error_page(request, e)
+    return RedirectResponse(f"/chat/{conversation_id}", status_code=303)
+
+
+@app.get("/chat/{conversation_id}", response_model=None)
+def conversation_page(request: Request, conversation_id: str) -> Response:
+    """Show a conversation and a box for the next message."""
+    if not _valid_id(conversation_id):
+        return _not_found(request, "conversation")
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        entries = api.conversation(token, conversation_id)
+    except BackendError as e:
+        if e.status == 404:  # noqa: PLR2004 (HTTP status)
+            return _not_found(request, "conversation")
+        return backend_error_page(request, e)
+    return _chat_page(request, conversation_id, entries)
+
+
+@app.post("/chat/{conversation_id}", response_model=None)
+def send_message(  # noqa: PLR0911 (each way a turn can end)
+    request: Request,
+    conversation_id: str,
+    _csrf: CheckedForm,
+    text: Annotated[str, Form()] = "",
+) -> Response:
+    """Run one turn with what the person wrote, then show the conversation again."""
+    if not _valid_id(conversation_id):
+        return _not_found(request, "conversation")
+    session = _session(request)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    agent, text = _agent(request), text.strip()
+
+    def again(notice: str, status_code: int) -> Response:
+        try:
+            entries = api.conversation(token, conversation_id)
+        except BackendError as e:
+            return backend_error_page(request, e)
+        return _chat_page(request, conversation_id, entries, notice, text, status_code)
+
+    if agent is None:
+        return again("The assistant isn't open on this site yet.", 503)
+    if not text or len(text) > MAX_MESSAGE_CHARACTERS:
+        return again(f"Write a message of 1 to {MAX_MESSAGE_CHARACTERS} characters.", 400)
+    try:
+        # A fresh agent token for this turn: it ends with the session, and in 5 minutes.
+        agent_token = api.agent_token(token)
+    except BackendError as e:
+        return backend_error_page(request, e)  # the API refused the session itself: sign in
+    try:
+        agent.take_turn(agent_token, conversation_id, text)
+    except BackendError as e:
+        if e.status == 404:  # noqa: PLR2004 (HTTP status)
+            return _not_found(request, "conversation")
+        return again(*_turn_refused(e))
+    # The reply is stored with the conversation; showing it from there keeps reloads safe.
+    return RedirectResponse(f"/chat/{conversation_id}", status_code=303)
+
+
+def _proposal_url(proposal_id: str, notice: str = "", conversation: str = "") -> str:
+    """Return a proposal page's address, keeping the conversation it came from."""
+    query = {k: v for k, v in (("notice", notice), ("conversation", conversation)) if v}
+    return f"/proposals/{proposal_id}" + (f"?{urlencode(query)}" if query else "")
+
+
+def _proposal_page(
+    request: Request,
+    proposal: Proposal,
+    notice: str = "",
+    conversation: str = "",
+    status_code: int = 200,
+) -> HTMLResponse:
+    return render(
+        request,
+        "proposal.html",
+        {
+            "proposal": proposal,
+            "changes": change_views(proposal.changes, proposal.outcomes),
+            "status_text": STATUSES.get(proposal.status, proposal.status),
+            "notice": notice,
+            "conversation": conversation,
+            "signed_in": True,
+        },
+        status_code=status_code,
+    )
+
+
+def _proposal_error(request: Request, e: BackendError, proposal_id: str) -> Response:
+    """Render a refused proposal step: what to do next, pointing back to the proposal."""
+    if e.status == 401 or (e.status >= 500 and e.code != "execution_disabled"):  # noqa: PLR2004
+        return backend_error_page(request, e)
+    if e.status == 404:  # noqa: PLR2004 (HTTP status)
+        return _not_found(request, "proposal")
+    if e.code == "execution_disabled":
+        return RedirectResponse(f"/proposals/{proposal_id}?notice=paused", status_code=303)
+    return error_page(
+        request,
+        e.status,
+        e.message or "That didn't work",
+        "Nothing else was changed. Go back to the proposal, reload it and try again.",
+        back=f"/proposals/{proposal_id}",
+        back_label="Back to the proposal",
+    )
+
+
+def _proposal_session(request: Request, proposal_id: str) -> tuple[Api, str] | Response:
+    if not _valid_id(proposal_id):
+        return _not_found(request, "proposal")
+    return _session(request)
+
+
+@app.get("/proposals/{proposal_id}", response_model=None)
+def proposal_page(
+    request: Request,
+    proposal_id: str,
+    notice: str = "",
+    conversation: str = "",
+) -> Response:
+    """Show every proposed change exactly as stored, its outcome, and what to do next.
+
+    ``conversation`` is the chat the person came from (the API's proposal doesn't name it): it
+    links back there, and a proposal made from kept changes joins the same conversation.
+    """
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        proposal = api.proposal(token, proposal_id)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    conversation = conversation if _valid_id(conversation) else ""
+    return _proposal_page(request, proposal, NOTICES.get(notice, ""), conversation)
+
+
+@app.post("/proposals/{proposal_id}/approve", response_model=None)
+def approve(  # noqa: PLR0911 (each outcome of approving)
+    request: Request,
+    proposal_id: str,
+    _csrf: CheckedForm,
+    changes_hash: Annotated[str, Form()] = "",
+    keep: Annotated[list[str] | None, Form()] = None,
+    conversation_id: Annotated[str, Form()] = "",
+) -> Response:
+    """Approve exactly the changes the page showed, and make them; or drop unchecked ones.
+
+    If every change is still checked, the proposal is approved with the hash of the content
+    the page showed (the API refuses any other) and then run. If some were unchecked,
+    nothing is approved: this proposal is rejected and a new one with the kept changes is
+    shown for review, so the person approves exactly what will happen (S1, step 6). The new
+    one is made before this one is rejected, so a failure leaves the person's proposal as it was.
+    """
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    if not all(k.isdigit() for k in keep or []):
+        return error_page(
+            request,
+            400,
+            "That form wasn't one of ours",
+            "Nothing was approved. Go back to the proposal and try again.",
+            back=f"/proposals/{proposal_id}",
+            back_label="Back to the proposal",
+        )
+    conversation = conversation_id if _valid_id(conversation_id) else ""
+    try:
+        proposal = api.proposal(token, proposal_id)
+        if proposal.changes_hash != changes_hash:
+            return error_page(
+                request,
+                409,
+                "These changes are different from the ones you reviewed",
+                "Nothing was approved. Go back, review the proposal again, and approve it.",
+                back=f"/proposals/{proposal_id}",
+                back_label="Back to the proposal",
+            )
+        kept = sorted({int(k) for k in keep or [] if int(k) < len(proposal.changes)})
+        if not kept:
+            api.reject(token, proposal_id)
+            return RedirectResponse(
+                _proposal_url(proposal_id, "none_kept", conversation),
+                status_code=303,
+            )
+        if len(kept) < len(proposal.changes):
+            changes = [proposal.changes[i] for i in kept]
+            new = api.create_proposal(token, changes, conversation or None)
+            notice = "kept"
+            try:
+                api.reject(token, proposal_id)
+            except BackendError:
+                notice = "kept_old_open"  # the new one exists: show it, and say so
+            return RedirectResponse(_proposal_url(new.id, notice, conversation), status_code=303)
+        api.approve(token, proposal_id, changes_hash)
+        api.execute(token, proposal_id)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(_proposal_url(proposal_id, conversation=conversation), status_code=303)
+
+
+@app.post("/proposals/{proposal_id}/reject", response_model=None)
+def reject(request: Request, proposal_id: str, _csrf: CheckedForm) -> Response:
+    """Reject the whole proposal: nothing is changed."""
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.reject(token, proposal_id)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
+
+
+def _still_running(api: Api, token: str, proposal_id: str) -> bool:
+    try:
+        return api.proposal(token, proposal_id).status == "executing"
+    except BackendError:
+        return False
+
+
+@app.post("/proposals/{proposal_id}/execute", response_model=None)
+def execute(request: Request, proposal_id: str, _csrf: CheckedForm) -> Response:
+    """Make an approved proposal's changes, retry failed ones, or take over a stopped run.
+
+    A proposal left ``executing`` by a run that stopped can run again once the API sees the run
+    has been silent long enough; until then the API answers 409, and the page says to wait.
+    """
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    try:
+        api.execute(token, proposal_id)
+    except BackendError as e:
+        if e.status == 409 and _still_running(api, token, proposal_id):  # noqa: PLR2004
+            return RedirectResponse(_proposal_url(proposal_id, "running"), status_code=303)
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
+
+
+@app.post("/proposals/{proposal_id}/changes/{change_index}/resolve", response_model=None)
+def resolve(
+    request: Request,
+    proposal_id: str,
+    change_index: int,
+    _csrf: CheckedForm,
+    happened: Annotated[str, Form()] = "",
+    record_id: Annotated[str, Form()] = "",
+) -> Response:
+    """Record what the person found when they checked an uncertain change."""
+    session = _proposal_session(request, proposal_id)
+    if isinstance(session, Response):
+        return session
+    api, token = session
+    if happened not in {"yes", "no"}:
+        return error_page(
+            request,
+            400,
+            "Say whether the change happened",
+            "Go back and choose one.",
+            back=f"/proposals/{proposal_id}",
+            back_label="Back to the proposal",
+        )
+    status = "completed" if happened == "yes" else "failed"
+    try:
+        api.resolve(token, proposal_id, change_index, status, record_id.strip() or None)
+    except BackendError as e:
+        return _proposal_error(request, e, proposal_id)
+    return RedirectResponse(f"/proposals/{proposal_id}?notice=settled", status_code=303)
 
 
 @app.get("/health")

@@ -3,6 +3,7 @@
 from html import unescape
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from course_web.app import CSRF_COOKIE, SESSION_COOKIE, SIGN_IN_COOKIE
@@ -214,6 +215,56 @@ def test_an_ended_session_shows_sign_in_again_and_clears_the_cookie(
         for c in _set_cookie_headers(response)
     )
     assert fake_api.calls == [("GET", "/courses", "expired-token", None)]
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "says"),
+    [
+        (409, "not_connected", "Connect your Dropbox to see your courses"),
+        (409, "reconnect_needed", "Reconnect your Dropbox to see your courses"),
+        (409, "setup_needed", "Finish connecting your accounts"),
+        (503, "connections_not_configured", "Connecting accounts isn't open on this site yet"),
+    ],
+)
+def test_a_new_user_without_connections_is_told_what_to_connect(
+    fake_api: FakeApi,
+    browser: TestClient,
+    status: int,
+    code: str,
+    says: str,
+) -> None:
+    """Before Dropbox is connected, the signed-in page says what to connect, not an error."""
+    fake_api.fail["GET /courses"] = (status, code)
+    _signed_in(browser)
+
+    response = browser.get("/")
+
+    assert response.status_code == 200
+    assert says in _text(response)
+    assert "Sign out" in response.text  # still signed in: the session is kept
+    assert not any(c.startswith(f"{SESSION_COOKIE}=") for c in _set_cookie_headers(response))
+
+
+def test_the_api_message_names_the_setup_step(fake_api: FakeApi, browser: TestClient) -> None:
+    """For a step only the API can name (the Trello list), its message is shown."""
+    fake_api.fail["GET /courses"] = (409, "setup_needed")
+    _signed_in(browser)
+
+    response = browser.get("/")
+
+    assert response.status_code == 200
+    assert "Refused" in response.text  # FakeApi's message for every failure
+
+
+def test_another_conflict_is_still_an_error(fake_api: FakeApi, browser: TestClient) -> None:
+    """The control: a 409 that isn't about connections is an error page, as before."""
+    fake_api.fail["GET /courses"] = (409, "conflict")
+    _signed_in(browser)
+
+    response = browser.get("/")
+
+    assert response.status_code == 409
+    assert "Connect your Dropbox" not in _text(response)
 
 
 def test_an_unreachable_api_says_nothing_changed_and_to_retry(
