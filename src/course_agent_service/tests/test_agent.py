@@ -5,6 +5,7 @@ test can check exactly what reached the API, and in particular that a refused to
 nothing at all.
 """
 
+import asyncio
 import json
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -16,7 +17,17 @@ from fastapi.testclient import TestClient
 from course_agent_service import app as agent_app
 from course_agent_service.api_client import ApiClient
 from course_agent_service.conversation import from_stored, to_stored
-from course_agent_service.loop import STOP_MESSAGES, Limits, run_turn
+from course_agent_service.loop import (
+    SECRET_NOT_KEPT,
+    STOP_MESSAGES,
+    SYSTEM_PROMPT,
+    BudgetDailyLimitError,
+    BudgetRateLimitedError,
+    BudgetUnavailableError,
+    DailyLimitReachedError,
+    Limits,
+    run_turn,
+)
 from course_agent_service.model import (
     Message,
     ModelError,
@@ -61,6 +72,7 @@ class FakeApi:
                 },
             ),
             ("GET", f"/courses/{COURSE}/plan"): (200, {"course": COURSE, "items": []}),
+            ("POST", "/usage/model-calls"): (200, {"remaining_today": 20}),
         }
         self.proposal_status = 201
 
@@ -99,11 +111,11 @@ class FakeApi:
         return httpx.Client(base_url="http://api", transport=httpx.MockTransport(self.handle))
 
     def paths(self) -> list[str]:
-        """Return the paths requested so far, conversations excluded."""
+        """Return the paths requested so far, conversations and model budget excluded."""
         return [
             f"{r.method} {r.url.path}"
             for r in self.requests
-            if not r.url.path.startswith("/conversations")
+            if not r.url.path.startswith(("/conversations", "/usage"))
         ]
 
 
@@ -684,3 +696,335 @@ def test_a_disabled_assistant_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
         response = http.post("/conversations", json={}, headers=ALICE)
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "api_not_configured"
+
+
+# ----- #102: the model budget and admission -----
+
+
+class Budget:
+    """A model budget that answers from a script: None (allowed) or an exception to raise."""
+
+    def __init__(self, *answers: Exception | None) -> None:
+        """Answer each reservation in turn; once the script runs out, allow every call."""
+        self.answers = list(answers)
+        self.asked = 0
+
+    def __call__(self) -> None:
+        """Reserve one call."""
+        self.asked += 1
+        answer = self.answers.pop(0) if self.answers else None
+        if answer is not None:
+            raise answer
+
+
+def test_every_model_call_is_reserved_first(api: FakeApi) -> None:
+    """The budget is asked once per model call, before it."""
+    budget = Budget()
+
+    result, model = turn(api, calls(call("list_courses")), say("Which course?"), budget=budget)
+
+    assert result.stop_reason == "replied"
+    assert budget.asked == len(model.calls) == 2
+
+
+def test_a_full_minute_waits_for_the_next_one_and_reports_the_wait(api: FakeApi) -> None:
+    """Over the per-minute limit, the turn waits and goes on; the wait is in the run record."""
+    slept: list[float] = []
+    budget = Budget(BudgetRateLimitedError(12), BudgetRateLimitedError(3))
+
+    result, model = turn(api, say("Which course?"), budget=budget, sleep=slept.append)
+
+    assert result.stop_reason == "replied"
+    assert slept == [12, 3]
+    assert result.record["waited_ms"] == 15_000
+    assert len(model.calls) == 1
+
+
+def test_a_wait_longer_than_the_turn_has_left_stops_it(api: FakeApi) -> None:
+    """A wait past the turn's 60 s ends it with the time limit, and no model call."""
+    budget = Budget(BudgetRateLimitedError(61))
+
+    result, model = turn(api, say("x"), budget=budget, sleep=lambda _s: pytest.fail("no sleep"))
+
+    assert result.stop_reason == "limit_time"
+    assert model.calls == []
+
+
+def test_leaving_while_waiting_stops_the_turn(api: FakeApi) -> None:
+    """The browser going away during the wait stops the turn before the model call."""
+    gone = iter([False, True])
+
+    result, model = turn(
+        api,
+        say("x"),
+        budget=Budget(BudgetRateLimitedError(5)),
+        sleep=lambda _s: None,
+        cancelled=lambda: next(gone),
+    )
+
+    assert result.stop_reason == "cancelled"
+    assert model.calls == []
+
+
+def test_no_calls_left_today_before_the_first_one_raises(api: FakeApi) -> None:
+    """At the daily cap, the turn doesn't start: nothing is called or saved."""
+    model = ScriptedModel([say("x")])
+
+    with pytest.raises(DailyLimitReachedError):
+        run_turn(
+            model=model,
+            toolbox=toolbox(api),
+            history=[],
+            text="Set up",
+            budget=Budget(BudgetDailyLimitError()),
+        )
+
+    assert model.calls == []
+    assert api.paths() == []
+
+
+def test_running_out_partway_stops_with_a_message(api: FakeApi) -> None:
+    """The cap reached after the first call ends the turn with fixed text."""
+    budget = Budget(None, BudgetDailyLimitError())
+
+    result, model = turn(api, calls(call("list_courses")), say("x"), budget=budget)
+
+    assert result.stop_reason == "daily_limit"
+    assert result.reply == STOP_MESSAGES["daily_limit"]
+    assert len(model.calls) == 1
+
+
+def test_a_budget_that_cant_be_asked_stops_the_turn(api: FakeApi) -> None:
+    """The API refusing or being down for the budget ends the turn, with no model call."""
+    result, model = turn(api, say("x"), budget=Budget(BudgetUnavailableError()))
+
+    assert result.stop_reason == "api_unavailable"
+    assert model.calls == []
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "error"),
+    [
+        (429, "daily_limit_reached", BudgetDailyLimitError),
+        (429, "model_rate_limited", BudgetRateLimitedError),
+        (401, "not_signed_in", BudgetUnavailableError),
+        (503, "database_unavailable", BudgetUnavailableError),
+    ],
+)
+def test_the_api_budget_answers_become_the_loops(
+    api: FakeApi,
+    status: int,
+    code: str,
+    error: type[Exception],
+) -> None:
+    """Each API answer to a reservation maps to what the loop does."""
+    api.routes[("POST", "/usage/model-calls")] = (
+        status,
+        {"error": {"code": code, "message": "x"}},
+    )
+    reserve = agent_app.budget_for(ApiClient(api.client(), ALICE))
+
+    with pytest.raises(error):
+        reserve()
+
+
+def test_the_wait_comes_from_retry_after(api: FakeApi) -> None:
+    """The per-minute wait is the API's ``Retry-After``."""
+    error = {"error": {"code": "model_rate_limited", "message": "x"}}
+    http = httpx.Client(
+        base_url="http://api",
+        transport=httpx.MockTransport(
+            lambda _r: httpx.Response(429, json=error, headers={"Retry-After": "17"}),
+        ),
+    )
+
+    with pytest.raises(BudgetRateLimitedError) as raised:
+        agent_app.budget_for(ApiClient(http, ALICE))()
+
+    assert raised.value.retry_after == 17
+
+
+def test_at_the_daily_cap_a_turn_is_429_and_nothing_is_saved(api: FakeApi, wire: Any) -> None:
+    """Over the cap: 429, no model call, nothing stored (control: under the cap, a reply)."""
+    api.routes[("POST", "/usage/model-calls")] = (
+        429,
+        {"error": {"code": "daily_limit_reached", "message": "x"}},
+    )
+    http = wire([say("Hello")])
+
+    response = http.post("/conversations/c1/turns", json={"text": "hi"}, headers=ALICE)
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "daily_limit_reached"
+    assert api.conversations["c1"] == []
+    api.routes[("POST", "/usage/model-calls")] = (200, {"remaining_today": 1})
+    control = http.post("/conversations/c1/turns", json={"text": "hi"}, headers=ALICE)
+    assert control.json()["stop_reason"] == "replied"
+
+
+def test_a_full_queue_is_429_busy(api: FakeApi, wire: Any) -> None:
+    """No free slot and no room in the queue: 429, nothing stored."""
+    http = wire([say("Hello")])
+    agent_app.app.state.admission = agent_app.Admission(running=0, queued=0)
+    try:
+        response = http.post("/conversations/c1/turns", json={"text": "hi"}, headers=ALICE)
+    finally:
+        del agent_app.app.state.admission
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "assistant_busy"
+    assert api.conversations["c1"] == []
+
+
+async def _never_gone() -> bool:
+    return False
+
+
+async def _gone() -> bool:
+    return True
+
+
+def test_three_turns_run_at_once_and_the_rest_queue() -> None:
+    """A fourth turn waits for a slot; it runs when one is released."""
+
+    async def scenario() -> list[str]:
+        admission = agent_app.Admission(running=3, queued=10)
+        events: list[str] = []
+        for _ in range(3):
+            await admission.acquire(_never_gone, 1.0)
+        fourth = asyncio.create_task(admission.acquire(_never_gone, 5.0))
+        await asyncio.sleep(0.05)
+        events.append(f"waiting={admission.waiting} done={fourth.done()}")
+        admission.release()
+        await asyncio.wait_for(fourth, 2.0)
+        events.append(f"waiting={admission.waiting} done={fourth.done()}")
+        return events
+
+    assert asyncio.run(scenario()) == ["waiting=1 done=False", "waiting=0 done=True"]
+
+
+def test_the_queue_has_room_for_ten() -> None:
+    """With every slot taken and ten waiting, the eleventh is refused at once."""
+
+    async def scenario() -> bool:
+        admission = agent_app.Admission(running=1, queued=10)
+        await admission.acquire(_never_gone, 1.0)
+        waiting = [asyncio.create_task(admission.acquire(_never_gone, 5.0)) for _ in range(10)]
+        await asyncio.sleep(0.05)
+        try:
+            await admission.acquire(_never_gone, 5.0)
+        except agent_app.AssistantBusyError:
+            refused = True
+        else:
+            refused = False
+        for task in waiting:
+            task.cancel()
+        await asyncio.gather(*waiting, return_exceptions=True)
+        return refused and admission.waiting == 0
+
+    assert asyncio.run(scenario())
+
+
+def test_a_queued_turn_gives_up_after_its_wait_or_when_the_caller_leaves() -> None:
+    """No slot within the wait → busy; the caller leaving → cancelled; neither holds a slot."""
+
+    async def scenario() -> tuple[bool, bool, int]:
+        admission = agent_app.Admission(running=1, queued=10)
+        await admission.acquire(_never_gone, 1.0)
+        try:
+            await admission.acquire(_never_gone, 0.1)
+            busy = False
+        except agent_app.AssistantBusyError:
+            busy = True
+        try:
+            await admission.acquire(_gone, 5.0)
+            left = False
+        except asyncio.CancelledError:
+            left = True
+        return busy, left, admission.waiting
+
+    assert asyncio.run(scenario()) == (True, True, 0)
+
+
+# ----- #102: what the assistant won't take in or give out (docs/acceptable-use.md) -----
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "my password is hunter2!!",
+        "Dropbox token: sl.u.AbCdEfGhIjKlMnOpQrStUvWxYz0123",
+        "here is the key AIzaSyA1234567890abcdefghijklmnop",
+        "use ghp_abcdefghijklmnopqrstuvwxyz1234",
+        "-----BEGIN RSA PRIVATE KEY----- MIIE",
+    ],
+)
+def test_a_message_with_a_credential_never_reaches_the_model_or_the_database(
+    api: FakeApi,
+    wire: Any,
+    text: str,
+) -> None:
+    """T10: no model call, no budget spent, and only a placeholder is stored."""
+    http = wire([say("x")])
+
+    response = http.post("/conversations/c1/turns", json={"text": text}, headers=ALICE)
+
+    assert response.json()["stop_reason"] == "declined_secret"
+    assert response.json()["reply"] == STOP_MESSAGES["declined_secret"]
+    stored = json.dumps(api.conversations["c1"])
+    assert text not in stored
+    assert SECRET_NOT_KEPT in stored
+    assert not any(r.url.path == "/usage/model-calls" for r in api.requests)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Set up CS-GY 6083 from my syllabus",
+        "The midterm token deadline moved to Dec 10",
+        "What's the late policy? Is the final 30%?",
+        # Review on #127: course text that names a password or token but holds no secret.
+        "The Zoom passcode: 834920, office hours on Tuesdays",
+        "Lecture recordings password: posted on Brightspace",
+        "The token is required for the lab printer",
+        "Remind me that my password is due for a reset",
+    ],
+)
+def test_ordinary_messages_go_through(api: FakeApi, text: str) -> None:
+    """Control: course requests, even ones using words like "token", reach the model."""
+    result, model = turn(api, say("Sure"), text=text)
+
+    assert result.stop_reason == "replied"
+    assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Your syllabus says: The Zoom passcode: 834920, office hours on Tuesdays",
+        "Lecture recordings password: posted on Brightspace",
+        "The token is required for the lab printer, so bring it to lab 3",
+        "My notes say: password = hunter2b, but that's from my syllabus example",
+    ],
+)
+def test_a_reply_quoting_course_text_is_shown(api: FakeApi, text: str) -> None:
+    """A reply quoting the student's documents isn't blocked by words like "passcode"."""
+    result, _ = turn(api, say(text))
+
+    assert result.stop_reason == "replied"
+    assert result.reply == text
+
+
+def test_a_reply_with_a_credential_is_replaced(api: FakeApi) -> None:
+    """T10: a model reply that looks like a key is never shown or stored."""
+    result, _ = turn(api, say("Use this: sk-live_ABCDEFGHIJKLMNOPQRSTUV"))
+
+    assert result.stop_reason == "blocked_output"
+    assert result.reply == STOP_MESSAGES["blocked_output"]
+    assert "sk-live" not in json.dumps([m.text for m in result.messages])
+
+
+def test_the_instructions_carry_the_policy() -> None:
+    """The prompt says what to decline and what to ask about (docs/acceptable-use.md)."""
+    for phrase in ("doing coursework for them", "anything about another person", "Ask one short"):
+        assert phrase in SYSTEM_PROMPT

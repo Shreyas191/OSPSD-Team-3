@@ -41,6 +41,8 @@ from cloud_storage_service.proposal_routes import router as proposal_router
 from cloud_storage_service.routes import router
 from cloud_storage_service.sign_in import GoogleSettings, GoogleSignIn
 from cloud_storage_service.telemetry import RequestTelemetryMiddleware, configure_tracing
+from cloud_storage_service.usage import Limits as ModelCallLimits
+from cloud_storage_service.usage import router as usage_router
 from cloud_storage_service.verticals import build_calendar, build_issue_tracker
 from cloud_storage_service.workflow_routes import router as workflow_router
 
@@ -91,6 +93,7 @@ def check_configuration() -> None:
     build_issue_tracker()
     build_calendar()
     TokenBox.from_env()
+    ModelCallLimits.from_env()
 
 
 PROVIDER_TIMEOUT_SECONDS = 10.0
@@ -139,6 +142,7 @@ app.include_router(course_router)
 app.include_router(conversation_router)
 app.include_router(auth_router)
 app.include_router(connection_router)
+app.include_router(usage_router)
 
 
 @app.exception_handler(SignInNotConfiguredError)

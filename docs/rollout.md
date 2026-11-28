@@ -48,18 +48,24 @@ Stage 1 needs the proposals and execution (#116), the agent loop, sign-in, provi
 
 **Stop actions, fastest first:**
 
-1. **Turn the assistant off** when it misbehaves (wrong proposals, a prompt injection that gets through): set `MODEL_PROVIDER=disabled` on the agent service. Turns answer `503 assistant_disabled`; students can still see their plans, approve and execute, because those go to the API. It takes about a minute, and needs **both** commands:
+1. **Turn the assistant off** when it misbehaves (wrong proposals, a prompt injection that gets through): set `MODEL_PROVIDER=disabled` on the agent service. Turns answer `503 assistant_disabled`; students can still see their plans, approve and execute, because those go to the API. It takes about a minute:
 
     ```bash
-    gcloud run services update course-agent-demo --region=us-central1 \
-      --update-env-vars=MODEL_PROVIDER=disabled --tag=switch
-    gcloud run services update-traffic course-agent-demo --region=us-central1 --to-tags=switch=100
+    SERVICE=course-agent-demo REGION=us-central1
+    serving=$(gcloud run services describe "$SERVICE" --region="$REGION" --format=json \
+      | python3 -c 'import json,sys; print(next(t["revisionName"] for t in json.load(sys.stdin)["status"]["traffic"] if t.get("percent") == 100))')
+    image=$(gcloud run revisions describe "$serving" --region="$REGION" --format='value(spec.containers[0].image)')
+    gcloud run services update "$SERVICE" --region="$REGION" \
+      --image="$image" --update-env-vars=MODEL_PROVIDER=disabled --tag=switch
+    gcloud run services update-traffic "$SERVICE" --region="$REGION" --to-tags=switch=100
     ```
 
-    The second command is the one that switches. Each release gives its own tagged revision all the traffic, and Cloud Run then keeps traffic on that revision: a revision made later, by `gcloud run services update` or by `tofu apply`, [gets none](infrastructure.md) until traffic is moved to it ([Cloud Run: traffic migration](https://cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration)). Check that the `switch` revision now has 100% with the command in [Which version is running?](release-pipeline.md#which-version-is-running) (`course-agent-demo` in place of the API service).
+    The last command is the one that switches. Each release gives its own tagged revision all the traffic, and Cloud Run then keeps traffic on that revision: a revision made later, by `gcloud run services update` or by `tofu apply`, [gets none](infrastructure.md) until traffic is moved to it ([Cloud Run: traffic migration](https://cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration)).
 
-    The setting stays in the service's template, so the next release keeps the assistant off too. To turn it back on, run the same two commands with `MODEL_PROVIDER=gemini`. `tofu apply` sets the template back to `agent_model_provider`, so while the assistant should stay off, set `agent_model_provider = { demo = "disabled" }` as well.
-2. **Stop executions** when the fault is in execution (wrong writes, or writes failing): set `EXECUTION=disabled` on the API service. Execute then answers `503`, while proposals and approvals are still recorded, so students can review and approve and run them later. This avoids rolling back a release that is otherwise fine. Shreyas builds the switch with #102. Until then, the only lever is rolling back the API. Once it's there, it takes the same two commands as stop action 1, on `cloud-storage-service-demo` with `EXECUTION=disabled`: setting it alone makes a revision that serves nothing, and executions carry on.
+    The `switch` revision is built from the image that is serving now (`$image`, by digest), not from the service's template: `deploy_agent.sh` puts each release's image in the template before its smoke check, and a release that failed the check stays there without traffic, which is most likely right when this is needed. The same reasoning and commands are in [Pausing executions](deployment.md#pausing-executions). Check that `switch` now has 100% with the command in [Which version is running?](release-pipeline.md#which-version-is-running) (`course-agent-demo` in place of the API service).
+
+    The setting stays in the service's template, so the next release keeps the assistant off too. `tofu apply` sets the template back to `agent_model_provider`, so while the assistant should stay off, set `agent_model_provider = { demo = "disabled" }` as well (and don't move traffic to the revision `tofu apply` creates). **To turn it back on,** move traffic back to the release that was serving (`--to-tags=rel-<sha>=100`; its revision still has the model on), then put the model back in the template so later releases have it: `gcloud run services update "$SERVICE" --region="$REGION" --update-env-vars=MODEL_PROVIDER=gemini` (the revision it makes gets no traffic; leave it so), or remove `demo` from `agent_model_provider` and apply.
+2. **Stop executions** when the fault is in execution (wrong writes, or writes failing): set `EXECUTION=disabled` on the API service and move traffic to the new revision, as [Pausing executions](deployment.md#pausing-executions) shows (setting the variable alone creates a revision that serves nothing). Execute then answers `503`, while proposals and approvals are still recorded, so students can review and approve and run them later. This avoids rolling back a release that is otherwise fine.
 3. **Roll back a release** (section 4) when errors start with a new revision.
 4. **Restore data** (section 6) when a release or a bug damaged the database. Neon can restore the last 6 hours; the daily backup covers older damage.
 

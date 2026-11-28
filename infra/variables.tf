@@ -130,6 +130,29 @@ variable "agent_model_provider" {
   }
 }
 
+variable "database_backup_environments" {
+  description = "Environments whose database is dumped daily to a private bucket (backup.tf). List one only after a release with backup_main.py is deployed there."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for env in var.database_backup_environments : contains(var.environments, env)])
+    error_message = "Each entry must be one of var.environments."
+  }
+}
+
+variable "database_backup_schedule" {
+  description = "When the backup job runs (cron, America/New_York). The default is 04:00, after the evening's use and before the day's."
+  type        = string
+  default     = "0 4 * * *"
+}
+
+variable "database_backup_retention_days" {
+  description = "Days a database dump is kept before the bucket deletes it."
+  type        = number
+  default     = 14
+}
+
 variable "sign_in_redirect_uris" {
   description = "Environments with Google sign-in on, and where Google sends the browser back (the interface's callback, also listed on the OAuth client). Add an environment only after the google-oauth-client-* secrets have values (sign_in.tf)."
   type        = map(string)
@@ -154,5 +177,22 @@ variable "connections" {
   validation {
     condition     = alltrue([for env in keys(var.connections) : contains(var.environments, env)])
     error_message = "Each key must be one of var.environments."
+  }
+}
+
+variable "agent_max_instances" {
+  description = "Upper bound on agent service instances. Keep it 1: the agent's admission control (3 turns at once, 10 queued) is per instance (agent.tf)."
+  type        = number
+  default     = 1
+}
+
+variable "execution_disabled" {
+  description = "Environments where approved proposals don't run (EXECUTION=disabled on the API service): the operator's switch for a fault in execution. Reads, proposals and approvals keep working."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for env in var.execution_disabled : contains(var.environments, env)])
+    error_message = "Each entry must be one of var.environments."
   }
 }

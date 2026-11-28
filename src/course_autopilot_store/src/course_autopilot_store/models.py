@@ -13,6 +13,8 @@ through a new migration.
 - ``provider_connections``: a user's Dropbox, Trello or Google Calendar access.
 - ``connection_attempts``: one provider connection in progress, tied to the session that
   started it and used once (migration ``0004``).
+- ``usage_counters``: model calls counted per user per day and per project per minute, so
+  every agent instance shares the same limits (migration ``0005``).
 - ``conversations`` and ``messages``: the agent conversation, turn by turn.
 - ``proposals``: a change set the agent proposed, and ``approvals`` of its exact content.
 - ``change_outcomes``: what happened to each change when an approved proposal ran.
@@ -145,6 +147,19 @@ class ConnectionAttempt(Base):
     code_verifier: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UsageCounter(Base):
+    """How many model calls one key made in one window: a user's day, or the project's minute.
+
+    ``key`` is ``user:<id>`` or ``project``; ``window_start`` is the window's start in UTC.
+    """
+
+    __tablename__ = "usage_counters"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Conversation(Base):

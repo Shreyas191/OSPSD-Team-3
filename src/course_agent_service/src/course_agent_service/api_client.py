@@ -20,12 +20,19 @@ IDENTITY_HEADERS = ("authorization", "x-dev-user")
 class ApiError(Exception):
     """The API service refused or failed a call. ``code`` is the shared error code."""
 
-    def __init__(self, status: int, code: str, message: str) -> None:
-        """Record the status, code and a message safe to show."""
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        retry_after: float | None = None,
+    ) -> None:
+        """Record the status, code, a message safe to show, and any ``Retry-After``."""
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
+        self.retry_after = retry_after
 
 
 def identity_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -59,7 +66,16 @@ class ApiClient:
             code, message = str(error["code"]), str(error["message"])
         except (ValueError, KeyError, TypeError):
             code, message = "api_error", f"The API service answered {response.status_code}"
-        raise ApiError(response.status_code, code, message)
+        try:
+            retry_after = float(response.headers.get("Retry-After", ""))
+        except ValueError:
+            retry_after = None
+        raise ApiError(response.status_code, code, message, retry_after)
+
+    def reserve_model_call(self) -> dict[str, Any]:
+        """``POST /usage/model-calls``: one model call from this student's budget."""
+        result: dict[str, Any] = self._call("POST", "/usage/model-calls")
+        return result
 
     def list_courses(self) -> list[dict[str, Any]]:
         """``GET /courses``."""

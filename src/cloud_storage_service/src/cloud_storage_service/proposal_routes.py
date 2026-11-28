@@ -71,7 +71,7 @@ ERRORS: dict[int | str, dict[str, Any]] = {
         401: "Not signed in",
         404: "No such proposal for this account",
         409: "The proposal isn't in a state that allows this, or its content changed",
-        503: "No database is configured",
+        503: "No database is configured, or running changes is paused (EXECUTION=disabled)",
     }.items()
 }
 
@@ -175,6 +175,12 @@ def execute_proposal(  # noqa: PLR0913 (each argument is a FastAPI dependency)
     calendar: UserCalendar,
 ) -> ProposalResponse | JSONResponse:
     """Run an approved proposal, or retry a failed one; return every change's outcome."""
+    if not execution.execution_enabled():
+        return error_response(
+            503,
+            "execution_disabled",
+            "Running changes is paused on this service; your approval is kept, try again later",
+        )
     try:
         execution.execute(
             database,
