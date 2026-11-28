@@ -206,7 +206,7 @@ locals {
 
                 **Task success** is a turn that ends `replied` or `proposal_ready`. `model_unavailable` and `api_unavailable` mean the student got no answer because Gemini or our API failed: the alert watches those. `limit_*` and `invalid_proposal` are the agent's guards stopping a turn.
 
-                **Not shown here:** what happened to each approved change. Execution answers 200 even when a change failed or is uncertain; see the proposal's outcomes. Failures and recovery: [failure analysis](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/docs/failure-analysis.md). Incidents: [runbook](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/docs/runbook.md#alert-students-turns-are-failing).
+                **Not shown here:** what happened to each approved change. That's the execution-outcomes row of the API's golden-signals dashboard (${local.dashboard_url}), with its own alert for uncertain changes. Failures and recovery: [failure analysis](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/docs/failure-analysis.md). Incidents: [runbook](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/docs/runbook.md#alert-students-turns-are-failing).
               EOT
             }
           }

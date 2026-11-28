@@ -131,16 +131,55 @@ gcloud logging read 'jsonPayload.event="agent_run"
 
 **Recovery can't undo:** nothing to undo. A failed turn changed nothing; the student sends the message again. If the agent crashed after `propose_changes` stored a proposal, that proposal is still pending and the student can review it.
 
+## Alert: a change may or may not have happened
+
+**What it means:** on one API service (`cloud-storage-service-test` or `-demo`), a run of a student's approved proposal left a change **uncertain**. The provider may have made it, but we couldn't confirm that: its reply was lost, the read-back didn't match, or the run stopped mid-write and was taken over (below). An uncertain change is never retried automatically, so it can't be made twice. But until the student checks and settles it, the proposal stays `failed`, and a created event or card that does exist isn't recorded as ours. The alert is defined in `infra/execution_monitoring.tf` and fires on a single run, because each one is a student who has to look at their account. Execute answers `200` either way, so the 5xx alert can't see this. Which failures lead here: [Failure Analysis](failure-analysis.md).
+
+### 1. Find the run
+
+Each run writes one line (`"event": "proposal_execution"`) with the proposal's ID and how many of its changes completed, failed and are uncertain, never their content:
+
+```bash
+gcloud logging read 'jsonPayload.event="proposal_execution" jsonPayload.changes_uncertain>0' \
+  --freshness=1h --limit=20 \
+  --format="table(timestamp,resource.labels.service_name,jsonPayload.proposal_id,jsonPayload.final_status,jsonPayload.changes_uncertain,jsonPayload.drill)"
+```
+
+Then which change, and why (read-only, on that environment's database):
+
+```sql
+SELECT change_index, status, detail FROM change_outcomes
+WHERE proposal_id = '<proposal_id>' ORDER BY change_index;
+```
+
+| What you see | Likely cause | Do this |
+|---|---|---|
+| One run, detail "didn't confirm this change" | The provider's reply was lost after the write, or its read-back differed | Nothing to repair. The student checks their calendar or board and settles the change (step 2) |
+| Detail "The run stopped during this change" | The API instance stopped mid-write (a redeploy, a crash or a timeout), and a later run [took it over](#a-proposal-stuck-in-executing) | Same as above. If it follows a release, check whether the release restarted instances mid-run |
+| Several runs within minutes, all on the same provider | That provider is timing out after accepting writes | Check its status page and the API's warnings (`Calendar ... failed`, `Issue tracker ... failed`) in the [Failed requests](#1-find-which-errors-and-since-when) logs. Consider [pausing executions](deployment.md#pausing-executions) until it recovers |
+| `drill` is `true` | The [alert drill](#execution-alert-drill) | Nothing |
+
+### 2. Settle it (the student)
+
+The student checks their account, then on the proposal's page chooses "It happened" (giving the event's or card's ID for one that was created; it's read back and must match the change) or "It didn't happen", so the next run makes it (#131). Until that page is deployed, the same is `POST /proposals/{id}/changes/{index}/resolve` with their session, `{"status": "completed", "record_id": "..."}` or `{"status": "failed"}`. Don't change the rows by hand: settling also records a created event or card as ours, so it can later be updated or removed.
+
+### 3. Confirm it's fixed
+
+- the alert email says **closed** (about 5 minutes after the last such run);
+- the proposal's status is `done` (every change settled or completed), or `failed` with no change `uncertain` if the student said it didn't happen and hasn't run it again yet.
+
+**Recovery can't undo:** a change the student says didn't happen, but did, will be made again on the next run; ask them to check before answering.
+
 ## A proposal stuck in `executing`
 
 **Seen in:** a student reports that running their changes again fails with `409` ("it can't run now"), and the proposal's status is `executing` long after the request ended.
 
-The API instance stopped while it was executing (a redeploy, a crash or a timeout), between a provider write and saving that change's outcome ([Failure Analysis](failure-analysis.md), item 1). Nothing moves it on by itself yet. With the student's agreement: for each change that has no outcome, check their calendar or board for it; tell them what you found; then set the proposal's status to `failed` so the changes without an outcome can run again. Only do that once you're sure the unrecorded change wasn't made, or after the student has removed it, otherwise running again makes it twice.
+The API instance stopped while it was executing (a redeploy, a crash or a timeout). Each change is saved as `started` just before its write, and the run keeps a heartbeat. **It recovers by itself:** once the run has been silent for 10 minutes, running the proposal again takes it over. The `started` change becomes `uncertain`, so it isn't repeated, and the rest run. That opens the [uncertain-change alert](#alert-a-change-may-or-may-not-have-happened). Tell the student to wait 10 minutes and run it again; nothing needs fixing by hand.
 
 To find stuck proposals (read-only):
 
 ```sql
-SELECT id, created_at, decided_at FROM proposals WHERE status = 'executing';
+SELECT id, created_at, decided_at, heartbeat_at FROM proposals WHERE status = 'executing';
 ```
 
 ## Alert test record
@@ -149,6 +188,7 @@ SELECT id, created_at, decided_at FROM proposals WHERE status = 'executing';
 |---|---|---|---|---|---|
 | 2026-11-11 | `test` | 8 bursts of 60 concurrent `GET /files/metadata` (20:33:54–20:35:27 UTC) with `BASE_URL=<test url> uv run python scripts/overload_demo.py /alert-drill/does-not-exist.txt 60 60`, run 4 times 20 s apart. 301 requests got `503 service_busy`; Cloud Monitoring counted 221 + 80 5xx in the minutes ending 20:35 and 20:36, then 0. | Yes: "opened" email received at the alert address | Yes: "closed" email received after the errors stopped | Read-only requests for a missing file, so no Dropbox data changed. The other 189 requests were `404` (caller errors, not counted). No action needed: the limiter recovers when the burst ends. |
 | Pending | `test` | **Agent alert**: the drill below, once the agent loop (#92) is deployed and `agent_monitoring.tf` is applied | | | Expected: opens about 6 minutes after the first failed turn (5-minute window, held for 1 minute); closes about 5 minutes after the last. |
+| Pending | `test` | **Execution alert**: the [drill](#execution-alert-drill) below, once `execution_monitoring.tf` is applied | | | Expected: opens within a few minutes of the line being written (log-based metrics lag by up to about 2 minutes); closes about 5 minutes later. |
 
 ### Agent alert drill
 
@@ -167,3 +207,24 @@ gcloud run services update-traffic course-agent-test --region=us-central1 --remo
 ```
 
 Record when the "opened" and "closed" emails arrived in the table above.
+
+### Execution alert drill
+
+Writes one synthetic `proposal_execution` line, marked `"drill": true`, as the `test` API service, so the log-based metric counts it and the alert opens. No proposal, student or provider is touched. The access token stays inside the command; don't echo it.
+
+```bash
+curl -sS -X POST https://logging.googleapis.com/v2/entries:write \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" \
+  -d '{"entries": [{
+        "logName": "projects/ospsd-team3/logs/alert-drill",
+        "resource": {"type": "cloud_run_revision", "labels": {"project_id": "ospsd-team3",
+          "service_name": "cloud-storage-service-test", "revision_name": "alert-drill",
+          "configuration_name": "cloud-storage-service-test", "location": "us-central1"}},
+        "severity": "WARNING",
+        "jsonPayload": {"event": "proposal_execution", "drill": true, "proposal_id": "alert-drill",
+          "final_status": "failed", "changes": 1, "changes_completed": 0,
+          "changes_failed": 0, "changes_uncertain": 1}}]}'
+```
+
+Then record when the "opened" and "closed" emails arrive in the table above. It needs permission to write logs in the project (`roles/logging.logWriter`).
+
