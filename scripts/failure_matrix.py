@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -44,7 +45,7 @@ from course_autopilot_store.models import Proposal
 from fastapi.testclient import TestClient
 from issue_tracker_contract import ErrorCode as IssueCode
 from issue_tracker_contract import Issue, ServiceError
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.pool import StaticPool
 
 from course_agent_service import app as agent_app
@@ -52,12 +53,13 @@ from course_autopilot_store import Database
 
 ALICE = {"X-Dev-User": "alice"}
 COURSE = "CS-GY 6083"
+ZONE = "America/New_York"
 SYLLABUS = "CS-GY 6083 Database Systems\nMidterm: Thu Oct 15, 2-3:30 PM\n"
 EVENT = {
     "op": "create_event",
     "title": "Midterm",
-    "start": "2026-10-15T14:00:00-04:00",
-    "end": "2026-10-15T15:30:00-04:00",
+    "start": "2026-10-15T14:00",  # local to ZONE: propose_changes takes naive times and a zone
+    "end": "2026-10-15T15:30",
 }
 CARD = {"op": "create_issue", "title": "[CS-GY 6083] Midterm, Oct 15"}
 
@@ -71,7 +73,7 @@ def tool(name: str, /, **arguments: Any) -> ModelReply:  # noqa: ANN401
 S1_TURN = (
     tool("list_course_documents", course=COURSE),
     tool("read_document", course=COURSE, name="syllabus.md"),
-    tool("propose_changes", course=COURSE, changes=[CARD, EVENT]),
+    tool("propose_changes", course=COURSE, time_zone=ZONE, changes=[CARD, EVENT]),
 )
 
 
@@ -247,6 +249,26 @@ def execute(w: World, proposal_id: str) -> dict[str, Any]:
     return {"execute": status, "proposal": after}
 
 
+def settle(w: World, proposal_id: str, index: int) -> dict[str, Any]:
+    """Settle an uncertain event as the student would after checking: it's there, with its ID."""
+    [event_id] = list(getattr(w.calendar, "_events", {}))
+    r = w.api.post(
+        f"/proposals/{proposal_id}/changes/{index}/resolve",
+        json={"status": "completed", "record_id": event_id},
+        headers=ALICE,
+    )
+    return {"resolve": r.status_code, "proposal": r.json()}
+
+
+def silence(w: World, minutes: int) -> None:
+    """Make the running proposal's last sign of life ``minutes`` old (time passing)."""
+    assert w.database is not None
+    with w.database.session() as session:
+        session.execute(
+            update(Proposal).values(heartbeat_at=datetime.now(UTC) - timedelta(minutes=minutes)),
+        )
+
+
 def outcomes(proposal: dict[str, Any]) -> str:
     """Each change's outcome, in order."""
     items = proposal.get("outcomes") or []
@@ -367,12 +389,15 @@ def calendar_lost_reply() -> Row:
         t = turn(w.agent(*S1_TURN), str(cid))
         first = approve_and_execute(w, t["proposal_id"])
         again = execute(w, t["proposal_id"])
+        settled = settle(w, t["proposal_id"], 1)
         detail = (first["proposal"].get("outcomes") or [{}])[-1].get("detail")
         return Row(
             "Google Calendar write made, reply lost",
             f'execute {first["execute"]}: `{first["proposal"]["status"]}` ({outcomes(first["proposal"])}): "{detail}"',
             f"execute again {again['execute']}: `{again['proposal']['status']}`; {w.counts()}",
-            "student checks the calendar; no automatic retry",
+            f"student checks the calendar and settles it with the event's ID: resolve "
+            f"{settled['resolve']}, `{settled['proposal']['status']}` "
+            f"({outcomes(settled['proposal'])}); {w.counts()}",
         )
 
 
@@ -399,11 +424,17 @@ def api_instance_stops_mid_execution() -> Row:
         first = approve_and_execute(w, t["proposal_id"])
         w.calendar.__class__ = InMemoryCalendar  # the next instance has a working calendar
         again = execute(w, t["proposal_id"])
+        silence(w, minutes=11)  # past STALE_AFTER (10 minutes): the stopped run is taken over
+        later = execute(w, t["proposal_id"])
+        settled = settle(w, t["proposal_id"], 1)
         return Row(
             "API instance stops between a write and saving its outcome",
             f"execute: {first['execute']}; proposal `{first['proposal']['status']}` ({outcomes(first['proposal'])})",
-            f"execute again {again['execute']}: `{again['proposal']['status']}`; {w.counts()}",
-            "**none: stays `executing`**",
+            f"execute again at once {again['execute']}: `{again['proposal']['status']}`; "
+            f"11 minutes later {later['execute']}: `{later['proposal']['status']}` "
+            f"({outcomes(later['proposal'])}); {w.counts()}",
+            f"student checks the calendar and settles it: resolve {settled['resolve']}, "
+            f"`{settled['proposal']['status']}`; {w.counts()}",
         )
 
 
