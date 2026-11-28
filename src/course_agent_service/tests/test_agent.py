@@ -8,7 +8,7 @@ nothing at all.
 import asyncio
 import json
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
@@ -37,6 +37,9 @@ from course_agent_service.model import (
     Usage,
 )
 from course_agent_service.tools import DOCUMENT_END, DOCUMENT_START, TOOL_NAMES, TOOL_SPECS, Toolbox
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 ALICE = {"x-dev-user": "alice"}
 COURSE = "CS-GY 6083"
@@ -1028,3 +1031,31 @@ def test_the_instructions_carry_the_policy() -> None:
     """The prompt says what to decline and what to ask about (docs/acceptable-use.md)."""
     for phrase in ("doing coursework for them", "anything about another person", "Ask one short"):
         assert phrase in SYSTEM_PROMPT
+
+
+# ----- #103: the tool says which fields each change takes, matching what's accepted -----
+
+
+def test_the_propose_description_lists_exactly_each_ops_accepted_fields() -> None:
+    """The fields the description gives each op are the fields its validation accepts.
+
+    The S1 evaluation traced invalid proposals to the model guessing fields; the description
+    now lists them, and this keeps the list from drifting from the models.
+    """
+    from course_agent_service import tools
+
+    spec = next(s for s in TOOL_SPECS if s.name == "propose_changes")
+    models: dict[str, type[BaseModel]] = {
+        "create_event": tools.CreateEventArg,
+        "update_event": tools.UpdateEventArg,
+        "delete_event": tools.DeleteEventArg,
+        "create_issue": tools.CreateIssueArg,
+        "update_issue": tools.UpdateIssueArg,
+        "delete_issue": tools.DeleteIssueArg,
+        "write_document": tools.WriteDocumentArg,
+    }
+    for op, model in models.items():
+        listed = spec.description.split(f"{op}: ", 1)[1].split(".", 1)[0]
+        documented = {f.strip().removesuffix(" only") for f in listed.split(",")}
+        accepted = set(model.model_fields) - {"op"}
+        assert documented == accepted, op

@@ -1,0 +1,310 @@
+{
+  "about": "S1 task evaluation (#103), Nov 28, 2026. Results only: no syllabus or message text.",
+  "runs": {
+    "before (baseline wording)": {
+      "prompt_version": "41961ab4",
+      "wording": "baseline",
+      "request": "Set up {course} from my syllabus.",
+      "runs": [
+        {
+          "case": "explicit",
+          "success": false,
+          "seconds": 39.4,
+          "model_calls": 7,
+          "tokens": 15456,
+          "turns": 1,
+          "stop_reasons": [
+            "invalid_proposal"
+          ],
+          "failures": [
+            "no proposal (invalid_proposal)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "weeks",
+          "success": false,
+          "seconds": 43.3,
+          "model_calls": 8,
+          "tokens": 15349,
+          "turns": 2,
+          "stop_reasons": [
+            "replied",
+            "proposal_ready"
+          ],
+          "failures": [
+            "lab report at the wrong time (04-02 17:00-17:01)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "table",
+          "success": false,
+          "seconds": 38.1,
+          "model_calls": 7,
+          "tokens": 13505,
+          "turns": 1,
+          "stop_reasons": [
+            "invalid_proposal"
+          ],
+          "failures": [
+            "no proposal (invalid_proposal)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "single",
+          "success": false,
+          "seconds": 36.4,
+          "model_calls": 7,
+          "tokens": 11396,
+          "turns": 1,
+          "stop_reasons": [
+            "invalid_proposal"
+          ],
+          "failures": [
+            "no proposal (invalid_proposal)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "pacific",
+          "success": false,
+          "seconds": 38.4,
+          "model_calls": 7,
+          "tokens": 13869,
+          "turns": 1,
+          "stop_reasons": [
+            "invalid_proposal"
+          ],
+          "failures": [
+            "no proposal (invalid_proposal)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        }
+      ]
+    },
+    "first fix (fresh wording)": {
+      "prompt_version": "f8ed0b1f",
+      "wording": "fresh",
+      "request": "Could you put everything graded in the {course} syllabus on my calendar and Trello board?",
+      "runs": [
+        {
+          "case": "explicit",
+          "success": true,
+          "seconds": 26.4,
+          "model_calls": 5,
+          "tokens": 8599,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "weeks",
+          "success": false,
+          "seconds": 26.3,
+          "model_calls": 5,
+          "tokens": 8446,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [
+            "quiz at the wrong time (02-09 09:00-09:30)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "table",
+          "success": true,
+          "seconds": 29.7,
+          "model_calls": 5,
+          "tokens": 8418,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "single",
+          "success": true,
+          "seconds": 26.2,
+          "model_calls": 5,
+          "tokens": 8010,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "pacific",
+          "success": false,
+          "seconds": 28.7,
+          "model_calls": 5,
+          "tokens": 7884,
+          "turns": 1,
+          "stop_reasons": [
+            "empty_reply"
+          ],
+          "failures": [
+            "no proposal (empty_reply)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        }
+      ]
+    },
+    "after (fresh wording)": {
+      "prompt_version": "25fe2a7c",
+      "wording": "fresh",
+      "request": "Could you put everything graded in the {course} syllabus on my calendar and Trello board?",
+      "runs": [
+        {
+          "case": "explicit",
+          "success": true,
+          "seconds": 27.2,
+          "model_calls": 5,
+          "tokens": 8867,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "weeks",
+          "success": true,
+          "seconds": 26.7,
+          "model_calls": 5,
+          "tokens": 8586,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "table",
+          "success": true,
+          "seconds": 33.2,
+          "model_calls": 5,
+          "tokens": 8606,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "single",
+          "success": true,
+          "seconds": 25.5,
+          "model_calls": 5,
+          "tokens": 8176,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "pacific",
+          "success": true,
+          "seconds": 28.6,
+          "model_calls": 5,
+          "tokens": 8581,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        }
+      ]
+    },
+    "after (baseline wording)": {
+      "prompt_version": "25fe2a7c",
+      "wording": "baseline",
+      "request": "Set up {course} from my syllabus.",
+      "runs": [
+        {
+          "case": "explicit",
+          "success": true,
+          "seconds": 26.5,
+          "model_calls": 5,
+          "tokens": 8727,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "weeks",
+          "success": true,
+          "seconds": 26.4,
+          "model_calls": 5,
+          "tokens": 8675,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "table",
+          "success": true,
+          "seconds": 26.4,
+          "model_calls": 5,
+          "tokens": 8597,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "single",
+          "success": false,
+          "seconds": 29.0,
+          "model_calls": 5,
+          "tokens": 7845,
+          "turns": 1,
+          "stop_reasons": [
+            "empty_reply"
+          ],
+          "failures": [
+            "no proposal (empty_reply)"
+          ],
+          "model_version": "gemini-3.5-flash-lite"
+        },
+        {
+          "case": "pacific",
+          "success": true,
+          "seconds": 28.6,
+          "model_calls": 5,
+          "tokens": 8529,
+          "turns": 1,
+          "stop_reasons": [
+            "proposal_ready"
+          ],
+          "failures": [],
+          "model_version": "gemini-3.5-flash-lite"
+        }
+      ]
+    }
+  }
+}

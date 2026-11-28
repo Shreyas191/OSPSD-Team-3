@@ -248,16 +248,23 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "propose_changes",
         "Propose a change set for one course for the student to review. Nothing changes until "
-        "they approve it. A deadline is usually an event plus a card. update and delete may "
-        "only use IDs from get_course_plan.",
+        "they approve it. A deadline is usually an event plus a card. Each change has only "
+        "the fields its op takes: create_event: title, start, end. update_event: event_id, "
+        "title, start, end. delete_event: event_id. create_issue: title only. update_issue: "
+        "issue_id, title. delete_issue: issue_id. write_document: name, content. An event's "
+        "end must be after its start. Something that happens over a time (an exam, a quiz, a "
+        "class) keeps its own start and end. Only something due at a single time (an "
+        "assignment, a report) becomes an event that ends at the due time and starts 30 "
+        "minutes earlier. update and delete may only use IDs from get_course_plan.",
         {
             "type": "object",
             "properties": {
                 "course": _COURSE,
                 "time_zone": {
                     "type": "string",
-                    "description": "The course's IANA time zone, such as America/New_York; "
-                    "required when there are events",
+                    "description": "The course's IANA time zone, required when there are "
+                    "events. Use the zone the syllabus states (Eastern: America/New_York, "
+                    "Pacific: America/Los_Angeles); ask only if it states none",
                 },
                 "changes": {
                     "type": "array",
@@ -278,13 +285,34 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
                                     "write_document",
                                 ],
                             },
-                            "title": {"type": "string"},
-                            "start": _TIME,
-                            "end": _TIME,
-                            "event_id": {"type": "string"},
-                            "issue_id": {"type": "string"},
-                            "name": {"type": "string", "description": "A file name ending in .md"},
-                            "content": {"type": "string", "description": "Markdown"},
+                            "title": {
+                                "type": "string",
+                                "description": "Events and cards (create and update only)",
+                            },
+                            "start": {
+                                **_TIME,
+                                "description": f"Events only. {_TIME['description']}",
+                            },
+                            "end": {
+                                **_TIME,
+                                "description": f"Events only; after start. {_TIME['description']}",
+                            },
+                            "event_id": {
+                                "type": "string",
+                                "description": "update_event and delete_event only",
+                            },
+                            "issue_id": {
+                                "type": "string",
+                                "description": "update_issue and delete_issue only",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "write_document only: a file name ending in .md",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "write_document only: Markdown",
+                            },
                         },
                         "required": ["op"],
                     },

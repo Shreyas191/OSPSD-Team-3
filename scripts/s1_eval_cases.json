@@ -1,0 +1,73 @@
+{
+  "about": "S1 task evaluation (#103): synthetic syllabi written for this test, each with the deadlines a correct setup creates. Times are local to the course's zone. 'answer' is what the student says if the assistant asks a question. Written before any model run.",
+  "cases": [
+    {
+      "id": "explicit",
+      "course": "CS-GY 6083 Database Systems",
+      "file": "syllabus.md",
+      "zone": "America/New_York",
+      "text": "CS-GY 6083 Database Systems, Spring 2027\nAll times are Eastern (New York).\n\nGraded work\n- Homework 1: due Friday, February 5, 2027 at 11:59 PM (10%)\n- Homework 2: due Friday, February 26, 2027 at 11:59 PM (10%)\n- Midterm exam: Thursday, March 11, 2027, 2:00-3:30 PM, in class (30%)\n- Final project: due Friday, May 7, 2027 at 11:59 PM (50%)\n\nOffice hours are on Tuesdays and have no deadlines.\n",
+      "expected": [
+        {"keyword": "homework 1", "date": "2027-02-05", "due": "23:59"},
+        {"keyword": "homework 2", "date": "2027-02-26", "due": "23:59"},
+        {"keyword": "midterm", "date": "2027-03-11", "start": "14:00", "end": "15:30"},
+        {"keyword": "final project", "date": "2027-05-07", "due": "23:59"}
+      ],
+      "answer": "Times are Eastern (America/New_York). Please set up all four items."
+    },
+    {
+      "id": "weeks",
+      "course": "CS-GY 6233 Operating Systems",
+      "file": "syllabus.md",
+      "zone": "America/New_York",
+      "text": "CS-GY 6233 Operating Systems, Spring 2027 (New York campus)\nClasses meet Tuesdays 9:30-11:00 AM, starting Tuesday, January 26, 2027 (Week 1).\n\nAssessment\n- Quiz 1: Week 3, first 30 minutes of class (15%)\n- Midterm: Week 8, the whole class period (35%)\n- Lab report: due Friday of Week 10 at 5:00 PM (50%)\n",
+      "expected": [
+        {"keyword": "quiz", "date": "2027-02-09", "start": "09:30", "end": "10:00"},
+        {"keyword": "midterm", "date": "2027-03-16", "start": "09:30", "end": "11:00"},
+        {"keyword": "lab report", "date": "2027-04-02", "due": "17:00"}
+      ],
+      "answer": "Week 1 starts Tuesday Jan 26, 2027, so Quiz 1 is Tue Feb 9 (9:30-10:00 AM), the midterm is Tue Mar 16 (9:30-11:00 AM), and the lab report is due Fri Apr 2 at 5:00 PM. Times are Eastern."
+    },
+    {
+      "id": "table",
+      "course": "MA-UY 2224 Data Analysis",
+      "file": "syllabus.md",
+      "zone": "America/New_York",
+      "text": "MA-UY 2224 Data Analysis, Spring 2027\nAll times are New York time.\n\n| Assignment | Due | Weight |\n|---|---|---|\n| Problem Set 1 | Fri Feb 12, 2027, 5:00 PM | 15% |\n| Problem Set 2 | Fri Mar 5, 2027, 5:00 PM | 15% |\n| Final Exam | Mon May 10, 2027, 10:00 AM-12:00 PM | 70% |\n",
+      "expected": [
+        {"keyword": "problem set 1", "date": "2027-02-12", "due": "17:00"},
+        {"keyword": "problem set 2", "date": "2027-03-05", "due": "17:00"},
+        {"keyword": "final exam", "date": "2027-05-10", "start": "10:00", "end": "12:00"}
+      ],
+      "answer": "Times are New York time (America/New_York). Please add all three."
+    },
+    {
+      "id": "single",
+      "course": "CS-GY 9223 Capstone",
+      "file": "syllabus.md",
+      "zone": "America/New_York",
+      "text": "CS-GY 9223 Capstone, Spring 2027\nYou meet your advisor weekly; check-ins are not graded and have no deadline.\nThe one graded item: the final report, due Friday, April 30, 2027 at 11:59 PM ET.\n",
+      "expected": [
+        {"keyword": "final report", "date": "2027-04-30", "due": "23:59"}
+      ],
+      "answer": "Just the final report, due Apr 30, 2027 at 11:59 PM Eastern."
+    },
+    {
+      "id": "pacific",
+      "course": "DS-GA 1003 Machine Learning Online",
+      "file": "syllabus.md",
+      "zone": "America/Los_Angeles",
+      "text": "DS-GA 1003 Machine Learning (online section), Spring 2027\nThis section runs on Pacific Time (Los Angeles); every time below is Pacific.\n\n- Homework 1: due Wednesday, February 3, 2027, 9:00 PM (20%)\n- Midterm (online, timed): Thursday, March 18, 2027, 6:00-8:00 PM (30%)\n- Project proposal: due Monday, April 12, 2027, 9:00 PM (50%)\n",
+      "expected": [
+        {"keyword": "homework 1", "date": "2027-02-03", "due": "21:00"},
+        {"keyword": "midterm", "date": "2027-03-18", "start": "18:00", "end": "20:00"},
+        {"keyword": "proposal", "date": "2027-04-12", "due": "21:00"}
+      ],
+      "answer": "Times are Pacific (America/Los_Angeles). Please add all three."
+    }
+  ],
+  "requests": {
+    "baseline": "Set up {course} from my syllabus.",
+    "fresh": "Could you put everything graded in the {course} syllabus on my calendar and Trello board?"
+  }
+}
