@@ -76,13 +76,19 @@ Check the storage used by that environment's Dropbox account. Free space by dele
 
 **Seen in:** `provider_error` on every operation in the Errors panel, `GET /health/provider` failing, and the synthetic probe failing. The trace shows the failing call is `POST https://api.dropboxapi.com/oauth2/token` (see [Telemetry Walkthrough](telemetry-walkthrough.md#3-a-provider-failure)).
 
-Most often the refresh token was revoked or the Dropbox app's secret changed. Log in again to that environment's Dropbox app, add the new token as a new secret version, then deploy a new revision so it is read (secrets are read when an instance starts):
+Most often the refresh token was revoked or the Dropbox app's secret changed. Log in again to that environment's Dropbox app, add the new token as a new secret version, then start a new revision from the image that is serving now and send it the traffic, so the token is read (secrets are read when an instance starts). A new revision gets no traffic until it's moved: each release pins traffic to its own tagged revision. It must also run the serving image, not the template's, which may hold a release that failed its smoke check ([Rollout](rollout.md), stop action 1).
 
 ```bash
 uv run python -m dropbox_client_impl login
 uv run python -c 'import json; print(json.load(open(".dropbox_token.json"))["refresh_token"], end="")' \
   | gcloud secrets versions add dropbox-refresh-token-demo --data-file=-
-gcloud run services update cloud-storage-service-demo --region=us-central1 --update-labels=secret-rotated=$(date +%s)
+SERVICE=cloud-storage-service-demo REGION=us-central1
+serving=$(gcloud run services describe "$SERVICE" --region="$REGION" --format=json \
+  | python3 -c 'import json,sys; print(next(t["revisionName"] for t in json.load(sys.stdin)["status"]["traffic"] if t.get("percent") == 100))')
+image=$(gcloud run revisions describe "$serving" --region="$REGION" --format='value(spec.containers[0].image)')
+gcloud run services update "$SERVICE" --region="$REGION" \
+  --image="$image" --update-labels=secret-rotated=$(date +%s) --tag=rotated
+gcloud run services update-traffic "$SERVICE" --region="$REGION" --to-tags=rotated=100
 ```
 
 Then disable the old version (`gcloud secrets versions disable <n> --secret=dropbox-refresh-token-demo`).
@@ -119,7 +125,7 @@ gcloud logging read 'jsonPayload.event="agent_run"
 | What you see | Likely cause | Do this |
 |---|---|---|
 | `model_unavailable`, students told "busy" | Gemini's per-minute or per-day quota, or Gemini overloaded | Check usage and limits in AI Studio. A per-minute limit clears within a minute; a per-day limit resets at midnight Pacific time. If it's the daily quota during launch week, see the paid-tier recommendation in the [readiness record](https://github.com/Shreyas191/OSPSD-Team-3/pull/117) |
-| `model_unavailable`, students told "failed", on every turn | Gemini rejects our key (revoked, or the project's billing changed) | Add a new key from a hidden prompt (the command in `infra/agent.tf`), then start a new revision so it is read: `gcloud run services update course-agent-<env> --region=us-central1 --update-labels=secret-rotated=$(date +%s)` |
+| `model_unavailable`, students told "failed", on every turn | Gemini rejects our key (revoked, or the project's billing changed) | Add a new key from a hidden prompt (the command in `infra/agent.tf`), then start a new revision from the serving image and move traffic to it, as for the Dropbox token above (with `SERVICE=course-agent-<env>`); without the traffic move, the new key is never used |
 | `api_unavailable`, and the API's 5xx alert is open too | The API service or the database is down | Follow [the 5xx alert](#alert-callers-are-getting-server-errors-5xx). Check `GET /health/database` (Neon) and `GET /health/provider` (Dropbox) on the API service |
 | `api_unavailable`, only on `read_document` or `list_course_documents` in `tools` | Dropbox unreachable or refusing our token | [Dropbox unreachable](#dropbox-unreachable-503-provider_unavailable) or [credentials](#dropbox-rejects-our-credentials-502-provider_error) |
 | Agent 5xx, starting with a new revision | A bad release of the agent | Roll the agent service back (see "Roll back" in [Release Pipeline](release-pipeline.md)) |
