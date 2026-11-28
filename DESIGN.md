@@ -242,8 +242,8 @@ Each test runs as two users, A and B, with a **valid control request** next to i
 ### M2: how we verify it
 
 - **Deterministic tests (CI, no live model):** scripted model for malformed arguments, unknown tools, clarification, provider errors, exhausted limits, cancellation, restart while awaiting approval, a forced unapproved write and a forced other user's ID; each asserts that no unauthorized provider call happened.
-- **Task evaluations:** for each key scenario, labeled syllabi with their correct deadlines, the initial provider state, the allowed actions and the success check on final provider records. Each runs at least five times with the real model; we record successes, time, tokens and every failure, with the model version and prompt.
-- **Adversarial cases:** an injected instruction in a syllabus and in a card title, with a legitimate request as a control.
+- **Task evaluations:** for each key scenario, labeled syllabi with their correct deadlines, the initial provider state, the allowed actions and the success check on final provider records. Each runs at least five times with the real model; we record successes, time, tokens and every failure, with the model version and prompt. S1 results, the failure we traced and the before/after: [S1 task evaluation](docs/s1-evaluation.md) (0 of 5 before, 5 of 5 after, #103).
+- **Adversarial cases:** an injected instruction in a syllabus and in a card title, with a legitimate request as a control. Results: [adversarial evaluation](docs/adversarial-evaluation.md) (#104).
 - **Security tests (Level 4):** two test users; every threat T1–T14 in the [threat table](#threats-rules-and-tests) has a test and a valid control request.
 - **Success is defined by provider records and outcome rows**, never by the model's summary.
 
