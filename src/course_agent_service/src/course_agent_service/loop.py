@@ -12,7 +12,7 @@ result matched to its call), and repeats until one of these **stop reasons**:
 | ``model_unavailable`` | The model call failed | "Busy" or "failed", fixed text |
 | ``api_unavailable`` | Not signed in, or the API service is down | Fixed text |
 | ``cancelled`` | The caller cancelled (the browser went away) | "Stopped" |
-| ``empty_reply`` | The model returned nothing | Fixed text |
+| ``empty_reply`` | The model returned nothing twice in a row (one is retried) | Fixed text |
 | ``daily_limit`` | The student's daily model calls ran out partway through the turn | Fixed text |
 | ``declined_secret`` | The message seems to hold a credential: not sent, not stored | Fixed text |
 | ``blocked_output`` | The model's reply seems to hold a credential | Fixed text instead |
@@ -75,6 +75,8 @@ unclear, or when a change would remove or rename something the student already h
 MAX_MODEL_CALLS = 8
 MAX_SECONDS = 60.0
 MAX_TOKENS = 200_000
+# An empty model reply (no text, no tool call) is asked again this many times before stopping.
+EMPTY_RETRIES = 1
 MAX_PROPOSAL_ATTEMPTS = 3  # the first try, then at most two corrections
 
 
@@ -227,6 +229,12 @@ def run_turn(  # noqa: PLR0913 (the loop's inputs; all keyword-only)
         _count(run.record, reply)
         if run.record["input_tokens"] + run.record["output_tokens"] > run.limits.tokens:
             return run.stop("limit_tokens")
+        if not reply.tool_calls and not reply.text.strip() and run.empty_retries < EMPTY_RETRIES:
+            # Gemini sometimes answers with nothing (2 of 15 S1 runs, #103): ask once more,
+            # through the same limits and budget as any call.
+            run.empty_retries += 1
+            run.record["empty_retries"] = run.empty_retries
+            continue
         if not reply.tool_calls:
             return _answer(run, reply)
         run.new.append(reply.as_message())
@@ -296,6 +304,7 @@ class _Run:
             "tools": [],
         }
         self.proposal_failures = 0
+        self.empty_retries = 0
 
     def limit_reached(self) -> str | None:
         if self.cancelled():

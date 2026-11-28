@@ -517,11 +517,38 @@ def test_a_model_failure_stops_with_fixed_text(api: FakeApi, retryable: bool, ke
     assert "429" not in result.reply
 
 
-def test_an_empty_reply(api: FakeApi) -> None:
-    """An empty reply."""
-    result, _ = turn(api, say("  "))
+def test_an_empty_reply_is_asked_once_more(api: FakeApi) -> None:
+    """One empty reply is retried; the second answer is used (#103: Gemini sometimes says nothing)."""
+    result, model = turn(api, say("  "), say("Which course?"))
+
+    assert result.stop_reason == "replied"
+    assert result.reply == "Which course?"
+    assert len(model.calls) == 2
+    assert result.record["empty_retries"] == 1
+    assert result.record["model_calls"] == 2
+
+
+def test_two_empty_replies_stop_with_fixed_text(api: FakeApi) -> None:
+    """A second empty reply in a row ends the turn with fixed text, nothing written."""
+    result, model = turn(api, say("  "), say(""), say("never asked"))
 
     assert result.stop_reason == "empty_reply"
+    assert result.reply == STOP_MESSAGES["empty_reply"]
+    assert len(model.calls) == 2
+    assert api.paths() == []
+
+
+def test_the_retry_goes_through_the_budget_and_limits(api: FakeApi) -> None:
+    """The retry is a model call like any other: reserved first, and bound by the call limit."""
+    budget = Budget()
+
+    retried, _ = turn(api, say(""), say("ok"), budget=budget)
+    limited, model = turn(api, say(""), say("ok"), limits=Limits(model_calls=1))
+
+    assert budget.asked == 2
+    assert retried.stop_reason == "replied"
+    assert limited.stop_reason == "limit_model_calls"
+    assert len(model.calls) == 1
 
 
 def test_cancelled_before_the_first_model_call(api: FakeApi) -> None:
