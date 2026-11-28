@@ -35,6 +35,28 @@ from course_web.config import Settings
 
 logger = logging.getLogger(__name__)
 
+
+class HideCallbackQueries(logging.Filter):
+    """Keep sign-in and connection codes out of uvicorn's access log (T10).
+
+    Google and Dropbox return ``state`` and ``code`` in the query of ``/auth/callback`` and
+    ``/connections/<provider>/callback``. Each is single-use and tied to its session, but it
+    still doesn't belong in a log, so those lines keep the path and drop the query.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Rewrite the path argument of uvicorn's access line; never drop the line."""
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):  # noqa: PLR2004
+            path, query, _ = args[2].partition("?")
+            if query and path.endswith("/callback"):
+                record.args = (*args[:2], f"{path}?[hidden]", *args[3:])
+        return True
+
+
+# uvicorn configures its loggers before it imports this module, so the filter stays in place.
+logging.getLogger("uvicorn.access").addFilter(HideCallbackQueries())
+
 SESSION_COOKIE = "ca_session"
 SIGN_IN_COOKIE = "ca_sign_in"
 CSRF_COOKIE = "ca_csrf"
@@ -425,6 +447,14 @@ def _unknown_provider(request: Request) -> HTMLResponse:
 
 def _connection_error(request: Request, e: BackendError, title: str) -> HTMLResponse:
     """Render a refused or failed connection step, pointing back to the connections page."""
+    if e.code == "connection_not_configured":  # this one provider isn't set up on the API
+        return error_page(
+            request,
+            503,
+            f"Connecting {title} isn't available on this site yet",
+            "Try again later.",
+            **BACK_TO_CONNECTIONS,
+        )
     if e.status == 401 or e.status >= 500:  # noqa: PLR2004 (HTTP status)
         return backend_error_page(request, e)
     if e.code == "connect_failed":
@@ -526,7 +556,8 @@ def connection_callback(
             **BACK_TO_CONNECTIONS,
         )
     if provider == "trello":
-        return render(request, "trello_return.html", {"state": state, "signed_in": True})
+        signed_in = SESSION_COOKIE in request.cookies
+        return render(request, "trello_return.html", {"state": state, "signed_in": signed_in})
     if not code:
         return error_page(
             request,

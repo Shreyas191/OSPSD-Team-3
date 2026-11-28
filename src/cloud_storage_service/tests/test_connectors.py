@@ -282,14 +282,14 @@ TRELLO = TrelloSettings("key-123", "https://web.test/connections/trello")
 
 
 def test_the_trello_authorize_url_returns_to_us_with_the_state() -> None:
-    """Read and write, never expiring, token in the fragment of our return URL."""
+    """Read and write, expiring in 30 days, token in the fragment of our return URL."""
     connector = TrelloConnector(TRELLO, http(unreachable))
 
     params = query(connector.authorization_url("state-1", "ignored"))
 
     assert params["key"] == TRELLO.api_key
     assert params["scope"] == "read,write"
-    assert params["expiration"] == "never"
+    assert params["expiration"] == "30days"
     assert (params["response_type"], params["callback_method"]) == ("token", "fragment")
     assert query(params["return_url"]) == {"state": "state-1"}
     assert params["return_url"].startswith(TRELLO.return_url)

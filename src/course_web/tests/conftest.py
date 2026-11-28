@@ -40,6 +40,7 @@ class FakeApi:
     fail: dict[str, tuple[int, str]] = field(default_factory=dict)
     # Each provider's state at the API; Trello needs a list chosen after connecting.
     connected: dict[str, str] = field(default_factory=dict)
+    account: str = "student@example.com"  # the label a connected provider shows
     trello_lists: list[dict[str, str]] = field(
         default_factory=lambda: [
             {"board": "Fall 2026", "id": "list-1", "name": "To do"},
@@ -82,7 +83,7 @@ class FakeApi:
             "title": TITLES[provider],
             "available": True,
             "status": self.connected.get(provider, "not_connected"),
-            "account": "student@example.com" if provider in self.connected else "",
+            "account": self.account if provider in self.connected else "",
         }
 
     def handle_connections(  # noqa: PLR0911 (one per route)

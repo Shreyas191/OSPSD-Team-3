@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Connecting Trello · Course Autopilot{% endblock %}
 {% block content %}
-<h1>Connecting Trello…</h1>
+<h1 id="trello-heading">Connecting Trello…</h1>
 {# Trello puts the token in the URL fragment, which never reaches the server. The script moves
-   it into this form and posts it, then the fragment is cleared from the address bar. #}
+   it into this form and posts it, then the fragment is cleared from the address bar. With no
+   token (Back after connecting, or access was declined) it posts nothing and shows the note. #}
 <form id="trello-return" method="post" action="/connections/trello/finish">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="state" value="{{ state }}">
@@ -12,6 +13,8 @@
     <p>Finishing the Trello connection needs JavaScript. Turn it on and connect Trello again.</p>
   </noscript>
 </form>
+<p id="trello-nothing" hidden>Nothing was saved from this page. If you've already connected
+Trello, it shows on your connections page; if not, connect it again from there.</p>
 <p><a href="/connections">Back to your connections</a></p>
 <script src="/static/trello-return.js"></script>
 {% endblock %}
