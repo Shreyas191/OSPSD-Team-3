@@ -9,6 +9,7 @@
 <form method="post" action="/proposals/{{ proposal.id }}/approve" data-busy="Making the changes… this can take a minute.">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="changes_hash" value="{{ proposal.changes_hash }}">
+  <input type="hidden" name="conversation_id" value="{{ conversation }}">
   <p>Uncheck any change you don't want. If you uncheck some, you'll review the rest once more
   before anything happens.</p>
   <ul class="changes">
@@ -41,14 +42,15 @@
   </li>
   {% endfor %}
 </ul>
-{% if proposal.status in ["approved", "failed"] %}
+{% if proposal.status in ["approved", "failed", "executing"] %}
 <form method="post" action="/proposals/{{ proposal.id }}/execute" data-busy="Making the changes… this can take a minute.">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <p><button type="submit">{% if proposal.status == "approved" %}Make these changes{% else %}Try the changes that weren't made again{% endif %}</button>
+  <p><button type="submit">{% if proposal.status == "approved" %}Make these changes{% elif proposal.status == "executing" %}Run them again{% else %}Try the changes that weren't made again{% endif %}</button>
   <span class="busy" aria-live="polite"></span></p>
 </form>
 {% endif %}
 {% endif %}
+{% if conversation %}<p><a href="/chat/{{ conversation }}">Back to the conversation</a></p>{% endif %}
 <p><a href="/">Back to your courses</a></p>
 <script src="/static/busy.js"></script>
 {% endblock %}

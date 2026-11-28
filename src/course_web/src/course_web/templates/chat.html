@@ -12,7 +12,7 @@ never changes anything by itself: you approve each change set first.</p>
     <span class="who">{% if e.role == "student" %}You{% else %}Assistant{% endif %}</span>
     {# Shown as text: the reply can't add links, markup or anything that loads. #}
     <p class="said">{{ e.text }}</p>
-    {% if e.proposal_id %}<p><a href="/proposals/{{ e.proposal_id }}">Review the proposed changes</a></p>{% endif %}
+    {% if e.proposal_id %}<p><a href="/proposals/{{ e.proposal_id }}?conversation={{ conversation_id }}">Review the proposed changes</a></p>{% endif %}
   </li>
   {% endfor %}
 </ol>

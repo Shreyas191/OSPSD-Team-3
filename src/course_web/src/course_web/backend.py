@@ -274,9 +274,17 @@ class Api(_Service):
         """Return one of the person's proposals, with its outcomes."""
         return _proposal(self._call("GET", f"/proposals/{proposal_id}", token=token))
 
-    def create_proposal(self, token: str, changes: list[dict[str, Any]]) -> Proposal:
-        """Store a new pending proposal with exactly these changes."""
-        return _proposal(self._call("POST", "/proposals", token=token, body={"changes": changes}))
+    def create_proposal(
+        self,
+        token: str,
+        changes: list[dict[str, Any]],
+        conversation_id: str | None = None,
+    ) -> Proposal:
+        """Store a new pending proposal with exactly these changes, in that conversation."""
+        body: dict[str, Any] = {"changes": changes}
+        if conversation_id:
+            body["conversation_id"] = conversation_id
+        return _proposal(self._call("POST", "/proposals", token=token, body=body))
 
     def approve(self, token: str, proposal_id: str, changes_hash: str) -> Proposal:
         """Approve exactly the content with this hash."""

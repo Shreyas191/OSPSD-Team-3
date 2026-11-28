@@ -4,5 +4,5 @@
 {% if c.when %}<span class="when">{{ c.when }}</span>{% endif %}
 {% if c.document %}<span class="title">{{ c.document }}</span>
 <details><summary>Show the document</summary><pre class="document">{{ c.content }}</pre></details>{% endif %}
-{% if c.record_id and not c.title %}<span class="detail">One that Course Autopilot created ({{ c.record_id }})</span>{% endif %}
+{% if c.record_id %}<span class="detail">{% if c.title %}Changes{% else %}Removes{% endif %} the one with ID {{ c.record_id }}</span>{% endif %}
 {% if c.outcome %}<span class="outcome {{ c.outcome_status }}">{{ c.outcome }}{% if c.detail %}: {{ c.detail }}{% endif %}</span>{% endif %}

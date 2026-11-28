@@ -112,7 +112,8 @@ def test_a_reply_that_prepared_changes_links_to_them(
     page = browser.get(f"/chat/{conversation_id}").text
 
     [proposal_id] = fake_api.proposals
-    assert f'<a href="/proposals/{proposal_id}">Review the proposed changes</a>' in page
+    link = f'<a href="/proposals/{proposal_id}?conversation={conversation_id}">'
+    assert f"{link}Review the proposed changes</a>" in page
 
 
 def test_model_text_is_shown_as_text(fake_api: FakeApi, browser: TestClient) -> None:
@@ -237,3 +238,38 @@ def test_signed_out_the_conversation_sends_you_to_sign_in(
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     assert fake_api.calls == []
+
+
+def test_the_agent_refusing_its_token_doesnt_sign_you_out(
+    fake_api: FakeApi,
+    fake_agent: FakeAgent,
+    browser: TestClient,
+) -> None:
+    """A 401 from the agent side means the assistant is unavailable, not a bad session."""
+    fake_agent.fail = (401, "unauthorized")
+    token = _signed_in(browser)
+    conversation_id = _new_conversation(fake_api)
+
+    response = browser.post(f"/chat/{conversation_id}", data={"csrf_token": token, "text": "Hi"})
+
+    assert response.status_code == 503
+    assert UNAVAILABLE in unescape(response.text)
+    assert SESSION_COOKIE not in response.headers.get("set-cookie", "")
+    assert browser.cookies.get(SESSION_COOKIE) == SESSION_TOKEN
+
+
+def test_the_api_refusing_the_session_signs_you_out(
+    fake_api: FakeApi,
+    fake_agent: FakeAgent,
+    browser: TestClient,
+) -> None:
+    """A 401 when making the turn's token is the session itself: sign in again."""
+    fake_api.fail["POST /auth/agent-token"] = (401, "unauthorized")
+    token = _signed_in(browser)
+    conversation_id = _new_conversation(fake_api)
+
+    response = browser.post(f"/chat/{conversation_id}", data={"csrf_token": token, "text": "Hi"})
+
+    assert response.status_code == 401
+    assert SESSION_COOKIE in response.headers.get("set-cookie", "")
+    assert fake_agent.calls == []

@@ -36,7 +36,9 @@ STATUSES = {
     "pending": "Waiting for your approval. Nothing has been changed yet.",
     "approved": "Approved. The changes haven't been made yet.",
     "rejected": "You rejected these changes. Nothing was changed.",
-    "executing": "The changes are being made. Reload this page in a moment.",
+    "executing": "The changes are being made. Reload this page in a moment. If it still says "
+    "this after a few minutes, the run stopped: run them again, and changes already made "
+    "aren't repeated.",
     "failed": "Some changes weren't made. Nothing is undone: changes marked Done stay.",
     "done": "All changes are made.",
 }
@@ -70,6 +72,9 @@ def when(start: str, end: str) -> str:
         first, last = datetime.fromisoformat(start), datetime.fromisoformat(end)
     except ValueError:
         return f"{start} to {end}"
+    if first.tzinfo and last.tzinfo:
+        # The API keeps each time's own offset; show both in the start's, which is the label.
+        last = last.astimezone(first.tzinfo)
     offset = first.strftime("%z")
     zone = f"UTC{offset[:3]}:{offset[3:]}" if offset else ""
     day = f"{first:%a %b} {first.day}, {first.year}"

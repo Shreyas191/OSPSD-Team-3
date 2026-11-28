@@ -23,7 +23,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Form, Request, Response
@@ -652,6 +652,10 @@ NOTICES = {
     "try again later.",
     "none_kept": "You unchecked every change, so the proposal was rejected. Nothing was changed.",
     "settled": "Thanks. That change is recorded.",
+    "kept_old_open": "Here are the changes you kept. Nothing has been approved yet. The "
+    "earlier proposal couldn't be rejected, so it's still open: approve only this one.",
+    "running": "The changes are still being made. Wait a few minutes, reload this page, and "
+    "run them again if it hasn't finished.",
 }
 
 # A turn the agent service refused: what the person sees above the message box.
@@ -664,6 +668,16 @@ TURN_ERRORS = {
     "Autopilot's access.",
 }
 UNAVAILABLE = "The assistant isn't available right now. Your courses and approvals still work."
+
+
+def _turn_refused(e: BackendError) -> tuple[str, int]:
+    """Return what to tell the person about a turn the agent side refused, and the status."""
+    if e.status == 401:  # noqa: PLR2004 (HTTP status)
+        # The agent side refused the turn's token, not the session, which the API had just
+        # accepted (clock skew, a misconfiguration): the person stays signed in.
+        return UNAVAILABLE, 503
+    message = TURN_ERRORS.get(e.code) or (UNAVAILABLE if e.status >= 500 else e.message)  # noqa: PLR2004
+    return message or UNAVAILABLE, e.status
 
 
 def _valid_id(value: str) -> bool:
@@ -764,22 +778,30 @@ def send_message(  # noqa: PLR0911 (each way a turn can end)
         return again(f"Write a message of 1 to {MAX_MESSAGE_CHARACTERS} characters.", 400)
     try:
         # A fresh agent token for this turn: it ends with the session, and in 5 minutes.
-        agent.take_turn(api.agent_token(token), conversation_id, text)
+        agent_token = api.agent_token(token)
     except BackendError as e:
-        if e.status == 401:  # noqa: PLR2004 (HTTP status)
-            return backend_error_page(request, e)
+        return backend_error_page(request, e)  # the API refused the session itself: sign in
+    try:
+        agent.take_turn(agent_token, conversation_id, text)
+    except BackendError as e:
         if e.status == 404:  # noqa: PLR2004 (HTTP status)
             return _not_found(request, "conversation")
-        message = TURN_ERRORS.get(e.code) or (UNAVAILABLE if e.status >= 500 else e.message)  # noqa: PLR2004
-        return again(message or UNAVAILABLE, e.status)
+        return again(*_turn_refused(e))
     # The reply is stored with the conversation; showing it from there keeps reloads safe.
     return RedirectResponse(f"/chat/{conversation_id}", status_code=303)
+
+
+def _proposal_url(proposal_id: str, notice: str = "", conversation: str = "") -> str:
+    """Return a proposal page's address, keeping the conversation it came from."""
+    query = {k: v for k, v in (("notice", notice), ("conversation", conversation)) if v}
+    return f"/proposals/{proposal_id}" + (f"?{urlencode(query)}" if query else "")
 
 
 def _proposal_page(
     request: Request,
     proposal: Proposal,
     notice: str = "",
+    conversation: str = "",
     status_code: int = 200,
 ) -> HTMLResponse:
     return render(
@@ -790,6 +812,7 @@ def _proposal_page(
             "changes": change_views(proposal.changes, proposal.outcomes),
             "status_text": STATUSES.get(proposal.status, proposal.status),
             "notice": notice,
+            "conversation": conversation,
             "signed_in": True,
         },
         status_code=status_code,
@@ -821,8 +844,17 @@ def _proposal_session(request: Request, proposal_id: str) -> tuple[Api, str] | R
 
 
 @app.get("/proposals/{proposal_id}", response_model=None)
-def proposal_page(request: Request, proposal_id: str, notice: str = "") -> Response:
-    """Show every proposed change exactly as stored, its outcome, and what to do next."""
+def proposal_page(
+    request: Request,
+    proposal_id: str,
+    notice: str = "",
+    conversation: str = "",
+) -> Response:
+    """Show every proposed change exactly as stored, its outcome, and what to do next.
+
+    ``conversation`` is the chat the person came from (the API's proposal doesn't name it): it
+    links back there, and a proposal made from kept changes joins the same conversation.
+    """
     session = _proposal_session(request, proposal_id)
     if isinstance(session, Response):
         return session
@@ -831,28 +863,41 @@ def proposal_page(request: Request, proposal_id: str, notice: str = "") -> Respo
         proposal = api.proposal(token, proposal_id)
     except BackendError as e:
         return _proposal_error(request, e, proposal_id)
-    return _proposal_page(request, proposal, NOTICES.get(notice, ""))
+    conversation = conversation if _valid_id(conversation) else ""
+    return _proposal_page(request, proposal, NOTICES.get(notice, ""), conversation)
 
 
 @app.post("/proposals/{proposal_id}/approve", response_model=None)
-def approve(
+def approve(  # noqa: PLR0911 (each outcome of approving)
     request: Request,
     proposal_id: str,
     _csrf: CheckedForm,
     changes_hash: Annotated[str, Form()] = "",
-    keep: Annotated[list[int] | None, Form()] = None,
+    keep: Annotated[list[str] | None, Form()] = None,
+    conversation_id: Annotated[str, Form()] = "",
 ) -> Response:
     """Approve exactly the changes the page showed, and make them; or drop unchecked ones.
 
     If every change is still checked, the proposal is approved with the hash of the content
     the page showed (the API refuses any other) and then run. If some were unchecked,
     nothing is approved: this proposal is rejected and a new one with the kept changes is
-    shown for review, so the person approves exactly what will happen (S1, step 6).
+    shown for review, so the person approves exactly what will happen (S1, step 6). The new
+    one is made before this one is rejected, so a failure leaves the person's proposal as it was.
     """
     session = _proposal_session(request, proposal_id)
     if isinstance(session, Response):
         return session
     api, token = session
+    if not all(k.isdigit() for k in keep or []):
+        return error_page(
+            request,
+            400,
+            "That form wasn't one of ours",
+            "Nothing was approved. Go back to the proposal and try again.",
+            back=f"/proposals/{proposal_id}",
+            back_label="Back to the proposal",
+        )
+    conversation = conversation_id if _valid_id(conversation_id) else ""
     try:
         proposal = api.proposal(token, proposal_id)
         if proposal.changes_hash != changes_hash:
@@ -864,21 +909,27 @@ def approve(
                 back=f"/proposals/{proposal_id}",
                 back_label="Back to the proposal",
             )
-        kept = sorted({i for i in keep or [] if 0 <= i < len(proposal.changes)})
-        if len(kept) < len(proposal.changes):
+        kept = sorted({int(k) for k in keep or [] if int(k) < len(proposal.changes)})
+        if not kept:
             api.reject(token, proposal_id)
-            if not kept:
-                return RedirectResponse(
-                    f"/proposals/{proposal_id}?notice=none_kept",
-                    status_code=303,
-                )
-            new = api.create_proposal(token, [proposal.changes[i] for i in kept])
-            return RedirectResponse(f"/proposals/{new.id}?notice=kept", status_code=303)
+            return RedirectResponse(
+                _proposal_url(proposal_id, "none_kept", conversation),
+                status_code=303,
+            )
+        if len(kept) < len(proposal.changes):
+            changes = [proposal.changes[i] for i in kept]
+            new = api.create_proposal(token, changes, conversation or None)
+            notice = "kept"
+            try:
+                api.reject(token, proposal_id)
+            except BackendError:
+                notice = "kept_old_open"  # the new one exists: show it, and say so
+            return RedirectResponse(_proposal_url(new.id, notice, conversation), status_code=303)
         api.approve(token, proposal_id, changes_hash)
         api.execute(token, proposal_id)
     except BackendError as e:
         return _proposal_error(request, e, proposal_id)
-    return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
+    return RedirectResponse(_proposal_url(proposal_id, conversation=conversation), status_code=303)
 
 
 @app.post("/proposals/{proposal_id}/reject", response_model=None)
@@ -895,9 +946,20 @@ def reject(request: Request, proposal_id: str, _csrf: CheckedForm) -> Response:
     return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
 
 
+def _still_running(api: Api, token: str, proposal_id: str) -> bool:
+    try:
+        return api.proposal(token, proposal_id).status == "executing"
+    except BackendError:
+        return False
+
+
 @app.post("/proposals/{proposal_id}/execute", response_model=None)
 def execute(request: Request, proposal_id: str, _csrf: CheckedForm) -> Response:
-    """Make an approved proposal's changes, or retry the ones that failed."""
+    """Make an approved proposal's changes, retry failed ones, or take over a stopped run.
+
+    A proposal left ``executing`` by a run that stopped can run again once the API sees the run
+    has been silent long enough; until then the API answers 409, and the page says to wait.
+    """
     session = _proposal_session(request, proposal_id)
     if isinstance(session, Response):
         return session
@@ -905,6 +967,8 @@ def execute(request: Request, proposal_id: str, _csrf: CheckedForm) -> Response:
     try:
         api.execute(token, proposal_id)
     except BackendError as e:
+        if e.status == 409 and _still_running(api, token, proposal_id):  # noqa: PLR2004
+            return RedirectResponse(_proposal_url(proposal_id, "running"), status_code=303)
         return _proposal_error(request, e, proposal_id)
     return RedirectResponse(f"/proposals/{proposal_id}", status_code=303)
 

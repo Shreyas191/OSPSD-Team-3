@@ -21,7 +21,10 @@ The proposal page shows every change exactly as stored: the event's time in the 
 change states, the card, and the document's full text. Approving sends the `changes_hash` the
 page showed, so changed content is never approved, then makes the changes and shows each
 one's outcome. Unchecking some changes approves nothing: that proposal is rejected and a new
-one with the kept changes is shown for review. A failed proposal can be retried, and a change
+one with the kept changes is shown for review (made before the old one is rejected, and in the
+same conversation: the chat's link carries `?conversation=<id>`, since the API's proposal
+doesn't name it). A failed proposal can be retried, and so can one left running by a run that
+stopped (the API takes it over once that run has been silent 10 minutes). A change
 marked "Not sure it happened" can be settled once the person has checked
 (`.../changes/<index>/resolve`, with the record's ID when it was created). Approving,
 rejecting, running and settling use the person's session; an agent token can't do any of them.
