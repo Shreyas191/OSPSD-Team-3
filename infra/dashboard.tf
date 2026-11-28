@@ -55,7 +55,8 @@ locals {
       columns = 48
       # A position of 0 is left out (a tile with no xPos is at the left edge): the API drops
       # zero values, and the provider would then show the dashboard as changed on every plan.
-      tiles = [
+      # The last row, execution outcomes, is in execution_monitoring.tf.
+      tiles = concat([
         {
           width = 20, height = 16
           widget = {
@@ -70,6 +71,8 @@ locals {
                 **No data is not health.** The services scale to zero, so with no requests every chart is empty. Check `GET /health/provider` or run the smoke check (`scripts/consumer_workflow.py`).
 
                 **Error codes:** `invalid_request` 400 · `permission_denied` 403 · `not_found` 404 · `conflict` 409 · `file_too_large` 413 · `invalid_operation` 422 · `internal_error` 500 · `provider_error` 502 · `provider_unavailable` 503 · `service_busy` 503 (refused: the service is full). `unmatched` is a request that matched no route, or one refused before routing.
+
+                **Execution outcomes** (bottom row): what happened to students' approved changes. Execute answers `200` even when a change failed or is uncertain, so the request charts can't show it. `failed` runs can be retried; an **uncertain** change needs the student to check, and alerts.
 
                 **From a failed request to its log and trace:** the "Failed requests" log panel below, or [Logs Explorer](https://console.cloud.google.com/logs/query;query=jsonPayload.event%3D%22request%22%20severity%3E%3DWARNING?project=${var.project_id}). Each entry links to its trace (health checks aren't traced). What to do about each panel: [docs/dashboard.md](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/docs/dashboard.md). Incidents: [runbook](https://github.com/Shreyas191/OSPSD-Team-3/blob/hw2/docs/runbook.md).
               EOT
@@ -297,7 +300,7 @@ locals {
             }
           }
         },
-      ]
+      ], local.execution_tiles)
     }
   }
 }
